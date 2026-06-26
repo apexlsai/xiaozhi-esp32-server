@@ -449,40 +449,118 @@ else
     echo "跳过LLM配置，使用默认模型"
 fi
 
+# 清理同名容器函数
+cleanup_existing_containers() {
+    echo "正在检查并清理同名容器..."
+    local containers=(
+        "xiaozhi-esp32-server"
+        "xiaozhi-esp32-server-web"
+        "xiaozhi-esp32-server-db"
+        "xiaozhi-esp32-server-redis"
+    )
+    
+    for container in "${containers[@]}"; do
+        if docker ps -a --format '{{.Names}}' | grep -q "^${container}$"; then
+            echo "发现同名容器: $container，正在停止并删除..."
+            docker stop "$container" >/dev/null 2>&1
+            docker rm -f "$container" >/dev/null 2>&1
+        fi
+    done
+    
+    # 清理可能残留的网络
+    docker network rm xiaozhi-esp32-server_default 2>/dev/null || true
+    echo "清理完成"
+}
+
 # 启动Docker服务
-(
-echo "------------------------------------------------------------"
-echo "正在拉取Docker镜像..."
-echo "这可能需要几分钟时间，请耐心等待"
-docker compose -f /opt/xiaozhi-server/docker-compose_all.yml up -d
-
-if [ $? -ne 0 ]; then
-    whiptail --title "错误" --msgbox "Docker服务启动失败，请尝试更换镜像源后重新执行本脚本" 10 60
-    exit 1
-fi
-
-echo "------------------------------------------------------------"
-echo "正在检查服务启动状态..."
-TIMEOUT=300
-START_TIME=$(date +%s)
-while true; do
-    CURRENT_TIME=$(date +%s)
-    if [ $((CURRENT_TIME - START_TIME)) -gt $TIMEOUT ]; then
-        whiptail --title "错误" --msgbox "服务启动超时，未在指定时间内找到预期日志内容" 10 60
-        exit 1
+start_docker_services() {
+    echo "------------------------------------------------------------"
+    echo "正在拉取Docker镜像..."
+    echo "这可能需要几分钟时间，请耐心等待"
+    
+    # 捕获docker compose输出用于错误诊断
+    COMPOSE_OUTPUT=$(docker compose -f /opt/xiaozhi-server/docker-compose_all.yml up -d 2>&1)
+    COMPOSE_EXIT_CODE=$?
+    
+    if [ $COMPOSE_EXIT_CODE -ne 0 ]; then
+        echo "$COMPOSE_OUTPUT"
+        
+        # 分析错误原因并给出针对性提示
+        if echo "$COMPOSE_OUTPUT" | grep -qi "Conflict.*container name.*already in use"; then
+            # 容器名冲突，自动清理并重试
+            echo "检测到容器名称冲突，正在自动清理..."
+            cleanup_existing_containers
+            sleep 2
+            echo "重新启动服务..."
+            docker compose -f /opt/xiaozhi-server/docker-compose_all.yml up -d
+            if [ $? -eq 0 ]; then
+                echo "服务启动成功！"
+                return 0
+            fi
+            ERROR_MSG="容器名称冲突，自动清理后仍然失败\n\n请手动执行：\ndocker rm -f xiaozhi-esp32-server xiaozhi-esp32-server-web xiaozhi-esp32-server-db xiaozhi-esp32-server-redis"
+        elif echo "$COMPOSE_OUTPUT" | grep -qi "port.*already in use\|address already in use"; then
+            ERROR_MSG="端口被占用！\n\n可能的解决方案：\n1. 运行 'docker compose down' 清理旧容器\n2. 检查端口占用: netstat -tlnp | grep -E '8000|8002|8003'\n3. 修改脚本开头的端口配置"
+        elif echo "$COMPOSE_OUTPUT" | grep -qi "pull.*error\|manifest.*not found\|connection refused\|timeout"; then
+            ERROR_MSG="镜像拉取失败！\n\n可能的解决方案：\n1. 检查网络连接\n2. 更换Docker镜像源后重新执行\n3. 手动拉取镜像: docker pull ghcr.nju.edu.cn/xinnan-tech/xiaozhi-esp32-server:server_latest"
+        elif echo "$COMPOSE_OUTPUT" | grep -qi "network.*error\|failed to create network"; then
+            ERROR_MSG="Docker网络创建失败！\n\n可能的解决方案：\n1. 运行 'docker network prune -f' 清理网络\n2. 重启Docker服务: systemctl restart docker\n3. 检查是否有残留容器: docker ps -a"
+        elif echo "$COMPOSE_OUTPUT" | grep -qi "no such file\|config.*not found"; then
+            ERROR_MSG="配置文件缺失！\n\n请检查以下文件是否存在：\n- /opt/xiaozhi-server/docker-compose_all.yml\n- /opt/xiaozhi-server/data/.config.yaml"
+        else
+            ERROR_MSG="Docker服务启动失败！\n\n错误信息：\n${COMPOSE_OUTPUT:0:300}\n\n请检查Docker日志获取更多信息"
+        fi
+        
+        whiptail --title "启动错误" --msgbox "$ERROR_MSG" 18 70
+        
+        # 询问是否重试
+        if whiptail --title "重试" --yesno "是否尝试彻底清理后重新启动？" 10 60; then
+            echo "正在彻底清理..."
+            cleanup_existing_containers
+            docker compose -f /opt/xiaozhi-server/docker-compose_all.yml down --remove-orphans 2>/dev/null
+            sleep 3
+            docker compose -f /opt/xiaozhi-server/docker-compose_all.yml up -d
+            if [ $? -ne 0 ]; then
+                whiptail --title "错误" --msgbox "重试仍然失败，请手动排查问题后重新运行脚本" 10 60
+                exit 1
+            fi
+        else
+            exit 1
+        fi
     fi
     
-    if docker logs xiaozhi-esp32-server-web 2>&1 | grep -q "Started AdminApplication in"; then
-        break
-    fi
-    sleep 1
-done
+    echo "------------------------------------------------------------"
+    echo "正在检查服务启动状态..."
+    TIMEOUT=300
+    START_TIME=$(date +%s)
+    LAST_STATUS=""
+    
+    while true; do
+        CURRENT_TIME=$(date +%s)
+        ELAPSED=$((CURRENT_TIME - START_TIME))
+        
+        if [ $ELAPSED -gt $TIMEOUT ]; then
+            # 超时时显示各容器状态
+            CONTAINER_STATUS=$(docker compose -f /opt/xiaozhi-server/docker-compose_all.yml ps --format "table {{.Name}}\t{{.Status}}" 2>/dev/null)
+            whiptail --title "启动超时" --msgbox "服务启动超时(${TIMEOUT}秒)\n\n容器状态：\n$CONTAINER_STATUS\n\n请检查日志: docker logs xiaozhi-esp32-server-web" 16 70
+            exit 1
+        fi
+        
+        # 每30秒显示一次进度
+        if [ $((ELAPSED % 30)) -eq 0 ] && [ "$ELAPSED" != "$LAST_STATUS" ]; then
+            echo "已等待 ${ELAPSED} 秒，继续等待服务启动..."
+            LAST_STATUS="$ELAPSED"
+        fi
+        
+        if docker logs xiaozhi-esp32-server-web 2>&1 | grep -q "Started AdminApplication in"; then
+            break
+        fi
+        sleep 2
+    done
+    
+    echo "服务端启动成功！"
+}
 
-    echo "服务端启动成功！正在完成配置..."
-    echo "正在启动服务..."
-    docker compose -f /opt/xiaozhi-server/docker-compose_all.yml up -d
-    echo "服务启动完成！"
-)
+start_docker_services
 
 # 密钥配置
 
