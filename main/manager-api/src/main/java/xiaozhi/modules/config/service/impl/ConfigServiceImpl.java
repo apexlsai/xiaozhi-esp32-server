@@ -222,10 +222,23 @@ public class ConfigServiceImpl implements ConfigService {
         // 获取声纹信息
         buildVoiceprintConfig(agent.getId(), result);
 
+        // 注入设备扩展属性，供 xiaozhi-server 读取并传给 LLM
+        Map<String, String> deviceAttributes = deviceAttributeService.getAttributesByDeviceId(device.getMacAddress());
+        result.put("device_attributes", deviceAttributes);
+
+        // 如果设备属性中指定了语言，将其注入系统提示词，让 LLM 可以读取
+        String deviceLanguage = deviceAttributes.get("language");
+        String systemPrompt = agent.getSystemPrompt();
+        if (StringUtils.isNotBlank(deviceLanguage) && StringUtils.isNotBlank(systemPrompt)) {
+            systemPrompt = systemPrompt + "\n\n## 设备语言设定\n当前设备的语言属性为："
+                    + deviceLanguage
+                    + "。请在回复时优先使用该语言与用户交流。";
+        }
+
         // 构建模块配置
         buildModuleConfig(
                 agent.getAgentName(),
-                agent.getSystemPrompt(),
+                systemPrompt,
                 agent.getSummaryMemory(),
                 voice,
                 referenceAudio,
@@ -245,10 +258,6 @@ public class ConfigServiceImpl implements ConfigService {
                 null,
                 result,
                 true);
-
-        // 注入设备扩展属性，供 xiaozhi-server 读取并传给 LLM
-        Map<String, String> deviceAttributes = deviceAttributeService.getAttributesByDeviceId(device.getMacAddress());
-        result.put("device_attributes", deviceAttributes);
 
         return result;
     }
