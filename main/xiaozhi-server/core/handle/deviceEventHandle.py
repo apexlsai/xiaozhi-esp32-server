@@ -5,6 +5,7 @@ if TYPE_CHECKING:
     from core.connection import ConnectionHandler
 from config.manage_api_client import report_device_event
 from config.logger import setup_logging
+from core.utils.dialogue import Message
 
 TAG = __name__
 logger = setup_logging()
@@ -46,8 +47,21 @@ async def _handle_language_change(conn: "ConnectionHandler", language: str):
         conn.device_attributes = {}
     conn.device_attributes["language"] = language
     logger.bind(tag=TAG).info(f"设备语言已切换为: {language}")
-    # 重新触发提示词增强，让 LLM 立即感知语言变化
+
+    # 向当前对话追加系统级强指令，立即纠正 LLM 输出语言
     try:
+        conn.dialogue.put(
+            Message(
+                role="system",
+                content=(
+                    f"[SYSTEM ORDER: LANGUAGE LOCK] The user has switched device language. "
+                    f"You MUST reply STRICTLY in {language} from now on. "
+                    f"Do NOT use Chinese, English, or any other language except {language}. "
+                    f"This order overrides all previous language instructions."
+                ),
+            )
+        )
+        # 同时刷新系统 prompt，确保后续对话都带上强约束
         conn._init_prompt_enhancement()
     except Exception as e:
         logger.bind(tag=TAG).warning(f"语言切换后刷新提示词失败: {e}")
@@ -61,6 +75,23 @@ async def _handle_beacon_change(
         conn.device_attributes = {}
     conn.device_attributes["last_beacon_id"] = beacon_id
     logger.bind(tag=TAG).info(f"设备蓝牙信标已更新: {beacon_id}")
+
+    # 向当前对话追加系统事件，让 LLM 感知用户位置变化
+    try:
+        # TODO: 接入展品/位置映射表后，把 beacon_id 解析为具体展品名称
+        exhibit_name = beacon_id
+        conn.dialogue.put(
+            Message(
+                role="system",
+                content=(
+                    f"[SYSTEM EVENT: LOCATION CHANGE] User walked to a new location. "
+                    f"Current beacon: {beacon_id} (exhibit: {exhibit_name}). "
+                    f"Keep your response concise and context-aware."
+                ),
+            )
+        )
+    except Exception as e:
+        logger.bind(tag=TAG).warning(f"蓝牙信标变更后追加系统事件失败: {e}")
 
 
 async def _report_event_to_manager_api(
