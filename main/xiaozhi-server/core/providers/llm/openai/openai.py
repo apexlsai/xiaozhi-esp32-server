@@ -88,6 +88,13 @@ class LLMProvider(LLMProviderBase):
                 logger.bind(tag=TAG).info(f"为域名 {domain} 禁用思考模式，参数: {params}")
                 break
 
+    def _apply_extra_body(self, request_params: dict, kwargs: dict):
+        """合并调用方传入的 extra_body（如 device_id/language/last_beacon_id）"""
+        extra_body = kwargs.get("extra_body")
+        if extra_body:
+            request_params.setdefault("extra_body", {}).update(extra_body)
+            logger.bind(tag=TAG).debug(f"LLM 请求追加 extra_body: {extra_body}")
+
     def response(self, session_id, dialogue, **kwargs):
         dialogue = self.normalize_dialogue(dialogue)
 
@@ -111,6 +118,8 @@ class LLMProvider(LLMProviderBase):
 
         # 禁用思考模式
         self._apply_thinking_disabled(request_params)
+        # 合并设备上下文 extra_body
+        self._apply_extra_body(request_params, kwargs)
 
         responses = self.client.chat.completions.create(**request_params)
 
@@ -157,6 +166,8 @@ class LLMProvider(LLMProviderBase):
 
         # 禁用思考模式
         self._apply_thinking_disabled(request_params)
+        # 合并设备上下文 extra_body
+        self._apply_extra_body(request_params, kwargs)
 
         stream = self.client.chat.completions.create(**request_params)
 
