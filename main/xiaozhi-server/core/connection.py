@@ -1061,6 +1061,18 @@ class ConnectionHandler:
         # 更新系统prompt至上下文
         self.dialogue.update_system_message(self.prompt)
 
+    def _build_llm_extra_body(self) -> dict:
+        """构造传给 LLM 网关的额外设备上下文参数"""
+        extra_body = {}
+        if self.device_id:
+            extra_body["device_id"] = self.device_id
+        if self.device_attributes:
+            if self.device_attributes.get("language"):
+                extra_body["language"] = self.device_attributes.get("language")
+            if self.device_attributes.get("last_beacon_id"):
+                extra_body["last_beacon_id"] = self.device_attributes.get("last_beacon_id")
+        return extra_body
+
     def chat(self, query, depth=0):
         # 保存当前任务的sentence_id到局部变量，避免被新任务覆盖
         current_sentence_id = None
@@ -1135,6 +1147,8 @@ class ConnectionHandler:
                 self.system_introduced_speakers.add(cs)
                 speaker_for_system = cs
 
+            llm_extra_body = self._build_llm_extra_body()
+
             if self.intent_type == "function_call" and functions is not None:
                 # 使用支持functions的streaming接口
                 llm_responses = self.llm.response_with_functions(
@@ -1143,6 +1157,7 @@ class ConnectionHandler:
                         memory_str, self.config.get("voiceprint", {}), speaker_for_system
                     ),
                     functions=functions,
+                    extra_body=llm_extra_body,
                 )
             else:
                 llm_responses = self.llm.response(
@@ -1150,6 +1165,7 @@ class ConnectionHandler:
                     self.dialogue.get_llm_dialogue_with_memory(
                         memory_str, self.config.get("voiceprint", {}), speaker_for_system
                     ),
+                    extra_body=llm_extra_body,
                 )
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"LLM 处理出错 {query}: {e}")

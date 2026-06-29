@@ -226,22 +226,10 @@ public class ConfigServiceImpl implements ConfigService {
         Map<String, String> deviceAttributes = deviceAttributeService.getAttributesByDeviceId(device.getMacAddress());
         result.put("device_attributes", deviceAttributes);
 
-        // 如果设备属性中指定了语言，将其注入系统提示词，强制 LLM 使用该语言回复
-        String deviceLanguage = deviceAttributes.get("language");
-        String systemPrompt = agent.getSystemPrompt();
-        if (StringUtils.isNotBlank(deviceLanguage) && StringUtils.isNotBlank(systemPrompt)) {
-            systemPrompt = systemPrompt + "\n\n## [SYSTEM ORDER: LANGUAGE LOCK]\n"
-                    + "The device language has been set to: " + deviceLanguage + ".\n"
-                    + "You MUST reply STRICTLY in " + deviceLanguage + " from now on.\n"
-                    + "Do NOT use Chinese, English, or any other language except " + deviceLanguage + ".\n"
-                    + "All thoughts, explanations, and responses must be in " + deviceLanguage + " only.\n"
-                    + "This instruction overrides any other language hint in this prompt.";
-        }
-
         // 构建模块配置
         buildModuleConfig(
                 agent.getAgentName(),
-                systemPrompt,
+                agent.getSystemPrompt(),
                 agent.getSummaryMemory(),
                 voice,
                 referenceAudio,
