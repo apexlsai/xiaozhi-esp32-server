@@ -599,7 +599,6 @@ export default {
 .nav-text {
   white-space: normal;
   text-align: center;
-  max-width: 80px;
   line-height: 1.2;
 }
 
