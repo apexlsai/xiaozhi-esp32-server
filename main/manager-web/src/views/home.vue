@@ -17,7 +17,7 @@
               let's have a wonderful day!
             </div>
             <div class="add-device-options">
-            <div class="search-container" v-if="userInfo.superAdmin">
+            <div class="search-container">
               <div class="search-wrapper">
                   <el-input
                     v-model="search"
