@@ -167,6 +167,10 @@ public interface ErrorCode {
     int CHAT_HISTORY_SESSION_ID_NOT_NULL = 10133; // 会话ID不能为空
     int CHAT_HISTORY_AGENT_ID_NOT_NULL = 10134; // 智能体ID不能为空
     int CHAT_HISTORY_DOWNLOAD_FAILED = 10135; // 聊天记录下载失败
+
+    // 设备属性相关错误码
+    int DEVICE_ATTRIBUTE_LANGUAGE_INVALID = 10250; // 语言类型仅支持 en 或 zh-cn
+
     int DOWNLOAD_LINK_EXPIRED = 10136; // 下载链接已过期或无效
     int DOWNLOAD_LINK_INVALID = 10137; // 下载链接无效
     int CHAT_ROLE_USER = 10138; // 用户角色

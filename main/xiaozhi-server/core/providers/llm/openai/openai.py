@@ -122,6 +122,7 @@ class LLMProvider(LLMProviderBase):
         # 合并设备上下文 extra_body
         self._apply_extra_body(request_params, kwargs)
 
+        logger.bind(tag=TAG).info(f"发送给LLM的请求: {request_params}")
         responses = self.client.chat.completions.create(**request_params)
 
         is_active = True
@@ -170,6 +171,7 @@ class LLMProvider(LLMProviderBase):
         # 合并设备上下文 extra_body
         self._apply_extra_body(request_params, kwargs)
 
+        logger.bind(tag=TAG).info(f"发送给LLM的请求: {request_params}")
         stream = self.client.chat.completions.create(**request_params)
 
         try:
