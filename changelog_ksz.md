@@ -187,3 +187,60 @@ WHERE id='LLM_ChatGLMLLM';
 docker exec -i xiaozhi-esp32-server-db mysql -uroot -p123456 xiaozhi_esp32_server -e "SELECT user_id, token, expire_date FROM sys_user_token WHERE user_id=(SELECT id FROM sys_user WHERE username='Kszai');"
 ```
 
+临时绕过token过期
+
+```SQL
+UPDATE sys_user_token SET expire_date = DATE_ADD(NOW(), INTERVAL 12 HOUR) WHERE token = '766b843574eb733476bd8d892aa4868d';
+```
+
+***
+
+## 8. 设备属性 language 校验与 LLM 请求日志 (2026-06-30)
+
+### 8.1 设备语言属性写入校验
+
+**文件**: `main/manager-api/src/main/java/xiaozhi/modules/device/service/impl/DeviceAttributeServiceImpl.java`
+
+- 限制 `language` 属性仅允许 `en` 或 `zh-cn`
+- 非法值返回错误码 `10250`，提示 `Language type only supports en or zh-cn`
+- 同步更新 i18n 消息文件
+
+### 8.2 设备属性变更后自动同步到 LLM 请求
+
+**文件**: `main/xiaozhi-server/core/connection.py`
+
+- 每次调用 LLM 前，自动从 `manager-api` 刷新设备扩展属性
+- 缓存间隔 5 秒，避免频繁请求
+- 解决通过智控台/接口修改语言后需重启设备才生效的问题
+
+### 8.3 打印发送给 LLM 的请求参数
+
+**文件**: `main/xiaozhi-server/core/providers/llm/openai/openai.py`
+
+- 在 `response` 和 `response_with_functions` 中打印完整请求参数
+- 日志关键字：`发送给LLM的请求:`
+
+### 8.4 Docker 镜像切换为本地构建
+
+**文件**: `docker-compose.yml`、`main/xiaozhi-server/docker-compose.yml`
+
+- `server` 镜像改为 `xiaozhi-esp32-server:server_local`
+- `web` 镜像改为 `xiaozhi-esp32-server:web_local`
+
+### 8.5 测试命令
+
+```bash
+# 非法语言值
+PUT /xiaozhi/device/attribute/{deviceId}/language
+Body: cn
+# 返回 {"code":10250,"msg":"Language type only supports en or zh-cn","data":null}
+
+# 合法语言值
+PUT /xiaozhi/device/attribute/{deviceId}/language
+Body: en
+# 返回 {"code":0,"msg":"success","data":null}
+
+# 查看 LLM 请求日志
+docker logs -f xiaozhi-esp32-server
+```
+

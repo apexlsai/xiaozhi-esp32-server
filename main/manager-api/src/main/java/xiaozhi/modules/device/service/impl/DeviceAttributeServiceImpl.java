@@ -1,5 +1,6 @@
 package xiaozhi.modules.device.service.impl;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -14,6 +15,8 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 
 import lombok.AllArgsConstructor;
+import xiaozhi.common.exception.ErrorCode;
+import xiaozhi.common.exception.RenException;
 import xiaozhi.common.service.impl.BaseServiceImpl;
 import xiaozhi.modules.device.dao.DeviceAttributeDao;
 import xiaozhi.modules.device.entity.DeviceAttributeEntity;
@@ -50,11 +53,17 @@ public class DeviceAttributeServiceImpl extends BaseServiceImpl<DeviceAttributeD
         return entity == null ? null : entity.getAttrValue();
     }
 
+    private static final List<String> SUPPORTED_LANGUAGES = Arrays.asList("en", "zh-cn");
+
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void saveOrUpdateAttribute(String deviceId, String attrKey, String attrValue) {
         if (StringUtils.isBlank(deviceId) || StringUtils.isBlank(attrKey)) {
             return;
+        }
+        if ("language".equals(attrKey) && StringUtils.isNotBlank(attrValue)
+                && !SUPPORTED_LANGUAGES.contains(attrValue.toLowerCase())) {
+            throw new RenException(ErrorCode.DEVICE_ATTRIBUTE_LANGUAGE_INVALID);
         }
         QueryWrapper<DeviceAttributeEntity> wrapper = new QueryWrapper<>();
         wrapper.eq("device_id", deviceId).eq("attr_key", attrKey);

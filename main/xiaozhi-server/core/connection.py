@@ -177,6 +177,8 @@ class ConnectionHandler:
         # 设备扩展属性（从 manager-api 持久化读取）
         self.device_attributes = {}
         self.device_language = None
+        self._last_attrs_refresh = 0  # 上次刷新时间戳
+        self._attrs_refresh_interval = 5  # 刷新间隔（秒）
 
         self.cmd_exit = self.config["exit_commands"]
 
@@ -1056,6 +1058,40 @@ class ConnectionHandler:
                 extra_body["last_beacon_id"] = self.device_attributes.get("last_beacon_id")
         return extra_body
 
+    async def _refresh_device_attributes(self):
+        """从 manager-api 重新获取设备扩展属性"""
+        try:
+            from config.config_loader import get_private_config_from_api
+            private_config = await get_private_config_from_api(
+                self.config, self.device_id, self.client_id
+            )
+            if private_config.get("device_attributes", None) is not None:
+                new_attrs = private_config["device_attributes"] or {}
+                if new_attrs != self.device_attributes:
+                    self.device_attributes = new_attrs
+                    self.device_language = self.device_attributes.get("language")
+                    self.logger.bind(tag=TAG).info(
+                        f"设备扩展属性已刷新: {self.device_attributes}"
+                    )
+        except Exception as e:
+            self.logger.bind(tag=TAG).warning(f"刷新设备扩展属性失败: {e}")
+
+    def _ensure_device_attributes_fresh(self):
+        """确保设备扩展属性是最新的（带缓存，避免频繁刷新）"""
+        import time
+        if not self.read_config_from_api:
+            return
+        if time.time() - self._last_attrs_refresh < self._attrs_refresh_interval:
+            return
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                self._refresh_device_attributes(), self.loop
+            )
+            future.result(timeout=5)
+            self._last_attrs_refresh = time.time()
+        except Exception as e:
+            self.logger.bind(tag=TAG).warning(f"刷新设备扩展属性失败: {e}")
+
     def chat(self, query, depth=0):
         # 保存当前任务的sentence_id到局部变量，避免被新任务覆盖
         current_sentence_id = None
@@ -1130,6 +1166,7 @@ class ConnectionHandler:
                 self.system_introduced_speakers.add(cs)
                 speaker_for_system = cs
 
+            self._ensure_device_attributes_fresh()
             llm_extra_body = self._build_llm_extra_body()
 
             if self.intent_type == "function_call" and functions is not None:
