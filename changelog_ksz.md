@@ -220,14 +220,27 @@ UPDATE sys_user_token SET expire_date = DATE_ADD(NOW(), INTERVAL 12 HOUR) WHERE 
 - 在 `response` 和 `response_with_functions` 中打印完整请求参数
 - 日志关键字：`发送给LLM的请求:`
 
-### 8.4 Docker 镜像切换为本地构建
+### 8.4 新增 KSZ 本地构建版 Docker Compose
 
-**文件**: `docker-compose.yml`、`main/xiaozhi-server/docker-compose.yml`
+**文件**: `docker-compose-ksz.yml`、`main/xiaozhi-server/docker-compose-ksz.yml`
 
-- `server` 镜像改为 `xiaozhi-esp32-server:server_local`
-- `web` 镜像改为 `xiaozhi-esp32-server:web_local`
+- 新增 `docker-compose-ksz.yml`（全模块 Host 网络模式）
+- 新增 `main/xiaozhi-server/docker-compose-ksz.yml`（单 Server 模块）
+- KSZ 版使用本地构建镜像：
+  - `server` 使用 `xiaozhi-esp32-server:server_local`
+  - `web` 使用 `xiaozhi-esp32-server:web_local`
+- 原版 `docker-compose.yml` 保持官方远程镜像不变
 
-### 8.5 测试命令
+<br />
+
+### 8.5构建命令
+
+```bash
+cd /home/jacob/Projects/xiaozhi-esp32-server
+docker compose -f docker-compose-ksz.yml up -d
+```
+
+### 8.6 测试命令
 
 ```bash
 # 非法语言值
