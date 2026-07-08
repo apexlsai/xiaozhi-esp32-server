@@ -135,12 +135,12 @@ UPDATE sys_params SET param_value='http://192.168.1.71:8002/xiaozhi/ota/' WHERE 
 
 ```sql
 -- 原配置 IP 错误：192.168.1.71
--- 修正为实际 FunASR 服务地址：192.168.1.56
+-- 修正为实际 FunASR 服务地址：192.168.1.199
 UPDATE ai_model_config 
 SET config_json='{
   "type": "openai", 
   "api_key": "none", 
-  "base_url": "http://192.168.1.56:15102/v1/audio/transcriptions", 
+  "base_url": "http://192.168.1.199:15102/v1/audio/transcriptions", 
   "model_name": "fun-asr-nano", 
   "output_dir": "tmp/"
 }' 
@@ -153,29 +153,78 @@ WHERE id='ASR_OpenaiASR';
 
 **表**: `ai_model_config`
 
+#### 7.1 一键配置 LLM 和 SLM
+
 ```sql
+-- 同时更新 LLM 和 SLM 配置（两者指向同一服务）
 UPDATE ai_model_config 
 SET config_json='{
   "type": "openai", 
   "api_key": "your_api_gateway_key_here", 
-  "base_url": "http://192.168.1.56:15000/v1/", 
+  "base_url": "http://192.168.1.199:15000/v1/", 
   "model_name": "museum-guide-agent"
 }' 
-WHERE id='LLM_ChatGLMLLM';
+WHERE id='LLM_ChatGLMLLM' OR id='SLM_ChatGLMLLM';
 ```
+
+#### 7.2 清除 Redis 缓存并重启 server
+
+```bash
+docker exec xiaozhi-esp32-server-redis redis-cli FLUSHALL
+cd /home/jacob/Projects/xiaozhi-esp32-server
+docker compose -f docker-compose-ksz.yml restart xiaozhi-esp32-server
+```
+
+#### 7.3 验证配置是否生效
+
+```bash
+# 查看数据库配置
+docker exec xiaozhi-esp32-server-db mysql -uroot -p123456 -D xiaozhi_esp32_server -e "SELECT id, config_json FROM ai_model_config WHERE id='LLM_ChatGLMLLM';"
+
+# 查看 server 启动日志
+docker logs --tail 20 xiaozhi-esp32-server
+```
+
+#### 7.4 测试 LLM 接口连通性
+
+```bash
+curl --request POST \
+  --url http://192.168.1.199:15000/v1/chat/completions \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "model": "museum-guide-agent",
+    "messages": [{"role": "user", "content": "展馆里有食品卖吗？"}],
+    "stream": false,
+    "extra_body": {
+      "device_id": "98:88:e0:6c:29:1c",
+      "language": "en",
+      "last_beacon_id": "beacon-abc-123"
+    }
+  }'
+```
+
+#### 7.5 查看发送给 LLM 的请求日志
+
+触发设备语音对话后，查看日志中的请求参数：
+
+```bash
+docker logs -f xiaozhi-esp32-server | grep "发送给LLM的请求"
+```
+
+日志会打印完整请求，包含 `extra_body` 中的 `device_id`、`language`、`last_beacon_id`。
 
 ***
 
 ## 当前服务地址
 
-| 服务        | 地址                                                   |
-| --------- | ---------------------------------------------------- |
-| WebSocket | `ws://192.168.1.71:8000/xiaozhi/v1/`                 |
-| 智控台       | <http://192.168.1.71:8002/>                          |
-| OTA 接口    | <http://192.168.1.71:8002/xiaozhi/ota/>              |
-| 视觉接口      | <http://192.168.1.71:8003/mcp/vision/explain>        |
-| 本地 FunASR | <http://192.168.1.56:15102/v1/audio/transcriptions>  |
-| 本地 LLM    | <http://192.168.1.56:15000/v1/> (museum-guide-agent) |
+| 服务        | 地址                                                    |
+| --------- | ----------------------------------------------------- |
+| WebSocket | `ws://192.168.1.71:8000/xiaozhi/v1/`                  |
+| 智控台       | <http://192.168.1.71:8002/>                           |
+| OTA 接口    | <http://192.168.1.71:8002/xiaozhi/ota/>               |
+| 视觉接口      | <http://192.168.1.71:8003/mcp/vision/explain>         |
+| 本地 FunASR | <http://192.168.1.199:15102/v1/audio/transcriptions>  |
+| 本地 LLM    | <http://192.168.1.199:15000/v1/> (museum-guide-agent) |
 
 <br />
 
@@ -255,5 +304,15 @@ Body: en
 
 # 查看 LLM 请求日志
 docker logs -f xiaozhi-esp32-server
+```
+
+mysql连接方法
+
+```
+Host: 192.168.1.71
+Port: 3306
+User: root
+Password: 123456
+Database: xiaozhi_esp32_server
 ```
 
