@@ -1,5 +1,6 @@
 """服务端插件工具执行器"""
 
+import asyncio
 from typing import Dict, Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -40,6 +41,10 @@ class ServerPluginExecutor(ToolExecutor):
             else:
                 # 默认不传conn参数
                 result = func_item.func(**arguments)
+
+            # 兼容 async def 工具函数
+            if asyncio.iscoroutine(result):
+                result = await result
 
             return result
 

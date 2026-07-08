@@ -1,5 +1,5 @@
 import random
-import requests
+import httpx
 import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 from config.logger import setup_logging
@@ -44,11 +44,11 @@ GET_NEWS_FROM_CHINANEWS_FUNCTION_DESC = {
 }
 
 
-def fetch_news_from_rss(rss_url):
+async def fetch_news_from_rss(rss_url):
     """从RSS源获取新闻列表"""
     try:
-        response = requests.get(rss_url)
-        response.raise_for_status()
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=3.0)) as client:
+            response = await client.get(rss_url)
 
         # 解析XML
         root = ET.fromstring(response.content)
@@ -86,11 +86,11 @@ def fetch_news_from_rss(rss_url):
         return []
 
 
-def fetch_news_detail(url):
+async def fetch_news_detail(url):
     """获取新闻详情页内容并总结"""
     try:
-        response = requests.get(url)
-        response.raise_for_status()
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=3.0)) as client:
+            response = await client.get(url)
 
         soup = BeautifulSoup(response.content, "html.parser")
 
@@ -148,7 +148,7 @@ def map_category(category_text):
     GET_NEWS_FROM_CHINANEWS_FUNCTION_DESC,
     ToolType.SYSTEM_CTL,
 )
-def get_news_from_chinanews(
+async def get_news_from_chinanews(
     conn: "ConnectionHandler",
     category: str = None,
     detail: bool = False,
@@ -180,7 +180,7 @@ def get_news_from_chinanews(
             logger.bind(tag=TAG).debug(f"获取新闻详情: {title}, URL={link}")
 
             # 获取新闻详情
-            detail_content = fetch_news_detail(link)
+            detail_content = await fetch_news_detail(link)
 
             if not detail_content or detail_content == "无法获取详细内容":
                 return ActionResponse(
@@ -220,7 +220,7 @@ def get_news_from_chinanews(
         )
 
         # 获取新闻列表
-        news_items = fetch_news_from_rss(rss_url)
+        news_items = await fetch_news_from_rss(rss_url)
 
         if not news_items:
             return ActionResponse(

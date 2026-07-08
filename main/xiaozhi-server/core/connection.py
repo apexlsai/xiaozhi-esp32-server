@@ -388,56 +388,16 @@ class ConnectionHandler:
         try:
             # 提取头部信息
             timestamp = int.from_bytes(message[8:12], "big")
-            audio_length = int.from_bytes(message[12:16], "big")
 
             # 提取音频数据
-            if audio_length > 0 and len(message) >= 16 + audio_length:
-                # 有指定长度，提取精确的音频数据
-                audio_data = message[16 : 16 + audio_length]
-                # 基于时间戳进行排序处理
-                self._process_websocket_audio(audio_data, timestamp)
-                return True
-            elif len(message) > 16:
-                # 没有指定长度或长度无效，去掉头部后处理剩余数据
-                audio_data = message[16:]
-                self.asr_audio_queue.put(audio_data)
-                return True
+            audio_data = message[16:]
+            self.asr_audio_queue.put(audio_data)
+            return True
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"解析WebSocket音频包失败: {e}")
 
         # 处理失败，返回False表示需要继续处理
         return False
-
-    def _process_websocket_audio(self, audio_data, timestamp):
-        """处理WebSocket格式的音频包"""
-        # 初始化时间戳序列管理
-        if not hasattr(self, "audio_timestamp_buffer"):
-            self.audio_timestamp_buffer = {}
-            self.last_processed_timestamp = 0
-            self.max_timestamp_buffer_size = 20
-
-        # 如果时间戳是递增的，直接处理
-        if timestamp >= self.last_processed_timestamp:
-            self.asr_audio_queue.put(audio_data)
-            self.last_processed_timestamp = timestamp
-
-            # 处理缓冲区中的后续包
-            processed_any = True
-            while processed_any:
-                processed_any = False
-                for ts in sorted(self.audio_timestamp_buffer.keys()):
-                    if ts > self.last_processed_timestamp:
-                        buffered_audio = self.audio_timestamp_buffer.pop(ts)
-                        self.asr_audio_queue.put(buffered_audio)
-                        self.last_processed_timestamp = ts
-                        processed_any = True
-                        break
-        else:
-            # 乱序包，暂存
-            if len(self.audio_timestamp_buffer) < self.max_timestamp_buffer_size:
-                self.audio_timestamp_buffer[timestamp] = audio_data
-            else:
-                self.asr_audio_queue.put(audio_data)
 
     async def handle_restart(self, message):
         """处理服务器重启请求"""

@@ -1,4 +1,4 @@
-import requests
+import httpx
 from config.logger import setup_logging
 from plugins_func.register import (
     register_function,
@@ -37,7 +37,7 @@ WEB_SEARCH_FUNCTION_DESC = {
 }
 
 
-def _search_metaso(api_key: str, query: str, max_results: int) -> str:
+async def _search_metaso(api_key: str, query: str, max_results: int) -> str:
     """调用秘塔搜索API"""
     url = "https://metaso.cn/api/v1/search"
     headers = {
@@ -54,8 +54,8 @@ def _search_metaso(api_key: str, query: str, max_results: int) -> str:
         "conciseSnippet": False,
     }
     logger.bind(tag=TAG).debug(f"秘塔搜索请求 | URL: {url} | payload: {payload}")
-    response = requests.post(url, json=payload, headers=headers, timeout=15)
-    response.raise_for_status()
+    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=3.0)) as client:
+        response = await client.post(url, json=payload, headers=headers)
     data = response.json()
     logger.bind(tag=TAG).debug(f"秘塔搜索响应 | status: {response.status_code}")
 
@@ -77,7 +77,7 @@ def _search_metaso(api_key: str, query: str, max_results: int) -> str:
     return "\n".join(lines)
 
 
-def _search_tavily(api_key: str, query: str, max_results: int) -> str:
+async def _search_tavily(api_key: str, query: str, max_results: int) -> str:
     """调用Tavily搜索API"""
     url = "https://api.tavily.com/search"
     headers = {
@@ -91,8 +91,8 @@ def _search_tavily(api_key: str, query: str, max_results: int) -> str:
         "include_answer": "advanced",
     }
     logger.bind(tag=TAG).debug(f"Tavily搜索请求 | URL: {url} | payload: {payload}")
-    response = requests.post(url, json=payload, headers=headers, timeout=15)
-    response.raise_for_status()
+    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=3.0)) as client:
+        response = await client.post(url, json=payload, headers=headers)
     data = response.json()
     logger.bind(tag=TAG).debug(f"Tavily搜索响应 | status: {response.status_code} | data: {data}")
 
@@ -113,7 +113,7 @@ def _search_tavily(api_key: str, query: str, max_results: int) -> str:
 
 
 @register_function("web_search", WEB_SEARCH_FUNCTION_DESC, ToolType.SYSTEM_CTL)
-def web_search(conn: "ConnectionHandler", query: str = None):
+async def web_search(conn: "ConnectionHandler", query: str = None):
     logger.bind(tag=TAG).info(f"web_search 被调用 | query={query}")
     if not query:
         return ActionResponse(Action.REQLLM, "请提供搜索关键词。", None)
@@ -131,24 +131,22 @@ def web_search(conn: "ConnectionHandler", query: str = None):
             None,
         )
 
-    if provider == "metaso":
-        search_fn = lambda: _search_metaso(api_key, query, max_results)
-    elif provider == "tavily":
-        search_fn = lambda: _search_tavily(api_key, query, max_results)
-    else:
-        return ActionResponse(
-            Action.REQLLM,
-            f"联网搜索功能未配置或配置的搜索源无效（当前：{provider}），请检查配置。",
-            None,
-        )
-
     try:
-        result_text = search_fn()
+        if provider == "metaso":
+            result_text = await _search_metaso(api_key, query, max_results)
+        elif provider == "tavily":
+            result_text = await _search_tavily(api_key, query, max_results)
+        else:
+            return ActionResponse(
+                Action.REQLLM,
+                f"联网搜索功能未配置或配置的搜索源无效（当前：{provider}），请检查配置。",
+                None,
+            )
         logger.bind(tag=TAG).info(f"搜索结果组装完成:\n{result_text}")
-    except requests.exceptions.Timeout:
+    except httpx.TimeoutException:
         logger.bind(tag=TAG).error("联网搜索请求超时")
         result_text = "联网搜索请求超时，请稍后重试。"
-    except requests.exceptions.RequestException as e:
+    except httpx.HTTPStatusError as e:
         logger.bind(tag=TAG).error(f"联网搜索请求失败: {e}")
         result_text = "联网搜索请求失败，请稍后重试。"
     except Exception as e:
