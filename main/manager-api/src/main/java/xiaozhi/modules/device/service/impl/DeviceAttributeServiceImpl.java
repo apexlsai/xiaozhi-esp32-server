@@ -5,7 +5,6 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
@@ -29,31 +28,72 @@ public class DeviceAttributeServiceImpl extends BaseServiceImpl<DeviceAttributeD
 
     private final DeviceAttributeDao deviceAttributeDao;
 
-    @Override
-    public Map<String, String> getAttributesByDeviceId(String deviceId) {
-        if (StringUtils.isBlank(deviceId)) {
-            return Collections.emptyMap();
-        }
-        QueryWrapper<DeviceAttributeEntity> wrapper = new QueryWrapper<>();
-        wrapper.eq("device_id", deviceId);
-        List<DeviceAttributeEntity> list = deviceAttributeDao.selectList(wrapper);
-        return list.stream()
-                .collect(Collectors.toMap(DeviceAttributeEntity::getAttrKey, DeviceAttributeEntity::getAttrValue,
-                        (v1, v2) -> v1));
-    }
+    private static final List<String> SUPPORTED_LANGUAGES = Arrays.asList("en", "zh-cn");
 
     @Override
-    public String getAttributeValue(String deviceId, String attrKey) {
-        if (StringUtils.isBlank(deviceId) || StringUtils.isBlank(attrKey)) {
+    public DeviceAttributeEntity getByDeviceId(String deviceId) {
+        if (StringUtils.isBlank(deviceId)) {
             return null;
         }
         QueryWrapper<DeviceAttributeEntity> wrapper = new QueryWrapper<>();
-        wrapper.eq("device_id", deviceId).eq("attr_key", attrKey);
-        DeviceAttributeEntity entity = deviceAttributeDao.selectOne(wrapper);
-        return entity == null ? null : entity.getAttrValue();
+        wrapper.eq("device_id", deviceId);
+        return deviceAttributeDao.selectOne(wrapper);
     }
 
-    private static final List<String> SUPPORTED_LANGUAGES = Arrays.asList("en", "zh-cn");
+    @Override
+    public Map<String, String> getAttributesByDeviceId(String deviceId) {
+        DeviceAttributeEntity entity = getByDeviceId(deviceId);
+        if (entity == null) {
+            return Collections.emptyMap();
+        }
+        Map<String, String> result = new HashMap<>();
+        if (entity.getLanguage() != null) {
+            result.put("language", entity.getLanguage());
+        }
+        if (entity.getLastBeaconId() != null) {
+            result.put("last_beacon_id", entity.getLastBeaconId());
+        }
+        return result;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void updateLanguage(String deviceId, String language) {
+        if (StringUtils.isBlank(deviceId)) {
+            return;
+        }
+        if (StringUtils.isNotBlank(language) && !SUPPORTED_LANGUAGES.contains(language.toLowerCase())) {
+            throw new RenException(ErrorCode.DEVICE_ATTRIBUTE_LANGUAGE_INVALID);
+        }
+        DeviceAttributeEntity entity = getByDeviceId(deviceId);
+        if (entity == null) {
+            entity = new DeviceAttributeEntity();
+            entity.setDeviceId(deviceId);
+            entity.setLanguage(language);
+            deviceAttributeDao.insert(entity);
+        } else {
+            entity.setLanguage(language);
+            deviceAttributeDao.updateById(entity);
+        }
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void updateLastBeaconId(String deviceId, String lastBeaconId) {
+        if (StringUtils.isBlank(deviceId)) {
+            return;
+        }
+        DeviceAttributeEntity entity = getByDeviceId(deviceId);
+        if (entity == null) {
+            entity = new DeviceAttributeEntity();
+            entity.setDeviceId(deviceId);
+            entity.setLastBeaconId(lastBeaconId);
+            deviceAttributeDao.insert(entity);
+        } else {
+            entity.setLastBeaconId(lastBeaconId);
+            deviceAttributeDao.updateById(entity);
+        }
+    }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -61,43 +101,11 @@ public class DeviceAttributeServiceImpl extends BaseServiceImpl<DeviceAttributeD
         if (StringUtils.isBlank(deviceId) || StringUtils.isBlank(attrKey)) {
             return;
         }
-        if ("language".equals(attrKey) && StringUtils.isNotBlank(attrValue)
-                && !SUPPORTED_LANGUAGES.contains(attrValue.toLowerCase())) {
-            throw new RenException(ErrorCode.DEVICE_ATTRIBUTE_LANGUAGE_INVALID);
+        if ("language".equals(attrKey)) {
+            updateLanguage(deviceId, attrValue);
+        } else if ("last_beacon_id".equals(attrKey)) {
+            updateLastBeaconId(deviceId, attrValue);
         }
-        QueryWrapper<DeviceAttributeEntity> wrapper = new QueryWrapper<>();
-        wrapper.eq("device_id", deviceId).eq("attr_key", attrKey);
-        DeviceAttributeEntity entity = deviceAttributeDao.selectOne(wrapper);
-        if (entity == null) {
-            entity = new DeviceAttributeEntity();
-            entity.setDeviceId(deviceId);
-            entity.setAttrKey(attrKey);
-            entity.setAttrValue(attrValue);
-            deviceAttributeDao.insert(entity);
-        } else {
-            entity.setAttrValue(attrValue);
-            deviceAttributeDao.updateById(entity);
-        }
-    }
-
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void saveOrUpdateAttributes(String deviceId, Map<String, String> attributes) {
-        if (StringUtils.isBlank(deviceId) || attributes == null || attributes.isEmpty()) {
-            return;
-        }
-        attributes.forEach((key, value) -> saveOrUpdateAttribute(deviceId, key, value));
-    }
-
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void deleteAttribute(String deviceId, String attrKey) {
-        if (StringUtils.isBlank(deviceId) || StringUtils.isBlank(attrKey)) {
-            return;
-        }
-        UpdateWrapper<DeviceAttributeEntity> wrapper = new UpdateWrapper<>();
-        wrapper.eq("device_id", deviceId).eq("attr_key", attrKey);
-        deviceAttributeDao.delete(wrapper);
     }
 
     @Override

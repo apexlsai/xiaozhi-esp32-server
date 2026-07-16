@@ -103,14 +103,14 @@ public class DeviceController {
         if ("language_change".equals(dto.getEvent())) {
             Object language = dto.getPayload() == null ? null : dto.getPayload().get("language");
             if (language != null) {
-                deviceAttributeService.saveOrUpdateAttribute(deviceId, "language", language.toString());
+                deviceAttributeService.updateLanguage(deviceId, language.toString());
             }
         }
         // 处理蓝牙信标变更事件
         else if ("beacon_change".equals(dto.getEvent())) {
             Object beaconId = dto.getPayload() == null ? null : dto.getPayload().get("beacon_id");
             if (beaconId != null) {
-                deviceAttributeService.saveOrUpdateAttribute(deviceId, "last_beacon_id", beaconId.toString());
+                deviceAttributeService.updateLastBeaconId(deviceId, beaconId.toString());
             }
         }
 

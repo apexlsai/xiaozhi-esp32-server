@@ -9,7 +9,15 @@ import xiaozhi.modules.device.entity.DeviceAttributeEntity;
 public interface DeviceAttributeService extends BaseService<DeviceAttributeEntity> {
 
     /**
-     * 获取设备所有扩展属性
+     * 获取设备扩展属性实体
+     * 
+     * @param deviceId 设备ID
+     * @return 设备属性实体，不存在则返回 null
+     */
+    DeviceAttributeEntity getByDeviceId(String deviceId);
+
+    /**
+     * 获取设备所有扩展属性（Map 形式，兼容旧接口）
      * 
      * @param deviceId 设备ID
      * @return key-value 属性映射
@@ -17,38 +25,29 @@ public interface DeviceAttributeService extends BaseService<DeviceAttributeEntit
     Map<String, String> getAttributesByDeviceId(String deviceId);
 
     /**
-     * 获取单个设备属性
+     * 更新设备语言
      * 
      * @param deviceId 设备ID
-     * @param attrKey  属性key
-     * @return 属性值
+     * @param language 语言代码（en, zh-cn）
      */
-    String getAttributeValue(String deviceId, String attrKey);
+    void updateLanguage(String deviceId, String language);
 
     /**
-     * 保存或更新设备属性
+     * 更新设备蓝牙信标ID
+     * 
+     * @param deviceId     设备ID
+     * @param lastBeaconId 蓝牙信标ID
+     */
+    void updateLastBeaconId(String deviceId, String lastBeaconId);
+
+    /**
+     * 保存或更新设备属性（兼容旧接口）
      * 
      * @param deviceId  设备ID
-     * @param attrKey   属性key
+     * @param attrKey   属性key（language 或 last_beacon_id）
      * @param attrValue 属性值
      */
     void saveOrUpdateAttribute(String deviceId, String attrKey, String attrValue);
-
-    /**
-     * 批量保存或更新设备属性
-     * 
-     * @param deviceId   设备ID
-     * @param attributes 属性映射
-     */
-    void saveOrUpdateAttributes(String deviceId, Map<String, String> attributes);
-
-    /**
-     * 删除设备属性
-     * 
-     * @param deviceId 设备ID
-     * @param attrKey  属性key
-     */
-    void deleteAttribute(String deviceId, String attrKey);
 
     /**
      * 删除设备所有属性

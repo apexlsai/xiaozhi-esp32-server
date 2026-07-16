@@ -25,11 +25,11 @@ public class DeviceAttributeEntity {
     @Schema(description = "设备ID（mac地址）")
     private String deviceId;
 
-    @Schema(description = "属性key")
-    private String attrKey;
+    @Schema(description = "设备语言（en, zh-cn）")
+    private String language;
 
-    @Schema(description = "属性值")
-    private String attrValue;
+    @Schema(description = "最近检测到的蓝牙信标ID")
+    private String lastBeaconId;
 
     @Schema(description = "创建者")
     @TableField(fill = FieldFill.INSERT)
