@@ -73,6 +73,60 @@
         </div>
       </div>
       <AddWisdomBodyDialog :visible.sync="addDeviceDialogVisible" @confirm="handleWisdomBodyAdded" />
+      <el-dialog
+        :visible.sync="deleteAgentDialogVisible"
+        :close-on-click-modal="!isDeletingAgent"
+        :close-on-press-escape="!isDeletingAgent"
+        :show-close="!isDeletingAgent"
+        width="520px"
+        append-to-body
+        class="delete-agent-dialog"
+        @closed="resetDeleteAgentDialog"
+      >
+        <template slot="title">
+          <div class="delete-agent-title">
+            <img src="@/assets/knowledge-base/level.png" class="delete-agent-title-icon" />
+            <span>{{ $t('home.deleteConfirmTitle') }}</span>
+          </div>
+        </template>
+        <div class="delete-agent-content">
+          <i class="el-icon-warning-outline delete-agent-warning"></i>
+          <div class="delete-agent-message">
+            <div class="delete-agent-copy-guard" @copy.prevent @cut.prevent @contextmenu.prevent>
+              {{ $t('home.confirmDeleteAgent', { agentName: deleteTargetAgentName }) }}
+            </div>
+            <div class="delete-agent-target delete-agent-copy-guard" @copy.prevent @cut.prevent @contextmenu.prevent>
+              {{ deleteTargetAgentName }}
+            </div>
+            <el-input
+              ref="deleteAgentConfirmInput"
+              v-model="deleteAgentConfirmText"
+              class="delete-agent-input"
+              :placeholder="$t('home.deleteAgentNamePlaceholder')"
+              clearable
+              @paste.native.prevent="handleDeleteAgentPaste"
+              @drop.native.prevent="handleDeleteAgentPaste"
+              @contextmenu.native.prevent
+              @keyup.enter.native="confirmDeleteAgent"
+            />
+            <div v-if="deleteAgentConfirmText && !isDeleteAgentNameMatched" class="delete-agent-helper">
+              {{ $t('home.deleteAgentNameMismatch') }}
+            </div>
+          </div>
+        </div>
+        <span slot="footer" class="delete-agent-footer">
+          <el-button class="delete-agent-cancel" :disabled="isDeletingAgent" @click="closeDeleteAgentDialog">{{ $t('button.cancel') }}</el-button>
+          <el-button
+            class="delete-agent-confirm"
+            type="primary"
+            :loading="isDeletingAgent"
+            :disabled="!isDeleteAgentNameMatched"
+            @click="confirmDeleteAgent"
+          >
+            {{ $t('button.ok') }}
+          </el-button>
+        </span>
+      </el-dialog>
     </el-main>
     <el-footer>
       <version-footer />
@@ -116,6 +170,11 @@ export default {
       search: "",
       showHistory: false,
       searchHistory: [],
+      deleteAgentDialogVisible: false,
+      deleteTargetAgentId: '',
+      deleteTargetAgentName: '',
+      deleteAgentConfirmText: '',
+      isDeletingAgent: false,
     }
   },
 
@@ -123,6 +182,9 @@ export default {
     ...mapState({
       userInfo: (state) => state.userInfo,
     }),
+    isDeleteAgentNameMatched() {
+      return !!this.deleteTargetAgentName && this.deleteAgentConfirmText === this.deleteTargetAgentName;
+    },
   },
 
   async mounted() {
@@ -193,27 +255,61 @@ export default {
       });
     },
     // 删除智能体
-    handleDeleteAgent(agentId) {
-      this.$confirm(this.$t('home.confirmDeleteAgent'), '提示', {
-        confirmButtonText: this.$t('button.ok'),
-        cancelButtonText: this.$t('button.cancel'),
-        type: 'warning'
-      }).then(() => {
-        Api.agent.deleteAgent(agentId, (res) => {
-          if (res.data.code === 0) {
-            this.$message.success({
-              message: this.$t('home.deleteSuccess'),
-              showClose: true
-            });
-            this.fetchAgentList(); // 刷新列表
-          } else {
-            this.$message.error({
-              message: res.data.msg || this.$t('home.deleteFailed'),
-              showClose: true
-            });
-          }
-        });
-      }).catch(() => { });
+    handleDeleteAgent(device) {
+      const targetAgent = typeof device === 'object'
+        ? device
+        : this.devices.find((item) => item.agentId === device || item.id === device);
+      const agentId = targetAgent?.agentId || targetAgent?.id;
+      const agentName = targetAgent?.agentName || '';
+
+      if (!agentId || !agentName) {
+        this.$message.error(this.$t('home.deleteAgentMissingInfo'));
+        return;
+      }
+
+      this.deleteTargetAgentId = agentId;
+      this.deleteTargetAgentName = agentName;
+      this.deleteAgentConfirmText = '';
+      this.deleteAgentDialogVisible = true;
+      this.$nextTick(() => {
+        if (this.$refs.deleteAgentConfirmInput) {
+          this.$refs.deleteAgentConfirmInput.focus();
+        }
+      });
+    },
+    handleDeleteAgentPaste() {
+      this.$message.warning(this.$t('home.deleteAgentPasteForbidden'));
+    },
+    closeDeleteAgentDialog() {
+      if (this.isDeletingAgent) return;
+      this.deleteAgentDialogVisible = false;
+    },
+    resetDeleteAgentDialog() {
+      this.deleteTargetAgentId = '';
+      this.deleteTargetAgentName = '';
+      this.deleteAgentConfirmText = '';
+      this.isDeletingAgent = false;
+    },
+    confirmDeleteAgent() {
+      if (!this.isDeleteAgentNameMatched || this.isDeletingAgent) return;
+
+      this.isDeletingAgent = true;
+      Api.agent.deleteAgent(this.deleteTargetAgentId, (res) => {
+        this.isDeletingAgent = false;
+        if (res.data.code === 0) {
+          this.$message.success({
+            message: this.$t('home.deleteSuccess'),
+            showClose: true
+          });
+          this.deleteAgentDialogVisible = false;
+          this.fetchAgentList(); // 刷新列表
+        } else {
+          this.$message.error({
+            message: res.data.msg || this.$t('home.deleteFailed'),
+            showClose: true
+          });
+        }
+      });
     },
     handleShowChatHistory({ agentId, agentName }) {
       this.currentAgentId = agentId;
@@ -640,5 +736,170 @@ export default {
       rgba(255, 255, 255, 0.3),
       rgba(255, 255, 255, 0));
   animation: shimmer 1.5s infinite;
+}
+
+.delete-agent-content {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.delete-agent-title {
+  display: inline-flex;
+  align-items: center;
+  font-size: 18px;
+  font-weight: 500;
+  color: #2f3a5f;
+}
+
+.delete-agent-title-icon {
+  width: 24px;
+  height: 24px;
+  margin-right: 8px;
+}
+
+.delete-agent-warning {
+  color: #e6a23c;
+  font-size: 24px;
+  margin-top: 4px;
+}
+
+.delete-agent-message {
+  flex: 1;
+  color: #606266;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.delete-agent-target {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+  background: #f5f7fa;
+  color: #303133;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.delete-agent-copy-guard {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.delete-agent-input {
+  margin-top: 16px;
+}
+
+.delete-agent-input::v-deep .el-input__inner {
+  height: 42px;
+  border-color: #d8dce8;
+  border-radius: 4px;
+  background: #fff;
+  color: #303133;
+  font-size: 14px;
+}
+
+.delete-agent-helper {
+  min-height: 18px;
+  margin-top: 6px;
+  color: #f56c6c;
+  font-size: 12px;
+}
+
+.delete-agent-footer {
+  display: inline-flex;
+  gap: 10px;
+}
+
+.delete-agent-dialog::v-deep .el-dialog {
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.delete-agent-dialog::v-deep .el-dialog__header {
+  padding: 16px 20px 12px;
+  background: linear-gradient(135deg, #e2eeff, #edeafe);
+  text-align: left;
+}
+
+.delete-agent-dialog::v-deep .el-dialog__headerbtn {
+  top: 12px;
+  right: 16px;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.delete-agent-dialog::v-deep .el-dialog__headerbtn .el-dialog__close {
+  font-size: 18px;
+  color: #666;
+  position: static;
+  transform: none;
+}
+
+.delete-agent-dialog::v-deep .el-dialog__headerbtn:hover {
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+.delete-agent-dialog::v-deep .el-dialog__headerbtn:hover .el-dialog__close {
+  color: #333;
+}
+
+.delete-agent-dialog::v-deep .el-dialog__body {
+  padding: 28px 32px 20px;
+}
+
+.delete-agent-dialog::v-deep .el-dialog__footer {
+  padding: 12px 32px 24px;
+}
+
+.delete-agent-cancel,
+.delete-agent-confirm {
+  min-width: 92px;
+  height: 40px;
+  padding: 0 20px;
+  border-radius: 6px;
+  font-size: 15px;
+}
+
+.delete-agent-cancel {
+  color: #fff;
+  background: #4d94f7;
+  border: none;
+}
+
+.delete-agent-cancel:hover,
+.delete-agent-cancel:focus {
+  color: #fff;
+  background: #4d94f7;
+  opacity: 0.88;
+}
+
+.delete-agent-confirm {
+  background: linear-gradient(to right, #4a7cfd, #8154fc);
+  border: none;
+}
+
+.delete-agent-confirm:hover,
+.delete-agent-confirm:focus {
+  background: linear-gradient(to right, #4a7cfd, #8154fc);
+  opacity: 0.88;
+}
+
+.delete-agent-confirm.is-disabled,
+.delete-agent-confirm.is-disabled:hover,
+.delete-agent-confirm.is-disabled:focus {
+  background: linear-gradient(to right, #4a7cfd, #8154fc);
+  border: none;
+  opacity: 0.45;
 }
 </style>

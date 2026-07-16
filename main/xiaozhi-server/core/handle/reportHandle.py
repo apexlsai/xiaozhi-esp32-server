@@ -50,33 +50,27 @@ async def report(conn: "ConnectionHandler", type, text, opus_data, report_time):
         conn.logger.bind(tag=TAG).error(f"聊天记录上报失败: {e}")
 
 
-def opus_to_wav(conn: "ConnectionHandler", opus_data):
-    """将Opus数据转换为WAV格式的字节流
+def opus_to_wav(conn: "ConnectionHandler", pcm_data):
+    """将PCM数据转换为WAV格式的字节流
 
     Args:
         output_dir: 输出目录（保留参数以保持接口兼容）
-        opus_data: opus音频数据
+        pcm_data: PCM音频数据（可能是列表或bytes）
 
     Returns:
         bytes: WAV格式的音频数据
     """
-    decoder = None
     try:
-        decoder = opuslib_next.Decoder(16000, 1)  # 16kHz, 单声道
-        pcm_data = []
+        # 处理可能是列表或bytes的PCM数据
+        if isinstance(pcm_data, list):
+            pcm_data_bytes = b"".join(pcm_data)
+        else:
+            pcm_data_bytes = pcm_data
 
-        for opus_packet in opus_data:
-            try:
-                pcm_frame = decoder.decode(opus_packet, 960)  # 960 samples = 60ms
-                pcm_data.append(pcm_frame)
-            except opuslib_next.OpusError as e:
-                conn.logger.bind(tag=TAG).error(f"Opus解码错误: {e}", exc_info=True)
-
-        if not pcm_data:
+        if not pcm_data_bytes:
             raise ValueError("没有有效的PCM数据")
 
         # 创建WAV文件头
-        pcm_data_bytes = b"".join(pcm_data)
         num_samples = len(pcm_data_bytes) // 2  # 16-bit samples
 
         # WAV文件头
@@ -97,12 +91,9 @@ def opus_to_wav(conn: "ConnectionHandler", opus_data):
 
         # 返回完整的WAV数据
         return bytes(wav_header) + pcm_data_bytes
-    finally:
-        if decoder is not None:
-            try:
-                del decoder
-            except Exception as e:
-                conn.logger.bind(tag=TAG).debug(f"释放decoder资源时出错: {e}")
+    except Exception as e:
+        conn.logger.bind(tag=TAG).error(f"PCM转WAV失败: {e}", exc_info=True)
+        raise
 
 
 def enqueue_tts_report(conn: "ConnectionHandler", text, opus_data):

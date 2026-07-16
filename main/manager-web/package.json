@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "serve": "vue-cli-service serve",
+    "check:i18n": "node scripts/check-i18n.js",
+    "test:snapshot": "node --test src/components/agentSnapshotDisplayUtils.test.mjs src/apis/module/agentSnapshotApi.test.mjs",
     "build": "vue-cli-service build",
     "analyze": "cross-env ANALYZE=true vue-cli-service build"
   },

@@ -42,7 +42,7 @@ TAG = __name__
 class WebSocketServer:
     def __init__(self, config: dict):
         self.config = config
-        self.logger = setup_logging()
+        self.logger = setup_logging(config)
         self.config_lock = asyncio.Lock()
         modules = initialize_modules(
             self.logger,

@@ -2,7 +2,11 @@ import type {
   Agent,
   AgentCreateData,
   AgentDetail,
+  AgentSnapshot,
+  AgentSnapshotPageParams,
+  CorrectWordFile,
   ModelOption,
+  PageData,
   RoleTemplate,
 } from './types'
 import { http } from '@/http/request/alova'
@@ -100,7 +104,7 @@ export function getTTSVoices(ttsModelId: string, voiceName: string = '') {
 }
 
 // 更新智能体
-export function updateAgent(id: string, data: Partial<AgentDetail>) {
+export function updateAgent(id: string, data: Partial<AgentDetail> & { tagNames?: string[] }) {
   return http.Put(`/agent/${id}`, data, {
     meta: {
       ignoreAuth: false,
@@ -211,6 +215,66 @@ export function updateAgentTags(agentId: string, data) {
 // 获取所有语言
 export function getAllLanguage(modelId: string) {
   return http.Get<{ id: string, name: string, languages: string }[]>(`/models/${modelId}/voices`, {
+    meta: {
+      ignoreAuth: false,
+      toast: false,
+    },
+    cacheFor: {
+      expire: 0,
+    },
+  })
+}
+
+// 获取智能体历史版本列表
+export function getAgentSnapshots(agentId: string, params: AgentSnapshotPageParams) {
+  return http.Get<PageData<AgentSnapshot>>(`/agent/${agentId}/snapshots`, {
+    params,
+    meta: {
+      ignoreAuth: false,
+      toast: false,
+    },
+    cacheFor: {
+      expire: 0,
+    },
+  })
+}
+
+// 获取智能体历史版本详情
+export function getAgentSnapshot(agentId: string, snapshotId: string) {
+  return http.Get<AgentSnapshot>(`/agent/${agentId}/snapshots/${snapshotId}`, {
+    meta: {
+      ignoreAuth: false,
+      toast: false,
+    },
+    cacheFor: {
+      expire: 0,
+    },
+  })
+}
+
+// 恢复智能体历史版本
+export function restoreAgentSnapshot(agentId: string, snapshotId: string, currentStateToken: string) {
+  return http.Post(`/agent/${agentId}/snapshots/${snapshotId}/restore`, { currentStateToken }, {
+    meta: {
+      ignoreAuth: false,
+      toast: false,
+    },
+  })
+}
+
+// 删除智能体历史版本
+export function deleteAgentSnapshot(agentId: string, snapshotId: string) {
+  return http.Delete(`/agent/${agentId}/snapshots/${snapshotId}`, {
+    meta: {
+      ignoreAuth: false,
+      toast: false,
+    },
+  })
+}
+
+// 获取所有替换词文件
+export function getCorrectWordFiles() {
+  return http.Get<CorrectWordFile[]>('/correct-word/file/select', {
     meta: {
       ignoreAuth: false,
       toast: false,

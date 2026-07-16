@@ -38,6 +38,14 @@ public interface AgentChatHistoryService extends IService<AgentChatHistoryEntity
     List<AgentChatHistoryDTO> getChatHistoryBySessionId(String agentId, String sessionId);
 
     /**
+     * 根据会话ID获取智能体ID
+     *
+     * @param sessionId 会话ID
+     * @return 智能体ID
+     */
+    String getAgentIdBySessionId(String sessionId);
+
+    /**
      * 根据智能体ID删除聊天记录
      *
      * @param agentId     智能体ID
@@ -61,6 +69,14 @@ public interface AgentChatHistoryService extends IService<AgentChatHistoryEntity
      * @return 聊天内容
      */
     String getContentByAudioId(String audioId);
+
+    /**
+     * 根据音频ID获取智能体ID
+     *
+     * @param audioId 音频ID
+     * @return 智能体ID
+     */
+    String getAgentIdByAudioId(String audioId);
 
 
     /**

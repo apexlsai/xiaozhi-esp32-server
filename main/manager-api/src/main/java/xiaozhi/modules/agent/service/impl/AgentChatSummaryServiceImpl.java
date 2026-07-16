@@ -118,7 +118,7 @@ public class AgentChatSummaryServiceImpl implements AgentChatSummaryService {
                         {
                             setSummaryMemory(summaryDTO.getSummary());
                         }
-                    });
+                    }, false);
                     log.info("成功保存会话 {} 的聊天记录总结到智能体 {}", sessionId, agentId);
                 } else {
                     log.info("生成总结失败: {}", summaryDTO.getErrorMessage());

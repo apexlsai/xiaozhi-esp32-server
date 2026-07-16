@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import type { Device, FirmwareType } from '@/api/device'
 import { computed, onMounted, ref } from 'vue'
-import { useMessage } from 'wot-design-uni'
+import { useMessage } from 'wot-design-uni/components/wd-message-box'
 import { bindDevice, bindDeviceManual, getBindDevices, getFirmwareTypes, unbindDevice, updateDeviceAutoUpdate } from '@/api/device'
 import { t } from '@/i18n'
 import { toast } from '@/utils/toast'

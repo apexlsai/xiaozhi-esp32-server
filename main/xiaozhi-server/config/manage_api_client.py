@@ -73,6 +73,7 @@ class ManageApiClient:
                     },
                     timeout=cls.config.get("timeout", 30),
                     limits=limits,  # 使用限制
+                    trust_env=False,
                 )
             return cls._async_clients[loop_id]
         except RuntimeError:

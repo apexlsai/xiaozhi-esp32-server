@@ -89,6 +89,19 @@ public class AgentChatHistoryServiceImpl extends ServiceImpl<AiAgentChatHistoryD
     }
 
     @Override
+    public String getAgentIdBySessionId(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return null;
+        }
+        AgentChatHistoryEntity entity = baseMapper.selectOne(
+                new LambdaQueryWrapper<AgentChatHistoryEntity>()
+                        .select(AgentChatHistoryEntity::getAgentId)
+                        .eq(AgentChatHistoryEntity::getSessionId, sessionId)
+                        .last("LIMIT 1"));
+        return entity == null ? null : entity.getAgentId();
+    }
+
+    @Override
     @Transactional(rollbackFor = Exception.class)
     public void deleteByAgentId(String agentId, Boolean deleteAudio, Boolean deleteText) {
         if (deleteAudio) {
@@ -174,6 +187,19 @@ public class AgentChatHistoryServiceImpl extends ServiceImpl<AiAgentChatHistoryD
                         .select(AgentChatHistoryEntity::getContent)
                         .eq(AgentChatHistoryEntity::getAudioId, audioId));
         return agentChatHistoryEntity == null ? null : agentChatHistoryEntity.getContent();
+    }
+
+    @Override
+    public String getAgentIdByAudioId(String audioId) {
+        if (audioId == null || audioId.isBlank()) {
+            return null;
+        }
+        AgentChatHistoryEntity entity = baseMapper.selectOne(
+                new LambdaQueryWrapper<AgentChatHistoryEntity>()
+                        .select(AgentChatHistoryEntity::getAgentId)
+                        .eq(AgentChatHistoryEntity::getAudioId, audioId)
+                        .last("LIMIT 1"));
+        return entity == null ? null : entity.getAgentId();
     }
 
     @Override
