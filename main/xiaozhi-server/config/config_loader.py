@@ -1,5 +1,6 @@
 import os
 import asyncio
+import traceback
 import yaml
 from collections.abc import Mapping
 from config.manage_api_client import (
@@ -10,6 +11,8 @@ from config.manage_api_client import (
     DeviceNotFoundException,
     DeviceBindException,
 )
+
+TAG = __name__
 
 
 def get_project_dir():
@@ -99,6 +102,26 @@ async def get_private_config_from_api(config, device_id, client_id):
         raise agent_result
     if isinstance(agent_result, DeviceBindException):
         raise agent_result
+
+    # 惰性导入日志，避免与 config.logger 形成模块级循环依赖
+    from config.logger import setup_logging
+
+    logger = setup_logging()
+
+    # 非业务异常（如接口500/超时/连接失败）此前被静默吞成空配置，
+    # 导致下游 selected_module 缺失、只剩一句含糊的 'TTS' 报错。这里显式打出来。
+    if isinstance(agent_result, Exception):
+        logger.bind(tag=TAG).error(
+            f"获取智能体差异化配置失败(device_id={device_id}, client_id={client_id}): "
+            f"{type(agent_result).__name__}: {agent_result}。"
+            f"请检查 manager-api(/config/agent-models) 是否正常、jar 与数据库结构是否一致。\n"
+            f"{''.join(traceback.format_exception(type(agent_result), agent_result, agent_result.__traceback__))}"
+        )
+    if isinstance(results[1], Exception):
+        logger.bind(tag=TAG).warning(
+            f"获取智能体替换词失败(device_id={device_id}): "
+            f"{type(results[1]).__name__}: {results[1]}"
+        )
 
     private_config = agent_result if not isinstance(agent_result, Exception) else {}
     if correct_words:

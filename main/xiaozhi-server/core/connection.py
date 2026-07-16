@@ -656,8 +656,21 @@ class ConnectionHandler:
             """注入工具调用few-shot示例（仅function_call模式）"""
             self._inject_tool_call_fewshot()
 
+        except KeyError as e:
+            # 典型场景：差异化配置为空导致 selected_module 缺少某个模块(如 'TTS')，
+            # 原本只打印一个裸 key，极难定位。这里说明来龙去脉。
+            selected = self.config.get("selected_module", {})
+            self.logger.bind(tag=TAG).error(
+                f"实例化组件失败: 配置缺少键 {e}。"
+                f"当前 selected_module={selected}。"
+                f"多因 manager-api 差异化配置获取失败(接口异常/设备未绑定)导致模块未注入，"
+                f"请结合上方 '差异化配置' 相关日志与 manager-api 日志排查。\n"
+                f"{traceback.format_exc()}"
+            )
         except Exception as e:
-            self.logger.bind(tag=TAG).error(f"实例化组件失败: {e}")
+            self.logger.bind(tag=TAG).error(
+                f"实例化组件失败: {type(e).__name__}: {e}\n{traceback.format_exc()}"
+            )
 
     def _init_prompt_enhancement(self):
 
@@ -815,9 +828,19 @@ class ConnectionHandler:
                 self.headers.get("client-id", self.headers.get("device-id")),
             )
             private_config["delete_audio"] = bool(self.config.get("delete_audio", True))
-            self.logger.bind(tag=TAG).info(
-                f"{time.time() - begin_time} 秒，异步获取差异化配置成功: {json.dumps(filter_sensitive_info(private_config), ensure_ascii=False)}"
-            )
+            # 仅有 delete_audio 说明接口实际未返回任何模块配置（多为 manager-api 异常被吞后回空），
+            # 此时若仍报“成功”会掩盖真实问题，改为醒目告警。
+            meaningful_keys = [k for k in private_config.keys() if k != "delete_audio"]
+            if not meaningful_keys:
+                self.logger.bind(tag=TAG).error(
+                    f"{time.time() - begin_time:.3f} 秒，差异化配置为空(仅 delete_audio)："
+                    f"device_id={self.headers.get('device-id')} 可能设备未绑定或 manager-api 返回异常，"
+                    f"后续将因缺少 selected_module(如 TTS) 导致组件初始化失败。请检查 manager-api 日志。"
+                )
+            else:
+                self.logger.bind(tag=TAG).info(
+                    f"{time.time() - begin_time} 秒，异步获取差异化配置成功: {json.dumps(filter_sensitive_info(private_config), ensure_ascii=False)}"
+                )
             self.need_bind = False
             self.bind_completed_event.set()
         except DeviceNotFoundException as e:
@@ -952,7 +975,9 @@ class ConnectionHandler:
                 init_intent,
             )
         except Exception as e:
-            self.logger.bind(tag=TAG).error(f"初始化组件失败: {e}")
+            self.logger.bind(tag=TAG).error(
+                f"初始化组件失败: {type(e).__name__}: {e}\n{traceback.format_exc()}"
+            )
             modules = {}
         if modules.get("tts", None) is not None:
             self.tts = modules["tts"]
@@ -1079,8 +1104,9 @@ class ConnectionHandler:
         """从 manager-api 重新获取设备扩展属性"""
         try:
             from config.config_loader import get_private_config_from_api
+            client_id = self.headers.get("client-id", self.device_id)
             private_config = await get_private_config_from_api(
-                self.config, self.device_id, self.client_id
+                self.config, self.device_id, client_id
             )
             if private_config.get("device_attributes", None) is not None:
                 new_attrs = private_config["device_attributes"] or {}
