@@ -326,11 +326,11 @@ Database: xiaozhi_esp32_server
 
 将 `ai_device_attribute` 表从 key-value 模式改为直接字段模式：
 
-| 旧表结构           | 新表结构            |
-| ------------------ | ------------------- |
-| `attr_key` (属性名)  | `language` (语言字段) |
-| `attr_value` (属性值) | `last_beacon_id` (信标ID字段) |
-| 联合唯一键 `(device_id, attr_key)` | 唯一键 `(device_id)` |
+| 旧表结构                          | 新表结构                      |
+| ----------------------------- | ------------------------- |
+| `attr_key` (属性名)              | `language` (语言字段)         |
+| `attr_value` (属性值)            | `last_beacon_id` (信标ID字段) |
+| 联合唯一键 `(device_id, attr_key)` | 唯一键 `(device_id)`         |
 
 ### 9.2 手动执行数据库迁移
 
@@ -383,13 +383,13 @@ GROUP BY b.device_id;
 
 **修改的文件**：
 
-| 文件 | 修改内容 |
-| ---- | -------- |
-| `DeviceAttributeEntity.java` | 将 `attrKey`、`attrValue` 改为 `language`、`lastBeaconId` |
-| `DeviceAttributeService.java` | 新增 `updateLanguage()`、`updateLastBeaconId()` 方法 |
-| `DeviceAttributeServiceImpl.java` | 实现新接口，保留兼容方法 `saveOrUpdateAttribute()` |
-| `DeviceAttributeController.java` | 新增 `/language`、`/last_beacon_id` 端点 |
-| `DeviceController.java` | `reportDeviceEvent()` 使用新方法 |
+| 文件                                | 修改内容                                                 |
+| --------------------------------- | ---------------------------------------------------- |
+| `DeviceAttributeEntity.java`      | 将 `attrKey`、`attrValue` 改为 `language`、`lastBeaconId` |
+| `DeviceAttributeService.java`     | 新增 `updateLanguage()`、`updateLastBeaconId()` 方法      |
+| `DeviceAttributeServiceImpl.java` | 实现新接口，保留兼容方法 `saveOrUpdateAttribute()`               |
+| `DeviceAttributeController.java`  | 新增 `/language`、`/last_beacon_id` 端点                  |
+| `DeviceController.java`           | `reportDeviceEvent()` 使用新方法                          |
 
 ### 9.4 API 接口变更
 
@@ -482,7 +482,7 @@ docker restart xiaozhi-esp32-server
 
 **文件**: `main/xiaozhi-server/core/connection.py`
 
-- `_initialize_private_config_async`：差异化配置只剩 `delete_audio`（等于没拿到任何模块）时，不再误报“获取成功”，改为 **error 告警**并点明“后续会因缺少 selected_module(如 TTS) 初始化失败”。
+- `_initialize_private_config_async`：差异化配置只剩 `delete_audio`（等于没拿到任何模块）时，不再误报“获取成功”，改为 **error 告警**并点明“后续会因缺少 selected\_module(如 TTS) 初始化失败”。
 - `_initialize_components`：新增 `KeyError` 专门分支，把裸的 `实例化组件失败: 'TTS'` 换成——缺哪个键、当前 `selected_module`、大概率原因、完整堆栈；其余异常统一带类型名 + 堆栈。
 - `initialize_modules` 并行初始化的吞错点也补上类型名 + 堆栈。
 
@@ -500,4 +500,70 @@ docker logs --tail 10 xiaozhi-esp32-server   # 确认无循环导入、VAD/ASR �
 
 - 迁移脚本 `202607101600.sql` **未登记**进 `db.changelog-master.yaml`，本次是手动执行的，`DATABASECHANGELOG` 也无记录。全新部署时该表会停在旧结构，新 jar 会再次报 `attr_key` 错。
 - 若要补登记，需改成幂等写法/加 `preConditions`，否则重跑会 `DROP` 表并从旧备份还原，存在丢数据风险。
+
+***
+
+## 11. MCP (Model Context Protocol) 集成说明 (2026-07-17)
+
+### 11.1 工具类型架构
+
+小智服务端支持 **5 种工具类型**，通过统一的工具处理器协调：
+
+| 工具类型            | 执行器                  | 来源           |
+| --------------- | -------------------- | ------------ |
+| `SERVER_PLUGIN` | ServerPluginExecutor | 内置插件函数       |
+| `SERVER_MCP`    | ServerMCPExecutor    | 外部 MCP 服务配置  |
+| `DEVICE_IOT`    | DeviceIoTExecutor    | 设备端 IoT 动态注册 |
+| `DEVICE_MCP`    | DeviceMCPExecutor    | 设备端 MCP 服务   |
+| `MCP_ENDPOINT`  | MCPEndpointExecutor  | 远程 MCP 接入点   |
+
+### 11.2 内置插件函数
+
+位置：`main/xiaozhi-server/plugins_func/functions/`
+
+| 插件                        | 功能                  |
+| ------------------------- | ------------------- |
+| `get_weather`             | 获取天气                |
+| `get_time`                | 获取时间                |
+| `web_search`              | 网页搜索                |
+| `play_music`              | 播放音乐                |
+| `change_role`             | 切换角色                |
+| `handle_exit_intent`      | 退出意图处理              |
+| `call_device`             | 调用设备                |
+| `get_news_from_newsnow`   | 获取新闻 (NewsNow)      |
+| `get_news_from_chinanews` | 获取新闻 (中国新闻网)        |
+| `search_from_ragflow`     | RAGFlow 知识库搜索       |
+| `hass_get_state`          | Home Assistant 获取状态 |
+| `hass_set_state`          | Home Assistant 设置状态 |
+| `hass_play_music`         | Home Assistant 播放音乐 |
+| `hass_init`               | Home Assistant 初始化  |
+
+### 11.3 外部 MCP 服务配置
+
+配置文件：`data/.mcp_server_settings.json`
+
+支持用户自定义添加任意 MCP 服务，示例配置见：`main/xiaozhi-server/mcp_server_settings.json`
+
+支持的传输模式：
+
+- **stdio**：本地命令行工具（通过 `command` + `args` 配置）
+- **sse**：Server-Sent Events（通过 `url` + `headers` 配置）
+- **streamable-http**：流式 HTTP（通过 `url` + `"transport": "streamable-http"` 配置）
+
+### 11.4 相关代码位置
+
+| 文件                                                | 说明         |
+| ------------------------------------------------- | ---------- |
+| `core/providers/tools/unified_tool_handler.py`    | 统一工具处理器    |
+| `core/providers/tools/server_mcp/mcp_manager.py`  | MCP 服务管理器  |
+| `core/providers/tools/server_mcp/mcp_client.py`   | MCP 客户端实现  |
+| `core/providers/tools/server_mcp/mcp_executor.py` | MCP 工具执行器  |
+| `core/providers/tools/device_iot/iot_executor.py` | 设备 IoT 执行器 |
+
+### 11.5 项目 MCP 文档
+
+- [mcp-endpoint-enable.md](file:///home/jacob/Projects/xiaozhi-esp32-server/docs/mcp-endpoint-enable.md) - MCP 接入点部署指南
+- [mcp-endpoint-integration.md](file:///home/jacob/Projects/xiaozhi-esp32-server/docs/mcp-endpoint-integration.md) - MCP 接入点使用指南（接入计算器示例）
+- [mcp-vision-integration.md](file:///home/jacob/Projects/xiaozhi-esp32-server/docs/mcp-vision-integration.md) - 视觉模型 MCP 集成指南
+- [mcp-get-device-info.md](file:///home/jacob/Projects/xiaozhi-esp32-server/docs/mcp-get-device-info.md) - MCP 方法获取设备信息
 
