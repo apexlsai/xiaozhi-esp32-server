@@ -185,6 +185,10 @@ uploadfile
 *.json
 .vscode
 .cursor
+.trae
+.codegraph
+
+
  
 !package.json
 !**/package.json
@@ -202,3 +206,5 @@ sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01.tar.bz2
 
 mysql/
 data/
+
+
