@@ -31,15 +31,9 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 
-import cn.hutool.core.date.DatePattern;
-import cn.hutool.core.date.DateUtil;
 import cn.hutool.core.map.MapUtil;
 import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.util.StrUtil;
-import cn.hutool.crypto.digest.DigestUtil;
-import cn.hutool.http.ContentType;
-import cn.hutool.http.Header;
-import cn.hutool.http.HttpRequest;
 import cn.hutool.json.JSONArray;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
@@ -187,14 +181,7 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
                 .put("clientIds", deviceIds).build();
 
         if (ToolUtil.isNotEmpty(deviceIds)) {
-            // 发送请求
-            String resultMessage = HttpRequest.post(url)
-                    .header(Header.CONTENT_TYPE, ContentType.JSON.getValue())
-                    .header(Header.AUTHORIZATION, "Bearer " + generateBearerToken())
-                    .body(JSONUtil.toJsonStr(params))
-                    .timeout(10000) // 超时，毫秒
-                    .execute().body();
-            return resultMessage;
+            return postToMqttGateway(url, params);
         }
         // 返回响应
         return "";
@@ -304,15 +291,20 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
     @Override
     public List<UserShowDeviceListVO> getUserDeviceList(Long userId, String agentId) {
         List<DeviceEntity> devices = getUserDevices(userId, agentId);
-        return devices.stream().map(device -> {
-            UserShowDeviceListVO vo = ConvertUtils.sourceToTarget(device, UserShowDeviceListVO.class);
-            vo.setDeviceType(device.getBoard());
-            // 设置UTC时间戳供前端使用时区转换
-            if (device.getLastConnectedAt() != null) {
-                vo.setLastConnectedAtTimestamp(device.getLastConnectedAt().getTime());
-            }
-            return vo;
-        }).toList();
+        return devices.stream().map(this::toUserShowDeviceListVO).toList();
+    }
+
+    private UserShowDeviceListVO toUserShowDeviceListVO(DeviceEntity device) {
+        UserShowDeviceListVO vo = ConvertUtils.sourceToTarget(device, UserShowDeviceListVO.class);
+        vo.setDeviceType(device.getBoard());
+        vo.setBoard(device.getBoard());
+        vo.setCreateDateTimestamp(toTimestamp(device.getCreateDate()));
+        vo.setLastConnectedAtTimestamp(toTimestamp(device.getLastConnectedAt()));
+        return vo;
+    }
+
+    private Long toTimestamp(Date date) {
+        return date == null ? null : date.getTime();
     }
 
     @Override
@@ -385,17 +377,11 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
                         .like(StringUtils.isNotBlank(dto.getKeywords()), "alias", dto.getKeywords()));
         // 循环处理page获取回来的数据，返回需要的字段
         List<UserShowDeviceListVO> list = page.getRecords().stream().map(device -> {
-            UserShowDeviceListVO vo = ConvertUtils.sourceToTarget(device, UserShowDeviceListVO.class);
+            UserShowDeviceListVO vo = toUserShowDeviceListVO(device);
             // 把最后修改的时间，改为简短描述的时间
             vo.setRecentChatTime(DateUtils.getShortTime(device.getUpdateDate()));
             sysUserUtilService.assignUsername(device.getUserId(),
                     vo::setBindUserName);
-            vo.setDeviceType(device.getBoard());
-            vo.setBoard(device.getBoard());
-            // 设置UTC时间戳供前端使用时区转换
-            if (device.getLastConnectedAt() != null) {
-                vo.setLastConnectedAtTimestamp(device.getLastConnectedAt().getTime());
-            }
             return vo;
         }).toList();
         // 计算页数
@@ -699,20 +685,13 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
         return mqtt;
     }
 
-    /**
-     * 生成BearerToken
-     */
-    private String generateBearerToken() {
-        try {
-            String dateStr = DateUtil.format(new Date(), DatePattern.NORM_DATE_PATTERN);
-            String signatureKey = sysParamsService.getValue(Constant.SERVER_MQTT_SECRET, false);
-            if (ToolUtil.isEmpty(signatureKey)) {
-                return null;
-            }
-            return DigestUtil.sha256Hex(dateStr + signatureKey);
-        } catch (Exception e) {
-            return null;
-        }
+    private String postToMqttGateway(String url, Object requestBody) {
+        String signatureKey = sysParamsService.getValue(Constant.SERVER_MQTT_SECRET, false);
+        return MqttGatewayAuthorization.postJson(
+                url,
+                JSONUtil.toJsonStr(requestBody),
+                signatureKey,
+                Instant.now());
     }
 
     @Override
@@ -773,13 +752,7 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
                     .put("payload", payload)
                     .build();
 
-            // 发送请求
-            String resultMessage = HttpRequest.post(url)
-                    .header(Header.CONTENT_TYPE, ContentType.JSON.getValue())
-                    .header(Header.AUTHORIZATION, "Bearer " + generateBearerToken())
-                    .body(JSONUtil.toJsonStr(requestBody))
-                    .timeout(10000) // 超时，毫秒
-                    .execute().body();
+            String resultMessage = postToMqttGateway(url, requestBody);
 
             // 解析响应
             if (StringUtils.isBlank(resultMessage)) {
@@ -870,13 +843,7 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
                 .put("payload", payload)
                 .build();
 
-        // 发送请求
-        String resultMessage = HttpRequest.post(url)
-                .header(Header.CONTENT_TYPE, ContentType.JSON.getValue())
-                .header(Header.AUTHORIZATION, "Bearer " + generateBearerToken())
-                .body(JSONUtil.toJsonStr(requestBody))
-                .timeout(10000) // 超时，毫秒
-                .execute().body();
+        String resultMessage = postToMqttGateway(url, requestBody);
 
         // 解析响应
         if (StringUtils.isNotBlank(resultMessage)) {

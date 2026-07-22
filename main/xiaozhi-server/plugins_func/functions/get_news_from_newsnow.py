@@ -1,6 +1,7 @@
 import random
 import httpx
-from markitdown import MarkItDown
+from io import BytesIO
+from markitdown import MarkItDown, StreamInfo
 from config.logger import setup_logging
 from plugins_func.register import register_function, ToolType, ActionResponse, Action
 from typing import TYPE_CHECKING
@@ -144,7 +145,14 @@ async def fetch_news_detail(url):
 
         # 使用MarkItDown清理HTML内容
         md = MarkItDown(enable_plugins=False)
-        result = md.convert(response)
+        result = md.convert_stream(
+            BytesIO(response.content),
+            stream_info=StreamInfo(
+                mimetype="text/html",
+                extension=".html",
+                charset=response.encoding or "utf-8",
+            ),
+        )
 
         # 获取清理后的文本内容
         clean_text = result.text_content

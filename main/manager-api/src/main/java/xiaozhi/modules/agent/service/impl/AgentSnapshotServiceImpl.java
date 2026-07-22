@@ -26,6 +26,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.metadata.OrderItem;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.extension.repository.IRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -612,7 +613,7 @@ public class AgentSnapshotServiceImpl extends BaseServiceImpl<AgentSnapshotDao, 
             mapping.setParamInfo(JsonUtils.toJsonString(info.getParamInfo()));
             return mapping;
         }).toList();
-        agentPluginMappingService.saveBatch(mappings);
+        agentPluginMappingService.saveBatch(mappings, IRepository.DEFAULT_BATCH_SIZE);
     }
 
     private void restoreContextProviders(String agentId,

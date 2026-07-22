@@ -13,6 +13,11 @@ import xiaozhi.modules.device.entity.DeviceAddressBookEntity;
 public interface DeviceAddressBookDao extends BaseMapper<DeviceAddressBookEntity> {
 
     /**
+     * 新增设备通讯录记录
+     */
+    int insertAddressBook(DeviceAddressBookEntity entity);
+
+    /**
      * 获取设备通讯录列表
      */
     List<DeviceAddressBookEntity> getAddressBookList(@Param("macAddress") String macAddress);

@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.repository.IRepository;
 
 import lombok.AllArgsConstructor;
 import xiaozhi.common.constant.Constant;
@@ -482,10 +483,10 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
                     .toList();
 
             if (!toUpdate.isEmpty()) {
-                agentPluginMappingService.updateBatchById(toUpdate);
+                agentPluginMappingService.updateBatchById(toUpdate, IRepository.DEFAULT_BATCH_SIZE);
             }
             if (!toInsert.isEmpty()) {
-                agentPluginMappingService.saveBatch(toInsert);
+                agentPluginMappingService.saveBatch(toInsert, IRepository.DEFAULT_BATCH_SIZE);
             }
 
             // 5. 删除本次不在提交列表里的插件映射
@@ -494,7 +495,7 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
                     .map(AgentPluginMapping::getId)
                     .toList();
             if (!toDelete.isEmpty()) {
-                agentPluginMappingService.removeBatchByIds(toDelete);
+                agentPluginMappingService.removeByIds(toDelete);
             }
         }
 
@@ -687,7 +688,7 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
             toInsert.add(mapping);
         }
         // 保存默认插件
-        agentPluginMappingService.saveBatch(toInsert);
+        agentPluginMappingService.saveBatch(toInsert, IRepository.DEFAULT_BATCH_SIZE);
         agentSnapshotService.createSnapshot(entity.getId(), "initial");
         return entity.getId();
     }

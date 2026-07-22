@@ -5,7 +5,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
 
 import org.apache.ibatis.binding.MapperMethod;
 import org.apache.ibatis.logging.Log;
@@ -181,8 +181,9 @@ public abstract class BaseServiceImpl<M extends BaseMapper<T>, T> implements Bas
      * 执行批量操作
      */
     @SuppressWarnings("deprecation")
-    protected <E> boolean executeBatch(Collection<E> list, int batchSize, BiConsumer<SqlSession, E> consumer) {
-        return SqlHelper.executeBatch(this.currentModelClass(), this.log, list, batchSize, consumer);
+    protected <E> boolean executeBatch(Collection<E> list, int batchSize, BiFunction<SqlSession, E, Integer> operation) {
+        return SqlHelper.executeBatch(SqlHelper.sqlSessionFactory(this.currentModelClass()), this.log, list, batchSize,
+                operation);
     }
 
     @Override
@@ -209,7 +210,7 @@ public abstract class BaseServiceImpl<M extends BaseMapper<T>, T> implements Bas
         return executeBatch(entityList, batchSize, (sqlSession, entity) -> {
             MapperMethod.ParamMap<T> param = new MapperMethod.ParamMap<>();
             param.put(Constants.ENTITY, entity);
-            sqlSession.update(sqlStatement, param);
+            return sqlSession.update(sqlStatement, param);
         });
     }
 

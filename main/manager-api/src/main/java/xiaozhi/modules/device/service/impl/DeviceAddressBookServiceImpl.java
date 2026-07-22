@@ -1,11 +1,10 @@
 package xiaozhi.modules.device.service.impl;
 
-import java.util.Date;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
-import java.nio.charset.StandardCharsets;
 
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.context.annotation.Lazy;
@@ -13,8 +12,8 @@ import org.springframework.stereotype.Service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 
-import cn.hutool.http.HttpRequest;
 import cn.hutool.json.JSONUtil;
+import xiaozhi.common.constant.Constant;
 import xiaozhi.common.redis.RedisKeys;
 import xiaozhi.common.redis.RedisUtils;
 import xiaozhi.modules.device.dao.DeviceAddressBookDao;
@@ -168,7 +167,7 @@ public class DeviceAddressBookServiceImpl implements DeviceAddressBookService {
             alias = generateUniqueAlias(macAddress, targetMac, alias);
             entity.setAlias(alias);
             entity.setHasPermission(hasPermission);
-            deviceAddressBookDao.insert(entity);
+            deviceAddressBookDao.insertAddressBook(entity);
         } else {
             if (alias != null) {
                 updateAlias(macAddress, targetMac, alias);
@@ -201,36 +200,22 @@ public class DeviceAddressBookServiceImpl implements DeviceAddressBookService {
         result.put("status", "error");
 
         String mqttGatewayUrl = sysParamsService.getValue("server.mqtt_manager_api", true);
-        String mqttSignatureKey = sysParamsService.getValue("server.mqtt_signature_key", true);
+        String mqttSignatureKey = sysParamsService.getValue(Constant.SERVER_MQTT_SECRET, true);
 
         if (StringUtils.isBlank(mqttGatewayUrl) || "null".equals(mqttGatewayUrl)
-                || StringUtils.isBlank(mqttSignatureKey) || "null".equals(mqttSignatureKey)) {
+                || MqttGatewayAuthorization.isMissingSignatureKey(mqttSignatureKey)) {
             result.put("message", action + "失败，网关配置缺失");
             return result;
         }
 
-        String dateStr = new java.text.SimpleDateFormat("yyyy-MM-dd").format(new Date());
         try {
-            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
-            byte[] hash = md.digest((dateStr + mqttSignatureKey).getBytes(StandardCharsets.UTF_8));
-            StringBuilder hexString = new StringBuilder();
-            for (byte b : hash) {
-                String hex = Integer.toHexString(0xff & b);
-                if (hex.length() == 1) {
-                    hexString.append('0');
-                }
-                hexString.append(hex);
-            }
-            String token = hexString.toString();
-
             String url = "http://" + mqttGatewayUrl + path;
-            String response = HttpRequest.post(url)
-                    .header("Authorization", "Bearer " + token)
-                    .header("Content-Type", "application/json")
-                    .body(JSONUtil.toJsonStr(body))
-                    .timeout(5000)
-                    .execute()
-                    .body();
+            String response = MqttGatewayAuthorization.postJson(
+                    url,
+                    JSONUtil.toJsonStr(body),
+                    mqttSignatureKey,
+                    Instant.now(),
+                    5000);
 
             if (StringUtils.isNotBlank(response)) {
                 Map<String, Object> gwResult = JSONUtil.parseObj(response);
