@@ -21,7 +21,8 @@ services:
       - TZ=Asia/Shanghai
     volumes:
       - ${DATA_DIR:-./data}:/opt/xiaozhi-esp32-server/data
-      - ${MODEL_PATH:-./models/SenseVoiceSmall/model.pt}:/opt/xiaozhi-esp32-server/models/SenseVoiceSmall/model.pt
+      # 使用远程 OpenAI 兼容 ASR，故不挂载本地 SenseVoice 模型。
+      # 启用本地 FunASR 时，再恢复 model.pt 文件挂载。
 
   xiaozhi-esp32-server-web:
     image: xiaozhi-esp32-server:web_local
