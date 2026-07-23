@@ -1,9 +1,12 @@
-# 小智服务端全模块部署 - KSZ 二次开发本地构建版 (Host 网络模式)
-# 用法: docker compose -f docker-compose-ksz.yml up -d
+# 小智服务端全模块部署 - KSZ 二次开发本地构建版（Host 网络模式）
+# 在本目录执行：docker compose up -d --build
 
 services:
   xiaozhi-esp32-server:
     image: xiaozhi-esp32-server:server_local
+    build:
+      context: ..
+      dockerfile: Dockerfile-server
     container_name: xiaozhi-esp32-server
     depends_on:
       xiaozhi-esp32-server-db:
@@ -22,6 +25,9 @@ services:
 
   xiaozhi-esp32-server-web:
     image: xiaozhi-esp32-server:web_local
+    build:
+      context: ..
+      dockerfile: Dockerfile-web
     container_name: xiaozhi-esp32-server-web
     restart: always
     network_mode: host
@@ -45,7 +51,7 @@ services:
     image: mysql:latest
     container_name: xiaozhi-esp32-server-db
     healthcheck:
-      test: [ "CMD", "mysqladmin" ,"ping", "-h", "localhost" ]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       timeout: 45s
       interval: 10s
       retries: 10
@@ -57,7 +63,7 @@ services:
       - TZ=Asia/Shanghai
       - MYSQL_ROOT_PASSWORD=123456
       - MYSQL_DATABASE=xiaozhi_esp32_server
-      - MYSQL_INITDB_ARGS="--character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci"
+      - MYSQL_INITDB_ARGS=--character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
 
   xiaozhi-esp32-server-redis:
     image: redis:8.0
