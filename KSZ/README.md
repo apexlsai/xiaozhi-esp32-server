@@ -7,7 +7,7 @@
 - 已安装 Docker Engine 和 Docker Compose v2。
 - 在项目根目录中保留 `Dockerfile-server`、`Dockerfile-web` 和 `main/` 源码目录。
 - 确保 Docker 可以拉取基础镜像，以及 MySQL、Redis 镜像。
-- 准备 ASR 模型文件：`KSZ/models/SenseVoiceSmall/model.pt`。也可用 `MODEL_PATH` 指定其他宿主机路径。
+- 默认使用远程 OpenAI 兼容 ASR，无需下载或挂载本地 SenseVoice 模型。
 
 ## 首次构建并启动
 
@@ -25,7 +25,6 @@ docker compose up -d --build
 Compose 会在 `KSZ/` 下创建并使用以下默认持久化目录：
 
 - `data/`：server 配置和运行数据
-- `models/SenseVoiceSmall/model.pt`：SenseVoice 模型
 - `uploadfile/`：智控台上传文件
 - `mysql/data/`：MySQL 数据
 
@@ -33,7 +32,6 @@ Compose 会在 `KSZ/` 下创建并使用以下默认持久化目录：
 
 ```bash
 export DATA_DIR=/srv/xiaozhi/data
-export MODEL_PATH=/srv/models/SenseVoiceSmall/model.pt
 export UPLOAD_DIR=/srv/xiaozhi/uploadfile
 export MYSQL_DATA_DIR=/srv/xiaozhi/mysql
 docker compose up -d --build
