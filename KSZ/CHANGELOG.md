@@ -7,6 +7,7 @@
 - 全模块本地构建 Compose 由项目根目录 `docker-compose-ksz.yml` 迁移并改名为 `KSZ/compose.yml`。
 - 为 server、web 服务补充本地 `build` 定义，分别使用根目录 `Dockerfile-server` 和 `Dockerfile-web`，修复本地镜像不存在时被错误拉取的问题。
 - 新增 `KSZ/.env`、`.env.example`，仅参数化 Host 网络下 MySQL、Redis 的依赖端口；默认将 MySQL 调整为 `3307`，避免与宿主机 `3306` 冲突。
+- 默认使用远程 OpenAI 兼容 ASR，移除本地 `model.pt` 文件挂载，避免模型文件缺失或类型错误阻止容器创建。
 - 删除独立 `DEVLOG.md`，将历史集中到本文件；使用和维护说明集中到 `README.md`。
 - 重构本 CHANGELOG 为纯时间线：移除命令、SQL、接口示例和配置代码块，补齐 2026-06-16 至 2026-07-22 的 KSZ 开发、迁移、排障与上游同步节点。
 - 精简 `AGENTS.md`，明确所有 KSZ 专用开发、部署、配置和文档均以 `KSZ/` 为基地。
