@@ -38,20 +38,21 @@ services:
         condition: service_healthy
     environment:
       - TZ=Asia/Shanghai
-      - SPRING_DATASOURCE_DRUID_URL=jdbc:mysql://127.0.0.1:3306/xiaozhi_esp32_server?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&nullCatalogMeansCurrent=true&connectTimeout=30000&socketTimeout=30000&autoReconnect=true&failOverReadOnly=false&maxReconnects=10
+      - SPRING_DATASOURCE_DRUID_URL=jdbc:mysql://127.0.0.1:${MYSQL_PORT:-3307}/xiaozhi_esp32_server?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&nullCatalogMeansCurrent=true&connectTimeout=30000&socketTimeout=30000&autoReconnect=true&failOverReadOnly=false&maxReconnects=10
       - SPRING_DATASOURCE_DRUID_USERNAME=root
       - SPRING_DATASOURCE_DRUID_PASSWORD=123456
       - SPRING_DATA_REDIS_HOST=127.0.0.1
       - SPRING_DATA_REDIS_PASSWORD=
-      - SPRING_DATA_REDIS_PORT=6379
+      - SPRING_DATA_REDIS_PORT=${REDIS_PORT:-6379}
     volumes:
       - ${UPLOAD_DIR:-./uploadfile}:/uploadfile
 
   xiaozhi-esp32-server-db:
     image: mysql:latest
     container_name: xiaozhi-esp32-server-db
+    command: --port=${MYSQL_PORT:-3307}
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-P", "${MYSQL_PORT:-3307}"]
       timeout: 45s
       interval: 10s
       retries: 10
@@ -68,10 +69,11 @@ services:
   xiaozhi-esp32-server-redis:
     image: redis:8.0
     container_name: xiaozhi-esp32-server-redis
+    command: ["redis-server", "--port", "${REDIS_PORT:-6379}"]
     restart: always
     network_mode: host
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-p", "${REDIS_PORT:-6379}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 3

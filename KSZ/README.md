@@ -39,6 +39,23 @@ export MYSQL_DATA_DIR=/srv/xiaozhi/mysql
 docker compose up -d --build
 ```
 
+## 依赖服务端口
+
+Host 网络模式下，web 容器通过宿主机端口连接 MySQL 和 Redis。使用 `KSZ/.env` 配置这两个依赖端口；首次部署默认配置为 MySQL `3307`、Redis `6379`。如需重新生成配置：
+
+```bash
+cp .env.example .env
+```
+
+修改 `MYSQL_PORT` 或 `REDIS_PORT` 后，需重新创建整套服务，使 MySQL、Redis 和 web 使用同一组端口：
+
+```bash
+docker compose down
+docker compose up -d --build
+```
+
+`8000`、`8002`、`8003` 分别是 server 与 web 的对外服务端口，保持固定，不在 `.env` 中配置。
+
 ## 常用操作
 
 ```bash
@@ -65,8 +82,8 @@ docker compose restart xiaozhi-esp32-server
 - `8000`：WebSocket 服务
 - `8002`：智控台与 OTA 接口
 - `8003`：视觉/HTTP 接口
-- `3306`：MySQL
-- `6379`：Redis
+- `${MYSQL_PORT}`：MySQL（默认 `3307`）
+- `${REDIS_PORT}`：Redis（默认 `6379`）
 
 启动前请确认这些端口没有被其他进程占用。
 
@@ -128,7 +145,7 @@ docker compose logs -f xiaozhi-esp32-server | grep "发送给LLM的请求"
 - `pull access denied for xiaozhi-esp32-server`：确认命令在 `KSZ/` 执行，并使用 `docker compose up -d --build`；本地镜像必须由 `build` 段生成。
 - server 报缺少 `TTS` 或设备无法识别语音：重建 web，清 Redis 的 `server:config`，再重启 server。
 - 数据库已迁移但 web 报 `Unknown column 'attr_key'`：web 镜像与数据库结构不一致，按“更新代码后的部署”重建 web。
-- 容器启动失败或端口无法监听：检查 `8000`、`8002`、`8003`、`3306`、`6379` 是否已被宿主机进程占用。
+- 容器启动失败或端口无法监听：检查 `8000`、`8002`、`8003`、`${MYSQL_PORT}`、`${REDIS_PORT}` 是否已被宿主机进程占用。
 
 具体变更背景、数据库迁移和故障根因请参阅 [CHANGELOG.md](CHANGELOG.md)。所有 KSZ 定制开发记录均维护在该文件中。
 
