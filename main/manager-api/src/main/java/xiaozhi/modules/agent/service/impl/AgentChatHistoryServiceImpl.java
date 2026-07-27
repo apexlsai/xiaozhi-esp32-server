@@ -167,7 +167,7 @@ public class AgentChatHistoryServiceImpl extends CrudRepository<AiAgentChatHisto
 
         // 尝试解析为 JSON
         try {
-            Map<String, Object> jsonMap = JsonUtils.parseObject(content, Map.class);
+            Map<String, Object> jsonMap = JsonUtils.parseMap(content);
             if (jsonMap != null && jsonMap.containsKey("content")) {
                 Object contentObj = jsonMap.get("content");
                 return contentObj != null ? contentObj.toString() : content;

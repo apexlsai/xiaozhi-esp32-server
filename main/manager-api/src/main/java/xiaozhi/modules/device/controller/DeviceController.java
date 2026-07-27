@@ -159,7 +159,9 @@ public class DeviceController {
             return new Result<Void>().error("设备不存在");
         }
         BeanUtils.copyProperties(deviceUpdateDTO, entity);
-        deviceService.updateById(entity);
+        if (!deviceService.updateById(entity)) {
+            return new Result<Void>().error(ErrorCode.UPDATE_DATA_FAILED);
+        }
         return new Result<Void>();
     }
 

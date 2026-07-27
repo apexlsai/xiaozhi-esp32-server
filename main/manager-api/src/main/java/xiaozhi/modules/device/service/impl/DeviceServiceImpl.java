@@ -50,6 +50,7 @@ import xiaozhi.common.service.impl.BaseServiceImpl;
 import xiaozhi.common.user.UserDetail;
 import xiaozhi.common.utils.ConvertUtils;
 import xiaozhi.common.utils.DateUtils;
+import xiaozhi.common.utils.JsonUtils;
 import xiaozhi.common.utils.ToolUtil;
 import xiaozhi.modules.device.dao.DeviceDao;
 import xiaozhi.modules.device.dto.DeviceManualAddDTO;
@@ -109,7 +110,7 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
         String deviceId = (String) cacheDeviceId;
         String safeDeviceId = deviceId.replace(":", "_").toLowerCase();
         String cacheDeviceKey = RedisKeys.getOtaDeviceActivationInfo(safeDeviceId);
-        Map<String, Object> cacheMap = (Map<String, Object>) redisUtils.get(cacheDeviceKey);
+        Map<String, Object> cacheMap = JsonUtils.toStringObjectMap(redisUtils.get(cacheDeviceKey));
         if (ToolUtil.isEmpty(cacheMap)) {
             throw new RenException(ErrorCode.ACTIVATION_CODE_ERROR);
         }
@@ -201,8 +202,8 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
             firmware.setUrl(Constant.INVALID_FIRMWARE_URL);
             response.setFirmware(firmware);
         } else {
-            // 只有在设备已绑定且autoUpdate不为0的情况下才返回固件升级信息
-            if (deviceById.getAutoUpdate() != 0) {
+            // 只有在设备已绑定且明确开启自动升级时才返回固件升级信息
+            if (Integer.valueOf(1).equals(deviceById.getAutoUpdate())) {
                 String type = deviceReport.getBoard() == null ? null : deviceReport.getBoard().getType();
                 DeviceReportRespDTO.Firmware firmware = buildFirmwareInfo(type,
                         deviceReport.getApplication() == null ? null : deviceReport.getApplication().getVersion());
@@ -298,6 +299,7 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
         UserShowDeviceListVO vo = ConvertUtils.sourceToTarget(device, UserShowDeviceListVO.class);
         vo.setDeviceType(device.getBoard());
         vo.setBoard(device.getBoard());
+        vo.setAutoUpdate(device.getAutoUpdate());
         vo.setCreateDateTimestamp(toTimestamp(device.getCreateDate()));
         vo.setLastConnectedAtTimestamp(toTimestamp(device.getLastConnectedAt()));
         return vo;
@@ -411,7 +413,7 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
     public String geCodeByDeviceId(String deviceId) {
         String dataKey = getDeviceCacheKey(deviceId);
 
-        Map<String, Object> cacheMap = (Map<String, Object>) redisUtils.get(dataKey);
+        Map<String, Object> cacheMap = JsonUtils.toStringObjectMap(redisUtils.get(dataKey));
         if (cacheMap != null && cacheMap.containsKey("activation_code")) {
             String cachedCode = (String) cacheMap.get("activation_code");
             return cachedCode;

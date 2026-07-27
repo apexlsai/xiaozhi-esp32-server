@@ -677,7 +677,7 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
             mapping.setPluginId(pluginId);
 
             Map<String, Object> paramInfo = new HashMap<>();
-            List<Map<String, Object>> fields = JsonUtils.parseObject(provider.getFields(), List.class);
+            List<Map<String, Object>> fields = JsonUtils.parseMapList(provider.getFields());
             if (fields != null) {
                 for (Map<String, Object> field : fields) {
                     paramInfo.put((String) field.get("key"), field.get("default"));

@@ -33,6 +33,7 @@
         <aliyun-sms-version>4.1.0</aliyun-sms-version>
         <okio-version>3.4.0</okio-version>
         <skipTests>true</skipTests>
+        <argLine></argLine>
     </properties>
 
     <dependencies>
@@ -274,9 +275,20 @@
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <proc>full</proc>
+                    <compilerArgs>
+                        <arg>-Xlint:deprecation,unchecked</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
                     <skipTests>${skipTests}</skipTests>
+                    <argLine>@{argLine} -Xshare:off -javaagent:"${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar"</argLine>
                 </configuration>
             </plugin>
         </plugins>

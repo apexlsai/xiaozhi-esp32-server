@@ -20,6 +20,7 @@ import xiaozhi.common.redis.RedisKeys;
 import xiaozhi.common.redis.RedisUtils;
 import xiaozhi.common.service.impl.BaseServiceImpl;
 import xiaozhi.common.utils.ConvertUtils;
+import xiaozhi.common.utils.JsonUtils;
 import xiaozhi.common.utils.ToolUtil;
 import xiaozhi.modules.sys.dao.SysDictDataDao;
 import xiaozhi.modules.sys.dao.SysUserDao;
@@ -138,7 +139,7 @@ public class SysDictDataServiceImpl extends BaseServiceImpl<SysDictDataDao, SysD
 
         // 设置更新者和创建者名称
         if (!userIds.isEmpty()) {
-            List<SysUserEntity> sysUserEntities = sysUserDao.selectBatchIds(userIds);
+            List<SysUserEntity> sysUserEntities = sysUserDao.selectByIds(userIds);
             // 把List转成Map，Map<Long, String>
             Map<Long, String> userNameMap = sysUserEntities.stream().collect(Collectors.toMap(SysUserEntity::getId,
                     SysUserEntity::getUsername, (existing, replacement) -> existing));
@@ -170,7 +171,7 @@ public class SysDictDataServiceImpl extends BaseServiceImpl<SysDictDataDao, SysD
 
         // 先从Redis获取缓存
         String key = RedisKeys.getDictDataByTypeKey(dictType);
-        List<SysDictDataItem> cachedData = (List<SysDictDataItem>) redisUtils.get(key);
+        List<SysDictDataItem> cachedData = JsonUtils.toList(redisUtils.get(key), SysDictDataItem.class);
         if (cachedData != null) {
             return cachedData;
         }

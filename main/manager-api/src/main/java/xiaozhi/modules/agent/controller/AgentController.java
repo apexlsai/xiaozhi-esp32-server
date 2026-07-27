@@ -34,6 +34,7 @@ import xiaozhi.common.page.PageData;
 import xiaozhi.common.redis.RedisKeys;
 import xiaozhi.common.redis.RedisUtils;
 import xiaozhi.common.user.UserDetail;
+import xiaozhi.common.utils.JsonUtils;
 import xiaozhi.common.utils.Result;
 import xiaozhi.common.utils.ResultUtils;
 import xiaozhi.modules.agent.dto.AgentChatHistoryDTO;
@@ -340,8 +341,8 @@ public class AgentController {
     @RequiresPermissions("sys:role:normal")
     public Result<Void> saveAgentTags(@PathVariable String id, @RequestBody Map<String, Object> params) {
         requireAgentPermission(id);
-        List<String> tagIds = (List<String>) params.get("tagIds");
-        List<String> tagNames = (List<String>) params.get("tagNames");
+        List<String> tagIds = JsonUtils.toList(params.get("tagIds"), String.class);
+        List<String> tagNames = JsonUtils.toList(params.get("tagNames"), String.class);
         AgentUpdateDTO dto = new AgentUpdateDTO();
         dto.setTagIds(tagIds);
         dto.setTagNames(tagNames);

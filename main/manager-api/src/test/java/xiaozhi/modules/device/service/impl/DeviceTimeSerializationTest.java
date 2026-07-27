@@ -76,6 +76,25 @@ class DeviceTimeSerializationTest {
                 () -> assertTrue(payload.path("createDate").isNull()));
     }
 
+    @ParameterizedTest(name = "自动升级状态 {0}")
+    @ValueSource(ints = { 0, 1 })
+    @DisplayName("#3299 设备列表按 autoUpdate 契约返回真实开关状态")
+    void serializedDeviceContainsAutoUpdateState(int autoUpdate) {
+        DeviceEntity entity = new DeviceEntity();
+        entity.setAutoUpdate(autoUpdate);
+        DeviceServiceImpl deviceService = serviceReturning(entity);
+
+        UserShowDeviceListVO device = deviceService.getUserDeviceList(1L, "agent-id").getFirst();
+        ObjectMapper objectMapper = new WebMvcConfig().jackson2HttpMessageConverter().getObjectMapper();
+        JsonNode payload = objectMapper.valueToTree(device);
+
+        assertAll(
+                () -> assertEquals(autoUpdate, device.getAutoUpdate()),
+                () -> assertEquals(autoUpdate, payload.path("autoUpdate").asInt()),
+                () -> assertTrue(payload.path("otaUpgrade").isMissingNode(),
+                        "设备列表不应继续暴露未映射的旧字段 otaUpgrade"));
+    }
+
     private DeviceServiceImpl serviceReturning(DeviceEntity entity) {
         return new DeviceServiceImpl(null, null, null, null, null, null) {
             @Override

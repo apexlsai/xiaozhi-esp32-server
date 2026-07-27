@@ -117,7 +117,7 @@ public class TimbreServiceImpl extends BaseServiceImpl<TimbreDao, TimbreEntity> 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void delete(String[] ids) {
-        baseDao.deleteBatchIds(Arrays.asList(ids));
+        baseDao.deleteByIds(Arrays.asList(ids));
     }
 
     @Override

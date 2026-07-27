@@ -81,8 +81,8 @@ public abstract class BaseServiceImpl<M extends BaseMapper<T>, T> implements Bas
         // 处理排序字段
         if (orderField instanceof String) {
             orderFields.add((String) orderField);
-        } else if (orderField instanceof List) {
-            orderFields.addAll((List<String>) orderField);
+        } else if (orderField instanceof List<?> fields) {
+            fields.forEach(field -> orderFields.add(String.class.cast(field)));
         }
 
         // 有排序字段则排序
@@ -142,11 +142,12 @@ public abstract class BaseServiceImpl<M extends BaseMapper<T>, T> implements Bas
         return SqlHelper.retBool(result);
     }
 
-    protected Class<M> currentMapperClass() {
-        return (Class<M>) ReflectionKit.getSuperClassGenericType(this.getClass(), BaseServiceImpl.class, 0);
+    protected Class<?> currentMapperClass() {
+        return ReflectionKit.getSuperClassGenericType(this.getClass(), BaseServiceImpl.class, 0);
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public Class<T> currentModelClass() {
         return (Class<T>) ReflectionKit.getSuperClassGenericType(this.getClass(), BaseServiceImpl.class, 1);
     }
@@ -226,6 +227,6 @@ public abstract class BaseServiceImpl<M extends BaseMapper<T>, T> implements Bas
 
     @Override
     public boolean deleteBatchIds(Collection<? extends Serializable> idList) {
-        return SqlHelper.retBool(baseDao.deleteBatchIds(idList));
+        return SqlHelper.retBool(baseDao.deleteByIds(idList));
     }
 }

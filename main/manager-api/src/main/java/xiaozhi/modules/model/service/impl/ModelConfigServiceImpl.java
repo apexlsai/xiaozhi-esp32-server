@@ -362,14 +362,14 @@ public class ModelConfigServiceImpl extends BaseServiceImpl<ModelConfigDao, Mode
                 if (SensitiveDataUtils.isSensitiveField(key)) {
 
                     if (value instanceof String && !SensitiveDataUtils.isMaskedValue((String) value)) {
-                        updatedJson.put(key, value);
+                        updatedJson.set(key, value);
                     }
                 } else if (value instanceof JSONObject) {
                     // 递归处理嵌套JSON
                     mergeJson(updatedJson, key, (JSONObject) value);
                 } else {
                     // 非敏感字段直接更新
-                    updatedJson.put(key, value);
+                    updatedJson.set(key, value);
                 }
             }
 
@@ -405,7 +405,7 @@ public class ModelConfigServiceImpl extends BaseServiceImpl<ModelConfigDao, Mode
 
         // 如果 original 中不存在 key，创建一个新的 JSON 对象
         if (!original.containsKey(key)) {
-            original.put(key, new JSONObject());
+            original.set(key, new JSONObject());
         }
 
         // 获取 original 中的子对象
@@ -420,7 +420,7 @@ public class ModelConfigServiceImpl extends BaseServiceImpl<ModelConfigDao, Mode
             log.warn("mergeJson: key '{}' 的值不是 JSONObject 类型 (实际类型：{})，将创建新对象",
                     key, originalValue != null ? originalValue.getClass().getSimpleName() : "null");
             originalChild = new JSONObject();
-            original.put(key, originalChild);
+            original.set(key, originalChild);
         }
 
         for (String childKey : updated.keySet()) {
@@ -430,7 +430,7 @@ public class ModelConfigServiceImpl extends BaseServiceImpl<ModelConfigDao, Mode
             } else {
                 if (!SensitiveDataUtils.isSensitiveField(childKey) ||
                         (childValue instanceof String && !isMaskedValue((String) childValue))) {
-                    originalChild.put(childKey, childValue);
+                    originalChild.set(childKey, childValue);
                 }
             }
         }

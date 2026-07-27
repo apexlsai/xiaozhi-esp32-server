@@ -127,7 +127,7 @@ public class VoiceCloneServiceImpl extends BaseServiceImpl<VoiceCloneDao, VoiceC
 
     @Override
     public void delete(String[] ids) {
-        baseDao.deleteBatchIds(Arrays.asList(ids));
+        baseDao.deleteByIds(Arrays.asList(ids));
     }
 
     @Override
