@@ -1,5 +1,8 @@
 import asyncio
+import json
 import logging
+import time
+from urllib.parse import urlparse
 
 import websockets
 from config.logger import setup_logging
@@ -67,6 +70,7 @@ class WebSocketServer:
         secret_key = self.config["server"]["auth_key"]
         expire_seconds = auth_config.get("expire_seconds", None)
         self.auth = AuthManager(secret_key=secret_key, expire_seconds=expire_seconds)
+        self.device_connections = {}
 
     async def start(self):
         server_config = self.config["server"]
@@ -79,13 +83,17 @@ class WebSocketServer:
             await asyncio.Future()
 
     async def _handle_connection(self, websocket: websockets.ServerConnection):
+        request_path = websocket.request.path or ""
+        if urlparse(request_path).path == "/dev/ws":
+            await self._handle_dev_connection(websocket)
+            return
+
         headers = dict(websocket.request.headers)
         if headers.get("device-id", None) is None:
             # 尝试从 URL 的查询参数中获取 device-id
-            from urllib.parse import parse_qs, urlparse
+            from urllib.parse import parse_qs
 
             # 从 WebSocket 请求中获取路径
-            request_path = websocket.request.path
             if not request_path:
                 self.logger.bind(tag=TAG).error("无法获取请求路径")
                 await websocket.close()
@@ -142,6 +150,121 @@ class WebSocketServer:
                 self.logger.bind(tag=TAG).error(
                     f"服务器端强制关闭连接时出错: {close_error}"
                 )
+
+    def register_device_connection(self, conn: ConnectionHandler):
+        peer = conn.websocket.remote_address
+        peer_address = f"{peer[0]}:{peer[1]}" if peer else ""
+        self.device_connections[conn] = {
+            "device_id": conn.device_id,
+            "client_id": conn.headers.get("client-id", conn.device_id),
+            "peer_address": peer_address,
+            "connected_at": time.time(),
+        }
+        self.logger.bind(tag=TAG).info(
+            f"设备连接已注册: device_id={conn.device_id}, peer={peer_address}"
+        )
+
+    def unregister_device_connection(self, conn: ConnectionHandler):
+        connection = self.device_connections.pop(conn, None)
+        if connection:
+            self.logger.bind(tag=TAG).info(
+                f"设备连接已移除: device_id={connection['device_id']}, "
+                f"peer={connection['peer_address']}"
+            )
+
+    def list_device_connections(self):
+        connections = [
+            {
+                "device_id": item["device_id"],
+                "client_id": item["client_id"],
+                "peer_address": item["peer_address"],
+                "connected_at": item["connected_at"],
+            }
+            for item in self.device_connections.values()
+        ]
+        return sorted(connections, key=lambda item: item["connected_at"], reverse=True)
+
+    def find_device_connection(self, target: dict):
+        device_id = target.get("device_id")
+        peer_address = target.get("peer_address")
+        if not device_id and not peer_address:
+            return None
+
+        matches = [
+            (conn, item)
+            for conn, item in self.device_connections.items()
+            if (device_id and item["device_id"] == device_id)
+            or (peer_address and item["peer_address"] == peer_address)
+        ]
+        if not matches:
+            return None
+        return max(matches, key=lambda item: item[1]["connected_at"])[0]
+
+    async def _handle_dev_connection(self, websocket: websockets.ServerConnection):
+        peer = websocket.remote_address
+        peer_address = f"{peer[0]}:{peer[1]}" if peer else ""
+        self.logger.bind(tag=TAG).warning(f"开发控制连接已建立: peer={peer_address}")
+        try:
+            async for message in websocket:
+                if not isinstance(message, str):
+                    await websocket.send(
+                        json.dumps({"ok": False, "error": "仅支持 JSON 文本命令"})
+                    )
+                    continue
+                try:
+                    command = json.loads(message)
+                except json.JSONDecodeError:
+                    await websocket.send(
+                        json.dumps({"ok": False, "error": "命令必须是 JSON"})
+                    )
+                    continue
+                response = await self._handle_dev_command(command)
+                await websocket.send(json.dumps(response, ensure_ascii=False))
+        except websockets.exceptions.ConnectionClosed:
+            pass
+        finally:
+            self.logger.bind(tag=TAG).warning(f"开发控制连接已断开: peer={peer_address}")
+
+    async def _handle_dev_command(self, command: dict):
+        if not isinstance(command, dict):
+            return {"ok": False, "error": "命令必须是 JSON 对象"}
+
+        action = command.get("action")
+        if action == "list_connections":
+            return {"ok": True, "connections": self.list_device_connections()}
+        if action != "speak":
+            return {"ok": False, "error": "不支持的 action"}
+
+        text = command.get("text")
+        target = command.get("target")
+        if not isinstance(text, str) or not text.strip():
+            return {"ok": False, "error": "text 必须是非空字符串"}
+        if len(text) > 1000:
+            return {"ok": False, "error": "text 长度不能超过 1000"}
+        if not isinstance(target, dict):
+            return {"ok": False, "error": "target 必须包含 device_id 或 peer_address"}
+
+        conn = self.find_device_connection(target)
+        if conn is None:
+            return {"ok": False, "error": "未找到目标在线设备"}
+        if conn.need_bind:
+            return {"ok": False, "error": "目标设备尚未完成绑定"}
+        if conn.tts is None:
+            return {"ok": False, "error": "目标设备语音模块尚未就绪"}
+
+        from core.handle.receiveAudioHandle import startToChat
+
+        await startToChat(conn, text.strip())
+        connection = self.device_connections[conn]
+        self.logger.bind(tag=TAG).warning(
+            f"开发控制已注入播报: device_id={connection['device_id']}, "
+            f"peer={connection['peer_address']}"
+        )
+        return {
+            "ok": True,
+            "device_id": connection["device_id"],
+            "peer_address": connection["peer_address"],
+        }
 
     async def _http_response(self, websocket, request_headers):
         # 检查是否为 WebSocket 升级请求
