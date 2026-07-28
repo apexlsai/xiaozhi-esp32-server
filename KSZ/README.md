@@ -289,6 +289,37 @@ Body: beacon-abc-123
 
 兼容的通用接口仍可用：`GET /xiaozhi/device/attribute/{deviceId}` 与 `PUT /xiaozhi/device/attribute/{deviceId}/{attrKey}`。
 
+### 信标位置语音导览
+
+设备上报 `device_event` 的 `beacon_change` 后，server 会通过固定接口查询位置：
+
+```text
+GET http://127.0.0.1:14000/api/v1/beacons/by-beacon-id/{beaconId}
+```
+
+接口响应至少应包含匹配的 `beacon_id`，以及 `floor`、`area`、`location_description` 中的一项。例如：
+
+```json
+{
+  "beacon_id": "jx-pxm-003",
+  "floor": "2F",
+  "area": "古代文明展厅",
+  "location_description": "北墙 A12 展柜旁"
+}
+```
+
+KSZ Compose 使用 Host 网络，故 `127.0.0.1:14000` 指向宿主机的位置服务。首个信标仅建立当前位置；后续实际变更会自动发起“当前位置与附近展品”的对话，并沿用现有 TTS 输出。用户随后询问当前位置或附近展品时，会使用当前信标位置上下文。
+
+位置服务在 2 秒内未响应、返回 404 或响应无效时，设备属性仍会持久化；自动播报仅提示已进入新区域，不会编造具体位置或展品。每个连接对成功结果缓存 60 秒，失败结果 5 秒后允许重试。
+
+验证接口：
+
+```bash
+curl --request GET \
+  --url http://127.0.0.1:14000/api/v1/beacons/by-beacon-id/jx-pxm-003 \
+  --header 'accept: application/json'
+```
+
 ## MCP 配置
 
 外部 MCP 服务配置文件为 `data/.mcp_server_settings.json`；示例见 `../main/xiaozhi-server/mcp_server_settings.json`。支持 `stdio`、`sse`、`streamable-http` 三种传输方式。修改后重启 server：
