@@ -63,6 +63,7 @@ async def _handle_beacon_change(
     old_beacon_id = conn.device_attributes.get("last_beacon_id")
     conn.device_attributes["last_beacon_id"] = beacon_id
     logger.bind(tag=TAG).info(f"设备蓝牙信标已更新: {beacon_id}")
+    await conn.refresh_beacon_location(force=True)
 
     # 信标变化时触发 LLM 对话
     if old_beacon_id != beacon_id and old_beacon_id is not None:
@@ -78,15 +79,19 @@ async def _trigger_beacon_chat(
     """信标变化时触发 LLM 对话"""
     from core.handle.receiveAudioHandle import startToChat
 
-    # 从 payload 中提取额外信息（如信标名称、位置描述等）
-    beacon_name = payload.get("beacon_name", new_beacon_id)
-    location_desc = payload.get("location", "")
-
-    # 构造提示信息
-    if location_desc:
-        prompt = f"[位置变化] 用户已从之前的位置移动到了 {location_desc}（信标: {beacon_name}）。请根据这个新位置为用户提供相关的服务或问候。"
+    location = conn.beacon_location
+    if location is not None and location.beacon_id == new_beacon_id:
+        prompt = (
+            f"[位置变化] 用户当前位于{location.to_prompt_context()}。"
+            "请直接说明用户现在所在的位置，并简要介绍附近可能的展品；"
+            "信息不足时请坦诚说明，不要编造具体展品。"
+        )
     else:
-        prompt = f"[位置变化] 用户的位置发生了变化，当前靠近信标 {beacon_name}。请根据用户的新位置提供相关服务或简短问候。"
+        beacon_name = payload.get("beacon_name", new_beacon_id)
+        prompt = (
+            f"[位置变化] 用户当前靠近信标 {beacon_name}，但位置服务暂时不可用。"
+            "请简短提示用户已进入新区域，不要编造具体位置或展品。"
+        )
 
     logger.bind(tag=TAG).info(f"信标变化触发 LLM 对话: {old_beacon_id} -> {new_beacon_id}")
 
