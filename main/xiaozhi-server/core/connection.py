@@ -234,6 +234,7 @@ class ConnectionHandler:
 
             # 认证通过,继续处理
             self.websocket = ws
+            self.server.register_device_connection(self)
 
             # 检查是否来自MQTT连接
             request_path = ws.request.path
@@ -275,6 +276,7 @@ class ConnectionHandler:
             self.logger.bind(tag=TAG).error(f"Connection error: {str(e)}-{stack_trace}")
             return
         finally:
+            self.server.unregister_device_connection(self)
             try:
                 await self._save_and_close(ws)
             except Exception as final_error:

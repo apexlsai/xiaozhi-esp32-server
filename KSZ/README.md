@@ -320,6 +320,38 @@ curl --request GET \
   --header 'accept: application/json'
 ```
 
+### 定向语音开发 WebSocket
+
+开发控制端连接 `ws://<SERVER_HOST>:8000/dev/ws` 后，可查询在线设备，并向指定真实设备注入文本；目标设备会沿用原有 LLM、TTS 和 Opus 音频下发流程。
+
+查询在线设备：
+
+```json
+{"action":"list_connections"}
+```
+
+按稳定的设备 MAC 播报：
+
+```json
+{
+  "action":"speak",
+  "target":{"device_id":"98:88:e0:6c:29:1c"},
+  "text":"请介绍你当前附近的展品。"
+}
+```
+
+按临时 TCP 对端地址播报：
+
+```json
+{
+  "action":"speak",
+  "target":{"peer_address":"113.87.144.31:61157"},
+  "text":"请介绍你当前附近的展品。"
+}
+```
+
+`peer_address` 的端口会在设备重连后变化，应优先使用 `device_id`。`/dev/ws` 不鉴权，仅可在受控内网使用；若服务暴露到公网，任何连接者都可向在线设备发起语音播报。
+
 ## MCP 配置
 
 外部 MCP 服务配置文件为 `data/.mcp_server_settings.json`；示例见 `../main/xiaozhi-server/mcp_server_settings.json`。支持 `stdio`、`sse`、`streamable-http` 三种传输方式。修改后重启 server：
