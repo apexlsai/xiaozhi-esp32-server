@@ -44,6 +44,7 @@ from config.manage_api_client import DeviceNotFoundException, DeviceBindExceptio
 from core.utils.prompt_manager import PromptManager
 from core.utils.voiceprint_provider import VoiceprintProvider
 from core.utils.util import get_system_error_response
+from core.utils.beacon_location import fetch_beacon_location
 from core.utils import textUtils
 
 
@@ -179,6 +180,11 @@ class ConnectionHandler:
         self.device_language = None
         self._last_attrs_refresh = 0  # 上次刷新时间戳
         self._attrs_refresh_interval = 5  # 刷新间隔（秒）
+        self.beacon_location = None
+        self._beacon_location_id = None
+        self._beacon_location_updated_at = 0.0
+        self._beacon_location_retry_at = 0.0
+        self._prompt_beacon_location = None
 
         self.cmd_exit = self.config["exit_commands"]
 
@@ -676,15 +682,22 @@ class ConnectionHandler:
 
         # 更新上下文信息
         self.prompt_manager.update_context_info(self, self.client_ip)
+        beacon_location = (
+            self.beacon_location.to_prompt_context()
+            if self.beacon_location is not None
+            else ""
+        )
         enhanced_prompt = self.prompt_manager.build_enhanced_prompt(
             self.config["prompt"],
             self.device_id,
             self.client_ip,
             emoji_enabled=(self.features or {}).get("emoji", True),
             device_language=self.device_language,
+            beacon_location=beacon_location,
         )
         if enhanced_prompt:
             self.change_system_prompt(enhanced_prompt)
+            self._prompt_beacon_location = beacon_location
             self.logger.bind(tag=TAG).debug("系统提示词已增强更新")
 
     def _inject_tool_call_fewshot(self):
@@ -1083,6 +1096,53 @@ class ConnectionHandler:
                 extra_body["last_beacon_id"] = self.device_attributes.get("last_beacon_id")
         return extra_body
 
+    async def refresh_beacon_location(self, force=False):
+        beacon_id = self.device_attributes.get("last_beacon_id")
+        if not beacon_id:
+            self.beacon_location = None
+            self._beacon_location_id = None
+            return None
+
+        now = time.monotonic()
+        if (
+            not force
+            and self._beacon_location_id == beacon_id
+            and self.beacon_location is not None
+            and now - self._beacon_location_updated_at < 60
+        ):
+            return self.beacon_location
+        if (
+            not force
+            and self._beacon_location_id == beacon_id
+            and self.beacon_location is None
+            and now < self._beacon_location_retry_at
+        ):
+            return None
+
+        location = await fetch_beacon_location(beacon_id, self.logger)
+        self._beacon_location_id = beacon_id
+        if location is None:
+            self.beacon_location = None
+            self._beacon_location_retry_at = now + 5
+            return None
+
+        self.beacon_location = location
+        self._beacon_location_updated_at = now
+        self._beacon_location_retry_at = 0.0
+        return location
+
+    def _ensure_beacon_location_fresh(self):
+        beacon_id = self.device_attributes.get("last_beacon_id")
+        if not beacon_id:
+            return
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                self.refresh_beacon_location(), self.loop
+            )
+            future.result(timeout=3)
+        except Exception as e:
+            self.logger.bind(tag=TAG).warning(f"刷新信标位置失败: {e}")
+
     async def _refresh_device_attributes(self):
         """从 manager-api 重新获取设备扩展属性"""
         try:
@@ -1185,6 +1245,14 @@ class ConnectionHandler:
                 memory_str = future.result()
 
             self._ensure_device_attributes_fresh()
+            self._ensure_beacon_location_fresh()
+            beacon_location = (
+                self.beacon_location.to_prompt_context()
+                if self.beacon_location is not None
+                else ""
+            )
+            if beacon_location != self._prompt_beacon_location:
+                self._init_prompt_enhancement()
             llm_extra_body = self._build_llm_extra_body()
 
             # 仅在该说话人首次出现时把身份注入 system，之后靠对话历史首轮保留，

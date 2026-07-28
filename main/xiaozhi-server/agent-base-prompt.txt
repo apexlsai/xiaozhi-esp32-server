@@ -75,6 +75,7 @@ For the input format `{"speaker":"...", "content":"..."}` (speaker = speaker nam
 - Today's date: {{today_date}} ({{today_weekday}})
 - Today's lunar date: {{lunar_date}}
 - Device location: {{local_address}}
+- Indoor beacon location: {{beacon_location}}
 - Local upcoming weather: {{weather_info}}
 {{ dynamic_context }}
 </context>
