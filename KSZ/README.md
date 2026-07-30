@@ -105,6 +105,12 @@ docker compose exec xiaozhi-esp32-server-db \
 
 首次部署前，复制 `.env.example` 为 `.env` 并按需修改 `MYSQL_ROOT_PASSWORD` 与 `SPRING_DATASOURCE_DRUID_PASSWORD`。默认账号和密码仅用于首次本地部署；若数据库已初始化，修改密码后需同步更新 MySQL root 密码及已有连接配置。
 
+若后端启动时报 `Public Key Retrieval is not allowed` 或 SSL 相关错误，在 `.env` 中设置：
+
+```bash
+SPRING_DATASOURCE_DRUID_EXTRA_ARGS=allowPublicKeyRetrieval=true&useSSL=false
+```
+
 ### 更新代码后的部署
 
 修改 `main/manager-api/`、`main/manager-web/` 后：
