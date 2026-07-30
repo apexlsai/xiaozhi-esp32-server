@@ -39,7 +39,7 @@ services:
         condition: service_healthy
     environment:
       - TZ=Asia/Shanghai
-      - SPRING_DATASOURCE_DRUID_URL=jdbc:mysql://127.0.0.1:${MYSQL_PORT:-3307}/xiaozhi_esp32_server?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&nullCatalogMeansCurrent=true&connectTimeout=30000&socketTimeout=30000&autoReconnect=true&failOverReadOnly=false&maxReconnects=10
+      - SPRING_DATASOURCE_DRUID_URL=jdbc:mysql://127.0.0.1:${MYSQL_PORT:-3307}/xiaozhi_esp32_server?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&nullCatalogMeansCurrent=true&connectTimeout=30000&socketTimeout=30000&autoReconnect=true&failOverReadOnly=false&maxReconnects=10${SPRING_DATASOURCE_DRUID_EXTRA_ARGS:+&$SPRING_DATASOURCE_DRUID_EXTRA_ARGS}
       - SPRING_DATASOURCE_DRUID_USERNAME=root
       - SPRING_DATASOURCE_DRUID_PASSWORD=${SPRING_DATASOURCE_DRUID_PASSWORD:-123456}
       - SPRING_DATA_REDIS_HOST=127.0.0.1
