@@ -27,6 +27,12 @@ async def handle_device_event(conn: "ConnectionHandler", msg_json: Dict[str, Any
         if language:
             await _handle_language_change(conn, language)
     elif event == "beacon_change":
+        if not isinstance(payload, dict):
+            payload = {}
+        if not payload.get("beacon_id") and isinstance(
+            msg_json.get("beacon_mac"), dict
+        ):
+            payload = msg_json["beacon_mac"]
         beacon_id = payload.get("beacon_id")
         if beacon_id:
             await _handle_beacon_change(conn, beacon_id, payload)

@@ -291,7 +291,27 @@ Body: beacon-abc-123
 
 ### 信标位置语音导览
 
-设备上报 `device_event` 的 `beacon_change` 后，server 会通过固定接口查询位置：
+设备应通过 WebSocket 上报 `device_event` 的 `beacon_change`。信标以 MAC 地址作为 `beacon_mac.beacon_id` 传递，server 会使用该 MAC 查询固定位置接口：
+
+```json
+{
+  "type": "device_event",
+  "event": "beacon_change",
+  "beacon_mac": {
+    "beacon_id": "DA:01:16:00:08:87",
+    "rssi": -65
+  },
+  "timestamp": 1785223540
+}
+```
+
+- `beacon_mac.beacon_id`：必填，蓝牙信标 MAC 地址，也是位置服务查询参数。
+- `beacon_mac.rssi`：可选，随事件持久化，当前不参与服务端导览触发判断。
+- `timestamp`：可选事件时间戳，用于事件记录。
+
+首个有效 MAC 仅建立当前位置上下文；同一设备后续上报不同 MAC 时，才会触发当前位置和附近展品的自动语音导览。原有 `payload.beacon_id` 报文仍兼容，但新接入设备应统一使用 `beacon_mac.beacon_id`。
+
+位置查询接口：
 
 ```text
 GET http://127.0.0.1:14000/api/v1/beacons/by-beacon-id/{beaconId}
@@ -312,11 +332,11 @@ KSZ Compose 使用 Host 网络，故 `127.0.0.1:14000` 指向宿主机的位置�
 
 位置服务在 2 秒内未响应、返回 404 或响应无效时，设备属性仍会持久化；自动播报仅提示已进入新区域，不会编造具体位置或展品。每个连接对成功结果缓存 60 秒，失败结果 5 秒后允许重试。
 
-验证接口：
+验证指定蓝牙 MAC 的位置接口：
 
 ```bash
 curl --request GET \
-  --url http://127.0.0.1:14000/api/v1/beacons/by-beacon-id/jx-pxm-003 \
+  --url http://127.0.0.1:14000/api/v1/beacons/by-beacon-id/DA%3A01%3A16%3A00%3A08%3A87 \
   --header 'accept: application/json'
 ```
 

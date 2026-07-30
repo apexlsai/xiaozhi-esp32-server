@@ -2,6 +2,10 @@
 
 本文件仅记录 KSZ Fork 相对上游 `xiaozhi-esp32-server` 的开发历史、设计决策和已知风险。部署、配置、接口调用及排障命令统一见 [README.md](README.md)。
 
+## 2026-07-30 — 蓝牙 MAC 信标事件兼容
+
+- `device_event` 的 `beacon_change` 除原有 `payload.beacon_id` 外，兼容读取顶层 `beacon_mac.beacon_id`，并保留其 RSSI 等字段用于位置查询、导览触发和事件持久化。
+
 ## 2026-07-28 — 信标位置语音导览
 
 - 信标变更会查询本地位置服务并解析楼层、展区和位置描述，随后复用 LLM 与 TTS 链路自动播报当前位置及附近展品引导。
