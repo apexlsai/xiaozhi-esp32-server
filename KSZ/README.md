@@ -100,10 +100,10 @@ docker compose restart xiaozhi-esp32-server
 
 ```bash
 docker compose exec xiaozhi-esp32-server-db \
-  mysql -uroot -p123456 xiaozhi_esp32_server
+  mysql -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server
 ```
 
-默认账号和密码仅用于首次本地部署；生产环境应通过环境变量修改 `MYSQL_ROOT_PASSWORD`、`SPRING_DATASOURCE_DRUID_PASSWORD`，并同步更新已有数据库连接配置。
+首次部署前，复制 `.env.example` 为 `.env` 并按需修改 `MYSQL_ROOT_PASSWORD` 与 `SPRING_DATASOURCE_DRUID_PASSWORD`。默认账号和密码仅用于首次本地部署；若数据库已初始化，修改密码后需同步更新 MySQL root 密码及已有连接配置。
 
 ### 更新代码后的部署
 
@@ -166,7 +166,7 @@ server:
 
 ```bash
 docker compose exec xiaozhi-esp32-server-db \
-  mysql -uroot -p123456 xiaozhi_esp32_server -e "
+  mysql -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server -e "
   UPDATE sys_params SET param_value='ws://<HOST_IP>:8000/xiaozhi/v1/'
   WHERE param_code='server.websocket';
   UPDATE sys_params SET param_value='http://<HOST_IP>:8002/xiaozhi/ota/'
@@ -183,7 +183,7 @@ docker compose exec xiaozhi-esp32-server-db \
 
 ```bash
 docker compose exec xiaozhi-esp32-server-db \
-  mysql -uroot -p123456 xiaozhi_esp32_server -e "
+  mysql -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server -e "
   UPDATE ai_model_config
   SET config_json='{
     \"type\":\"openai\",
@@ -204,7 +204,7 @@ docker compose restart xiaozhi-esp32-server
 
 ```bash
 docker compose exec xiaozhi-esp32-server-db \
-  mysql -uroot -p123456 xiaozhi_esp32_server -e "
+  mysql -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server -e "
   UPDATE ai_model_config
   SET config_json='{
     \"type\":\"openai\",
@@ -234,7 +234,7 @@ curl --request POST http://<LLM_HOST>:15000/v1/chat/completions \
 
 ```bash
 docker compose exec xiaozhi-esp32-server-db \
-  mysql -uroot -p123456 xiaozhi_esp32_server -e "
+  mysql -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server -e "
   SELECT u.id, u.username, t.token, t.expire_date
   FROM sys_user_token t
   JOIN sys_user u ON u.id = t.user_id
@@ -245,7 +245,7 @@ docker compose exec xiaozhi-esp32-server-db \
 
 ```bash
 docker compose exec xiaozhi-esp32-server-db \
-  mysql -uroot -p123456 xiaozhi_esp32_server -e "
+  mysql -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server -e "
   UPDATE sys_user_token
   SET expire_date=DATE_ADD(NOW(), INTERVAL 12 HOUR)
   WHERE token='<TOKEN>';"
@@ -260,11 +260,11 @@ docker compose exec xiaozhi-esp32-server-db \
 ```bash
 mkdir -p backup
 docker compose exec -T xiaozhi-esp32-server-db \
-  mysqldump -uroot -p123456 xiaozhi_esp32_server ai_device_attribute \
+  mysqldump -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server ai_device_attribute \
   > backup/ai_device_attribute-$(date +%F-%H%M%S).sql
 
 docker compose exec -T xiaozhi-esp32-server-db \
-  mysql -uroot -p123456 xiaozhi_esp32_server \
+  mysql -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server \
   < ../main/manager-api/src/main/resources/db/changelog/202607101600.sql
 ```
 
@@ -273,7 +273,7 @@ docker compose exec -T xiaozhi-esp32-server-db \
 ```bash
 docker compose up -d --build xiaozhi-esp32-server-web
 docker compose exec xiaozhi-esp32-server-db \
-  mysql -uroot -p123456 -D xiaozhi_esp32_server \
+  mysql -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" -D xiaozhi_esp32_server \
   -e "DESC ai_device_attribute;"
 ```
 
