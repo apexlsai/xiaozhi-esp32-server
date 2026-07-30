@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core.handle.deviceEventHandle import _handle_beacon_change
+from core.handle.deviceEventHandle import _handle_beacon_change, handle_device_event
 from core.utils.beacon_location import (
     BeaconLocation,
     fetch_beacon_location,
@@ -100,6 +100,38 @@ class BeaconLocationTests(unittest.TestCase):
 
 
 class BeaconEventTests(unittest.IsolatedAsyncioTestCase):
+    async def test_beacon_mac_event_triggers_beacon_lookup(self):
+        conn = SimpleNamespace()
+        with (
+            patch(
+                "core.handle.deviceEventHandle._handle_beacon_change",
+                new_callable=AsyncMock,
+            ) as handle_beacon_change,
+            patch(
+                "core.handle.deviceEventHandle._report_event_to_manager_api",
+                return_value=object(),
+            ),
+            patch("core.handle.deviceEventHandle.asyncio.create_task"),
+        ):
+            await handle_device_event(
+                conn,
+                {
+                    "type": "device_event",
+                    "event": "beacon_change",
+                    "beacon_mac": {
+                        "beacon_id": "DA:01:16:00:08:87",
+                        "rssi": -65,
+                    },
+                    "timestamp": 1785223540,
+                },
+            )
+
+        handle_beacon_change.assert_awaited_once_with(
+            conn,
+            "DA:01:16:00:08:87",
+            {"beacon_id": "DA:01:16:00:08:87", "rssi": -65},
+        )
+
     async def test_first_beacon_only_caches_location(self):
         conn = SimpleNamespace(
             device_attributes={},
