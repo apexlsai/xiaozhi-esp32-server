@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+### 新增
+
+- 设备智能体换绑：设备经 WebSocket `device_event` / `agent_rebind` 由 xiaozhi-server 以 `server.secret` 调用 `POST /device/rebind`；按用户范围内精确 `agent_name` 定位，事务内核对旧绑定、条件更新、回读确认后返回成功，并主动断开连接促使设备重连加载新智能体。
+- `ai_device_attribute` 增加冗余字段 `agent_name`（权威绑定仍为 `ai_device.agent_id`）；属性首次创建、换绑与智能体改名时同步。
+
+### 变更
+
+- 将 `202607101600.sql` 与 `202607311534.sql` 登记到 Liquibase 主清单，自动完成设备属性列模式与 `agent_name` 迁移。
+
+### 已知问题
+
+- 同用户下若存在重名智能体，换绑会拒绝；需保证 `agent_name` 在用户范围内唯一。
+
 ## [0.1.1]
 
 汇总预发布阶段 `ksz/v0.1.1dev1`（国内镜像与部署底座）、`ksz/v0.1.1dev2`（本地构建 Compose）、`ksz/v0.1.1dev3`（定向语音开发通道）及后续完善，作为 KSZ 首个正式版本。

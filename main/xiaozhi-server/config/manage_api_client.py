@@ -268,6 +268,27 @@ async def report_device_event(
         return None
 
 
+async def rebind_device_agent(
+    device_id: str,
+    current_agent_name: str,
+    target_agent_name: str,
+    confirm: bool = True,
+) -> Optional[Dict]:
+    """设备智能体换绑（经 server.secret 调用 manager-api）"""
+    if not ManageApiClient._instance:
+        raise Exception("manager-api 客户端未初始化")
+    return await ManageApiClient._instance._execute_async_request(
+        "POST",
+        "/device/rebind",
+        json={
+            "deviceId": device_id,
+            "currentAgentName": current_agent_name,
+            "targetAgentName": target_agent_name,
+            "confirm": confirm,
+        },
+    )
+
+
 async def lookup_address_book(caller_mac: str, nickname: str) -> Optional[Dict]:
     """根据昵称查找目标设备"""
     if not ManageApiClient._instance:

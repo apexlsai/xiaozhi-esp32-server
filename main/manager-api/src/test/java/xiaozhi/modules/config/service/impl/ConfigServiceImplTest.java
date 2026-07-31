@@ -24,6 +24,7 @@ import xiaozhi.modules.agent.service.AgentPluginMappingService;
 import xiaozhi.modules.agent.service.AgentService;
 import xiaozhi.modules.agent.service.AgentTemplateService;
 import xiaozhi.modules.correctword.service.CorrectWordFileService;
+import xiaozhi.modules.device.service.DeviceAttributeService;
 import xiaozhi.modules.device.service.DeviceService;
 import xiaozhi.modules.model.service.ModelConfigService;
 import xiaozhi.modules.sys.dto.SysParamsDTO;
@@ -81,6 +82,7 @@ class ConfigServiceImplTest {
         return new ConfigServiceImpl(
                 sysParamsService,
                 mock(DeviceService.class),
+                mock(DeviceAttributeService.class),
                 mock(ModelConfigService.class),
                 mock(AgentService.class),
                 mock(AgentTemplateService.class),
