@@ -1,8 +1,7 @@
-from plugins_func.register import register_function, ToolType, ActionResponse, Action
-from plugins_func.functions.hass_init import initialize_hass_handler
+import httpx
 from config.logger import setup_logging
-import asyncio
-import requests
+from plugins_func.functions.hass_init import initialize_hass_handler
+from plugins_func.register import register_function, ToolType, ActionResponse, Action
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -31,11 +30,11 @@ hass_get_state_function_desc = {
 
 
 @register_function("hass_get_state", hass_get_state_function_desc, ToolType.SYSTEM_CTL)
-def hass_get_state(conn: "ConnectionHandler", entity_id=""):
+async def hass_get_state(conn: "ConnectionHandler", entity_id=""):
     try:
-        ha_response = handle_hass_get_state(conn, entity_id)
+        ha_response = await handle_hass_get_state(conn, entity_id)
         return ActionResponse(Action.REQLLM, ha_response, None)
-    except asyncio.TimeoutError:
+    except httpx.TimeoutException:
         logger.bind(tag=TAG).error("获取Home Assistant状态超时")
         return ActionResponse(Action.ERROR, "请求超时", None)
     except Exception as e:
@@ -44,13 +43,16 @@ def hass_get_state(conn: "ConnectionHandler", entity_id=""):
         return ActionResponse(Action.ERROR, error_msg, None)
 
 
-def handle_hass_get_state(conn: "ConnectionHandler", entity_id):
+async def handle_hass_get_state(conn: "ConnectionHandler", entity_id):
     ha_config = initialize_hass_handler(conn)
     api_key = ha_config.get("api_key")
     base_url = ha_config.get("base_url")
     url = f"{base_url}/api/states/{entity_id}"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    response = requests.get(url, headers=headers, timeout=5)
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=3.0)) as client:
+        response = await client.get(url, headers=headers)
+
     if response.status_code == 200:
         responsetext = "设备状态:" + response.json()["state"] + " "
         logger.bind(tag=TAG).info(f"api返回内容: {response.json()}")
@@ -92,8 +94,5 @@ def handle_hass_get_state(conn: "ConnectionHandler", entity_id):
             )
         logger.bind(tag=TAG).info(f"查询返回内容: {responsetext}")
         return responsetext
-        # return response.json()['attributes']
-        # response.attributes
-
     else:
         return f"切换失败，错误码: {response.status_code}"

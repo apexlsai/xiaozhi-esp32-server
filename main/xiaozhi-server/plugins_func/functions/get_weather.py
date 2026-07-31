@@ -1,4 +1,4 @@
-import requests
+import httpx
 from bs4 import BeautifulSoup
 from config.logger import setup_logging
 from plugins_func.register import register_function, ToolType, ActionResponse, Action
@@ -111,20 +111,23 @@ WEATHER_CODE_MAP = {
 }
 
 
-def fetch_city_info(location, api_key, api_host):
+async def fetch_city_info(location, api_key, api_host):
     url = f"https://{api_host}/geo/v2/city/lookup?key={api_key}&location={location}&lang=zh"
-    response = requests.get(url, headers=HEADERS).json()
-    if response.get("error") is not None:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=3.0)) as client:
+        response = await client.get(url, headers=HEADERS)
+    data = response.json()
+    if data.get("error") is not None:
         logger.bind(tag=TAG).error(
-            f"获取天气失败，原因：{response.get('error', {}).get('detail')}"
+            f"获取天气失败，原因：{data.get('error', {}).get('detail')}"
         )
         return None
-    return response.get("location", [])[0] if response.get("location") else None
+    return data.get("location", [])[0] if data.get("location") else None
 
 
-def fetch_weather_page(url):
-    response = requests.get(url, headers=HEADERS)
-    return BeautifulSoup(response.text, "html.parser") if response.ok else None
+async def fetch_weather_page(url):
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=3.0)) as client:
+        response = await client.get(url, headers=HEADERS)
+    return BeautifulSoup(response.text, "html.parser") if response.status_code == 200 else None
 
 
 def parse_weather_info(soup):
@@ -159,7 +162,7 @@ def parse_weather_info(soup):
 
 
 @register_function("get_weather", GET_WEATHER_FUNCTION_DESC, ToolType.SYSTEM_CTL)
-def get_weather(conn: "ConnectionHandler", location: str = None, lang: str = "zh_CN"):
+async def get_weather(conn: "ConnectionHandler", location: str = None, lang: str = "zh_CN"):
     from core.utils.cache.manager import cache_manager, CacheType
 
     weather_config = conn.config.get("plugins", {}).get("get_weather", {})
@@ -195,12 +198,12 @@ def get_weather(conn: "ConnectionHandler", location: str = None, lang: str = "zh
         return ActionResponse(Action.REQLLM, cached_weather_report, None)
 
     # 缓存未命中，获取实时天气数据
-    city_info = fetch_city_info(location, api_key, api_host)
+    city_info = await fetch_city_info(location, api_key, api_host)
     if not city_info:
         return ActionResponse(
             Action.REQLLM, f"未找到相关的城市: {location}，请确认地点是否正确", None
         )
-    soup = fetch_weather_page(city_info["fxLink"])
+    soup = await fetch_weather_page(city_info["fxLink"])
     if not soup:
         return ActionResponse(Action.REQLLM, None, "请求失败")
     city_name, current_abstract, current_basic, temps_list = parse_weather_info(soup)

@@ -1,8 +1,7 @@
-from plugins_func.register import register_function, ToolType, ActionResponse, Action
-from plugins_func.functions.hass_init import initialize_hass_handler
+import httpx
 from config.logger import setup_logging
-import asyncio
-import requests
+from plugins_func.functions.hass_init import initialize_hass_handler
+from plugins_func.register import register_function, ToolType, ActionResponse, Action
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -54,13 +53,13 @@ hass_set_state_function_desc = {
 
 
 @register_function("hass_set_state", hass_set_state_function_desc, ToolType.SYSTEM_CTL)
-def hass_set_state(conn: "ConnectionHandler", entity_id="", state=None):
+async def hass_set_state(conn: "ConnectionHandler", entity_id="", state=None):
     if state is None:
         state = {}
     try:
-        ha_response = handle_hass_set_state(conn, entity_id, state)
+        ha_response = await handle_hass_set_state(conn, entity_id, state)
         return ActionResponse(Action.REQLLM, ha_response, None)
-    except asyncio.TimeoutError:
+    except httpx.TimeoutException:
         logger.bind(tag=TAG).error("设置Home Assistant状态超时")
         return ActionResponse(Action.ERROR, "请求超时", None)
     except Exception as e:
@@ -69,7 +68,7 @@ def hass_set_state(conn: "ConnectionHandler", entity_id="", state=None):
         return ActionResponse(Action.ERROR, error_msg, None)
 
 
-def handle_hass_set_state(conn: "ConnectionHandler", entity_id, state):
+async def handle_hass_set_state(conn: "ConnectionHandler", entity_id, state):
     ha_config = initialize_hass_handler(conn)
     api_key = ha_config.get("api_key")
     base_url = ha_config.get("base_url")
@@ -169,7 +168,10 @@ def handle_hass_set_state(conn: "ConnectionHandler", entity_id, state):
         data = {"entity_id": entity_id, arg: value}
     url = f"{base_url}/api/services/{domain}/{action}"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    response = requests.post(url, headers=headers, json=data, timeout=5)  # 设置5秒超时
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=3.0)) as client:
+        response = await client.post(url, headers=headers, json=data)
+
     logger.bind(tag=TAG).info(
         f"设置状态:{description},url:{url},return_code:{response.status_code}"
     )

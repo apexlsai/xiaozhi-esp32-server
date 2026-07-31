@@ -5,7 +5,6 @@ __pycache__/
 *$py.class
 .vscode
 .claude
-AGENTS.md
 
 # C extensions
 *.so
@@ -112,11 +111,16 @@ celerybeat.pid
 # Environments
 .env
 .venv
+/.venv-*/
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Repository-local runtimes and package-manager caches
+/.runtime/
+/main/manager-web/.npm-cache/
 
 # Spyder project settings
 .spyderproject
@@ -165,6 +169,7 @@ main/xiaozhi-server/models/sherpa-onnx*
 /asr-models/iic/SenseVoiceSmall/
 /main/xiaozhi-server/asr-models/iic/SenseVoiceSmall/
 /models/SenseVoiceSmall/model.pt
+/models-old/
 my_wakeup_words.mp3
 !main/xiaozhi-server/config/assets/bind_code.wav
 !main/xiaozhi-server/config/assets/wakeup_words.wav
@@ -179,6 +184,10 @@ uploadfile
 *.json
 .vscode
 .cursor
+.trae
+.codegraph
+
+
  
 !package.json
 !**/package.json
@@ -192,3 +201,9 @@ uploadfile
 main/digital-human/wakeword_runtime/models
 main/digital-human/wakeword_runtime/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01
 sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01.tar.bz2
+
+
+mysql/
+data/
+
+

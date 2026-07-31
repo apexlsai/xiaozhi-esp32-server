@@ -1,9 +1,9 @@
 import random
-import requests
-import json
+import httpx
+from io import BytesIO
+from markitdown import MarkItDown, StreamInfo
 from config.logger import setup_logging
 from plugins_func.register import register_function, ToolType, ActionResponse, Action
-from markitdown import MarkItDown
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -110,7 +110,7 @@ GET_NEWS_FROM_NEWSNOW_FUNCTION_DESC = {
 }
 
 
-def fetch_news_from_api(conn: "ConnectionHandler", source="thepaper"):
+async def fetch_news_from_api(conn: "ConnectionHandler", source="thepaper"):
     """从API获取新闻列表"""
     try:
         api_url = f"https://newsnow.busiyi.world/api/s?id={source}"
@@ -120,8 +120,8 @@ def fetch_news_from_api(conn: "ConnectionHandler", source="thepaper"):
             api_url = news_config["url"] + source
 
         headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(api_url, headers=headers, timeout=10)
-        response.raise_for_status()
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=3.0)) as client:
+            response = await client.get(api_url, headers=headers)
 
         data = response.json()
 
@@ -136,16 +136,23 @@ def fetch_news_from_api(conn: "ConnectionHandler", source="thepaper"):
         return []
 
 
-def fetch_news_detail(url):
+async def fetch_news_detail(url):
     """获取新闻详情页内容并使用MarkItDown清理HTML"""
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=3.0)) as client:
+            response = await client.get(url, headers=headers)
 
         # 使用MarkItDown清理HTML内容
         md = MarkItDown(enable_plugins=False)
-        result = md.convert(response)
+        result = md.convert_stream(
+            BytesIO(response.content),
+            stream_info=StreamInfo(
+                mimetype="text/html",
+                extension=".html",
+                charset=response.encoding or "utf-8",
+            ),
+        )
 
         # 获取清理后的文本内容
         clean_text = result.text_content
@@ -166,7 +173,7 @@ def fetch_news_detail(url):
     GET_NEWS_FROM_NEWSNOW_FUNCTION_DESC,
     ToolType.SYSTEM_CTL,
 )
-def get_news_from_newsnow(
+async def get_news_from_newsnow(
     conn: "ConnectionHandler",
     source: str = "澎湃新闻",
     detail: bool = False,
@@ -206,7 +213,7 @@ def get_news_from_newsnow(
             )
 
             # 获取新闻详情
-            detail_content = fetch_news_detail(url)
+            detail_content = await fetch_news_detail(url)
 
             if not detail_content or detail_content == "无法获取详细内容":
                 return ActionResponse(
@@ -248,7 +255,7 @@ def get_news_from_newsnow(
         logger.bind(tag=TAG).info(f"获取新闻: 新闻源={source}({english_source_id})")
 
         # 获取新闻列表
-        news_items = fetch_news_from_api(conn, english_source_id)
+        news_items = await fetch_news_from_api(conn, english_source_id)
 
         if not news_items:
             return ActionResponse(

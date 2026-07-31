@@ -73,6 +73,7 @@ class ManageApiClient:
                     },
                     timeout=cls.config.get("timeout", 30),
                     limits=limits,  # 使用限制
+                    trust_env=False,
                 )
             return cls._async_clients[loop_id]
         except RuntimeError:
@@ -242,6 +243,28 @@ async def report(
         )
     except Exception as e:
         print(f"TTS上报失败: {e}")
+        return None
+
+
+async def report_device_event(
+    device_id: str, event: str, payload: Optional[Dict] = None, timestamp: Optional[int] = None
+) -> Optional[Dict]:
+    """异步上报设备事件（语言切换、蓝牙信标变更等）"""
+    if not ManageApiClient._instance:
+        return None
+    try:
+        return await ManageApiClient._instance._execute_async_request(
+            "POST",
+            "/device/event/report",
+            json={
+                "deviceId": device_id,
+                "event": event,
+                "payload": payload or {},
+                "timestamp": timestamp,
+            },
+        )
+    except Exception as e:
+        print(f"设备事件上报失败: {e}")
         return None
 
 

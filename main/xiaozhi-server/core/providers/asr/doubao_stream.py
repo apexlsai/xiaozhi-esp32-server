@@ -3,7 +3,6 @@ import gzip
 import uuid
 import asyncio
 import websockets
-import opuslib_next
 from core.providers.asr.base import ASRProviderBase
 from config.logger import setup_logging
 from core.providers.asr.dto.dto import InterfaceType
@@ -22,7 +21,6 @@ class ASRProvider(ASRProviderBase):
         self.interface_type = InterfaceType.STREAM
         self.config = config
         self.text = ""
-        self.decoder = opuslib_next.Decoder(16000, 1)
         self.asr_ws = None
         self.forward_task = None
         self.is_processing = False  # 添加处理状态标志
@@ -68,10 +66,10 @@ class ASRProvider(ASRProviderBase):
     async def open_audio_channels(self, conn):
         await super().open_audio_channels(conn)
 
-    async def receive_audio(self, conn: "ConnectionHandler", audio, audio_have_voice):
+    async def receive_audio(self, conn: "ConnectionHandler", pcm_frame, audio_have_voice):
         # 先调用父类方法处理基础逻辑
-        await super().receive_audio(conn, audio, audio_have_voice)
-        
+        await super().receive_audio(conn, pcm_frame, audio_have_voice)
+
         # 如果本次有声音，且之前没有建立连接
         if audio_have_voice and self.asr_ws is None and not self.is_processing:
             try:
@@ -123,10 +121,9 @@ class ASRProvider(ASRProviderBase):
 
                 # 发送缓存的音频数据
                 if conn.asr_audio and len(conn.asr_audio) > 0:
-                    for cached_audio in conn.asr_audio[-10:]:
+                    for cached_pcm in conn.asr_audio[-10:]:
                         try:
-                            pcm_frame = self.decoder.decode(cached_audio, 960)
-                            payload = gzip.compress(pcm_frame)
+                            payload = gzip.compress(cached_pcm)
                             audio_request = bytearray(
                                 self.generate_audio_default_header()
                             )
@@ -151,7 +148,6 @@ class ASRProvider(ASRProviderBase):
         # 发送当前音频数据
         if self.asr_ws and self.is_processing and not self._is_stopping:
             try:
-                pcm_frame = self.decoder.decode(audio, 960)
                 payload = gzip.compress(pcm_frame)
                 audio_request = bytearray(self.generate_audio_default_header())
                 audio_request.extend(len(payload).to_bytes(4, "big"))
@@ -414,7 +410,7 @@ class ASRProvider(ASRProviderBase):
             logger.bind(tag=TAG).error(f"原始响应数据: {res.hex()}")
             raise
 
-    async def speech_to_text(self, opus_data, session_id, audio_format, artifacts=None):
+    async def speech_to_text(self, opus_data, session_id, artifacts=None):
         result = self.text
         self.text = ""  # 清空text
         return result, None
@@ -432,12 +428,3 @@ class ASRProvider(ASRProviderBase):
                 pass
             self.forward_task = None
         self.is_processing = False
-
-        # 显式释放decoder资源
-        if hasattr(self, "decoder") and self.decoder is not None:
-            try:
-                del self.decoder
-                self.decoder = None
-                logger.bind(tag=TAG).debug("Doubao decoder resources released")
-            except Exception as e:
-                logger.bind(tag=TAG).debug(f"释放Doubao decoder资源时出错: {e}")

@@ -37,6 +37,7 @@ import xiaozhi.modules.agent.vo.AgentVoicePrintVO;
 import xiaozhi.modules.correctword.vo.CorrectWordSimpleVO;
 import xiaozhi.modules.config.service.ConfigService;
 import xiaozhi.modules.device.entity.DeviceEntity;
+import xiaozhi.modules.device.service.DeviceAttributeService;
 import xiaozhi.modules.device.service.DeviceService;
 import xiaozhi.modules.model.entity.ModelConfigEntity;
 import xiaozhi.modules.model.service.ModelConfigService;
@@ -52,6 +53,7 @@ import xiaozhi.modules.voiceclone.service.VoiceCloneService;
 public class ConfigServiceImpl implements ConfigService {
     private final SysParamsService sysParamsService;
     private final DeviceService deviceService;
+    private final DeviceAttributeService deviceAttributeService;
     private final ModelConfigService modelConfigService;
     private final AgentService agentService;
     private final AgentTemplateService agentTemplateService;
@@ -65,12 +67,12 @@ public class ConfigServiceImpl implements ConfigService {
     private final CorrectWordFileService correctWordFileService;
 
     @Override
-    public Object getConfig(Boolean isCache) {
+    public Map<String, Object> getConfig(Boolean isCache) {
         if (isCache) {
             // 先从Redis获取配置
             Object cachedConfig = redisUtils.get(RedisKeys.getServerConfigKey());
             if (cachedConfig != null) {
-                return cachedConfig;
+                return JsonUtils.toStringObjectMap(cachedConfig);
             }
         }
 
@@ -123,7 +125,7 @@ public class ConfigServiceImpl implements ConfigService {
         if (isAdminRequest != null && "true".equals(isAdminRequest)) {
             // 管理控制台请求，返回getConfig的结果
             redisUtils.delete(redisKey); // 使用后清理
-            return (Map<String, Object>) getConfig(true);
+            return getConfig(true);
         }
         // 根据MAC地址查找设备
         DeviceEntity device = deviceService.getDeviceByMacAddress(macAddress);
@@ -220,6 +222,10 @@ public class ConfigServiceImpl implements ConfigService {
         // 获取声纹信息
         buildVoiceprintConfig(agent.getId(), result);
 
+        // 注入设备扩展属性，供 xiaozhi-server 读取并传给 LLM
+        Map<String, String> deviceAttributes = deviceAttributeService.getAttributesByDeviceId(device.getMacAddress());
+        result.put("device_attributes", deviceAttributes);
+
         // 构建模块配置
         buildModuleConfig(
                 agent.getAgentName(),
@@ -277,10 +283,10 @@ public class ConfigServiceImpl implements ConfigService {
             // 遍历除最后一个key之外的所有key
             for (int i = 0; i < keys.length - 1; i++) {
                 String key = keys[i];
-                if (!current.containsKey(key)) {
-                    current.put(key, new HashMap<String, Object>());
-                }
-                current = (Map<String, Object>) current.get(key);
+                Object nestedConfig = current.computeIfAbsent(key, ignored -> new HashMap<String, Object>());
+                Map<String, Object> nestedMap = JsonUtils.toStringObjectMap(nestedConfig);
+                current.put(key, nestedMap);
+                current = nestedMap;
             }
 
             // 处理最后一个key

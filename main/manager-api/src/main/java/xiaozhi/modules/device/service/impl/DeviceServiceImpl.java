@@ -31,15 +31,10 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 
-import cn.hutool.core.date.DatePattern;
-import cn.hutool.core.date.DateUtil;
+import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.map.MapUtil;
 import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.util.StrUtil;
-import cn.hutool.crypto.digest.DigestUtil;
-import cn.hutool.http.ContentType;
-import cn.hutool.http.Header;
-import cn.hutool.http.HttpRequest;
 import cn.hutool.json.JSONArray;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
@@ -56,7 +51,7 @@ import xiaozhi.common.service.impl.BaseServiceImpl;
 import xiaozhi.common.user.UserDetail;
 import xiaozhi.common.utils.ConvertUtils;
 import xiaozhi.common.utils.DateUtils;
-import xiaozhi.common.utils.ToolUtil;
+import xiaozhi.common.utils.JsonUtils;
 import xiaozhi.modules.device.dao.DeviceDao;
 import xiaozhi.modules.device.dto.DeviceManualAddDTO;
 import xiaozhi.modules.device.dto.DevicePageUserDTO;
@@ -108,15 +103,15 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
             throw new RenException(ErrorCode.ACTIVATION_CODE_EMPTY);
         }
         String deviceKey = RedisKeys.getOtaActivationCode(activationCode);
-        Object cacheDeviceId = redisUtils.get(deviceKey);
-        if (ToolUtil.isEmpty(cacheDeviceId)) {
+        String cacheDeviceId = (String) redisUtils.get(deviceKey);
+        if (StringUtils.isBlank(cacheDeviceId)) {
             throw new RenException(ErrorCode.ACTIVATION_CODE_ERROR);
         }
-        String deviceId = (String) cacheDeviceId;
+        String deviceId = cacheDeviceId;
         String safeDeviceId = deviceId.replace(":", "_").toLowerCase();
         String cacheDeviceKey = RedisKeys.getOtaDeviceActivationInfo(safeDeviceId);
-        Map<String, Object> cacheMap = (Map<String, Object>) redisUtils.get(cacheDeviceKey);
-        if (ToolUtil.isEmpty(cacheMap)) {
+        Map<String, Object> cacheMap = JsonUtils.toStringObjectMap(redisUtils.get(cacheDeviceKey));
+        if (MapUtil.isEmpty(cacheMap)) {
             throw new RenException(ErrorCode.ACTIVATION_CODE_ERROR);
         }
         String cachedCode = (String) cacheMap.get("activation_code");
@@ -186,15 +181,8 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
                 .builder(new HashMap<String, Set<String>>())
                 .put("clientIds", deviceIds).build();
 
-        if (ToolUtil.isNotEmpty(deviceIds)) {
-            // 发送请求
-            String resultMessage = HttpRequest.post(url)
-                    .header(Header.CONTENT_TYPE, ContentType.JSON.getValue())
-                    .header(Header.AUTHORIZATION, "Bearer " + generateBearerToken())
-                    .body(JSONUtil.toJsonStr(params))
-                    .timeout(10000) // 超时，毫秒
-                    .execute().body();
-            return resultMessage;
+        if (CollUtil.isNotEmpty(deviceIds)) {
+            return postToMqttGateway(url, params);
         }
         // 返回响应
         return "";
@@ -214,8 +202,8 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
             firmware.setUrl(Constant.INVALID_FIRMWARE_URL);
             response.setFirmware(firmware);
         } else {
-            // 只有在设备已绑定且autoUpdate不为0的情况下才返回固件升级信息
-            if (deviceById.getAutoUpdate() != 0) {
+            // 只有在设备已绑定且明确开启自动升级时才返回固件升级信息
+            if (Integer.valueOf(1).equals(deviceById.getAutoUpdate())) {
                 String type = deviceReport.getBoard() == null ? null : deviceReport.getBoard().getType();
                 DeviceReportRespDTO.Firmware firmware = buildFirmwareInfo(type,
                         deviceReport.getApplication() == null ? null : deviceReport.getApplication().getVersion());
@@ -304,15 +292,21 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
     @Override
     public List<UserShowDeviceListVO> getUserDeviceList(Long userId, String agentId) {
         List<DeviceEntity> devices = getUserDevices(userId, agentId);
-        return devices.stream().map(device -> {
-            UserShowDeviceListVO vo = ConvertUtils.sourceToTarget(device, UserShowDeviceListVO.class);
-            vo.setDeviceType(device.getBoard());
-            // 设置UTC时间戳供前端使用时区转换
-            if (device.getLastConnectedAt() != null) {
-                vo.setLastConnectedAtTimestamp(device.getLastConnectedAt().getTime());
-            }
-            return vo;
-        }).toList();
+        return devices.stream().map(this::toUserShowDeviceListVO).toList();
+    }
+
+    private UserShowDeviceListVO toUserShowDeviceListVO(DeviceEntity device) {
+        UserShowDeviceListVO vo = ConvertUtils.sourceToTarget(device, UserShowDeviceListVO.class);
+        vo.setDeviceType(device.getBoard());
+        vo.setBoard(device.getBoard());
+        vo.setAutoUpdate(device.getAutoUpdate());
+        vo.setCreateDateTimestamp(toTimestamp(device.getCreateDate()));
+        vo.setLastConnectedAtTimestamp(toTimestamp(device.getLastConnectedAt()));
+        return vo;
+    }
+
+    private Long toTimestamp(Date date) {
+        return date == null ? null : date.getTime();
     }
 
     @Override
@@ -385,17 +379,11 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
                         .like(StringUtils.isNotBlank(dto.getKeywords()), "alias", dto.getKeywords()));
         // 循环处理page获取回来的数据，返回需要的字段
         List<UserShowDeviceListVO> list = page.getRecords().stream().map(device -> {
-            UserShowDeviceListVO vo = ConvertUtils.sourceToTarget(device, UserShowDeviceListVO.class);
+            UserShowDeviceListVO vo = toUserShowDeviceListVO(device);
             // 把最后修改的时间，改为简短描述的时间
             vo.setRecentChatTime(DateUtils.getShortTime(device.getUpdateDate()));
             sysUserUtilService.assignUsername(device.getUserId(),
                     vo::setBindUserName);
-            vo.setDeviceType(device.getBoard());
-            vo.setBoard(device.getBoard());
-            // 设置UTC时间戳供前端使用时区转换
-            if (device.getLastConnectedAt() != null) {
-                vo.setLastConnectedAtTimestamp(device.getLastConnectedAt().getTime());
-            }
             return vo;
         }).toList();
         // 计算页数
@@ -425,7 +413,7 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
     public String geCodeByDeviceId(String deviceId) {
         String dataKey = getDeviceCacheKey(deviceId);
 
-        Map<String, Object> cacheMap = (Map<String, Object>) redisUtils.get(dataKey);
+        Map<String, Object> cacheMap = JsonUtils.toStringObjectMap(redisUtils.get(dataKey));
         if (cacheMap != null && cacheMap.containsKey("activation_code")) {
             String cachedCode = (String) cacheMap.get("activation_code");
             return cachedCode;
@@ -699,20 +687,13 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
         return mqtt;
     }
 
-    /**
-     * 生成BearerToken
-     */
-    private String generateBearerToken() {
-        try {
-            String dateStr = DateUtil.format(new Date(), DatePattern.NORM_DATE_PATTERN);
-            String signatureKey = sysParamsService.getValue(Constant.SERVER_MQTT_SECRET, false);
-            if (ToolUtil.isEmpty(signatureKey)) {
-                return null;
-            }
-            return DigestUtil.sha256Hex(dateStr + signatureKey);
-        } catch (Exception e) {
-            return null;
-        }
+    private String postToMqttGateway(String url, Object requestBody) {
+        String signatureKey = sysParamsService.getValue(Constant.SERVER_MQTT_SECRET, false);
+        return MqttGatewayAuthorization.postJson(
+                url,
+                JSONUtil.toJsonStr(requestBody),
+                signatureKey,
+                Instant.now());
     }
 
     @Override
@@ -773,13 +754,7 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
                     .put("payload", payload)
                     .build();
 
-            // 发送请求
-            String resultMessage = HttpRequest.post(url)
-                    .header(Header.CONTENT_TYPE, ContentType.JSON.getValue())
-                    .header(Header.AUTHORIZATION, "Bearer " + generateBearerToken())
-                    .body(JSONUtil.toJsonStr(requestBody))
-                    .timeout(10000) // 超时，毫秒
-                    .execute().body();
+            String resultMessage = postToMqttGateway(url, requestBody);
 
             // 解析响应
             if (StringUtils.isBlank(resultMessage)) {
@@ -870,13 +845,7 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
                 .put("payload", payload)
                 .build();
 
-        // 发送请求
-        String resultMessage = HttpRequest.post(url)
-                .header(Header.CONTENT_TYPE, ContentType.JSON.getValue())
-                .header(Header.AUTHORIZATION, "Bearer " + generateBearerToken())
-                .body(JSONUtil.toJsonStr(requestBody))
-                .timeout(10000) // 超时，毫秒
-                .execute().body();
+        String resultMessage = postToMqttGateway(url, requestBody);
 
         // 解析响应
         if (StringUtils.isNotBlank(resultMessage)) {

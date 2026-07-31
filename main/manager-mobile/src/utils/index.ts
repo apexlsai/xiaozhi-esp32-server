@@ -201,7 +201,7 @@ export function getEnvBaseUploadUrl() {
 
 /**
  * 生成SM2密钥对（十六进制格式）
- * @returns {Object} 包含公钥和私钥的对象
+ * @returns {object} 包含公钥和私钥的对象
  */
 export function generateSm2KeyPairHex() {
   // 使用sm-crypto库生成SM2密钥对

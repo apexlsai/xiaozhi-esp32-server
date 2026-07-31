@@ -21,7 +21,7 @@
         WHERE mac_address = #{macAddress} AND target_mac = #{targetMac}
     </update>
 
-    <insert id="insert">
+    <insert id="insertAddressBook">
         INSERT INTO ai_device_address_book (mac_address, target_mac, alias, has_permission, creator, create_date, updater, update_date)
         VALUES (#{macAddress}, #{targetMac}, #{alias}, #{hasPermission}, #{creator}, NOW(), #{updater}, NOW())
     </insert>
