@@ -1,75 +1,45 @@
-# KSZ 开发变更记录
+# 更新日志
 
-本文件仅记录 KSZ Fork 相对上游 `xiaozhi-esp32-server` 的开发历史、设计决策和已知风险。部署、配置、接口调用及排障命令统一见 [README.md](README.md)。
+本文件仅记录 KSZ Fork 相对上游 `xiaozhi-esp32-server` 的版本变更。部署、配置、接口调用及排障命令统一见 [README.md](README.md)。
 
-## 2026-07-30 — 蓝牙 MAC 信标事件兼容
+格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。自 `0.1.1` 起按版本记录，不标注日期；未发布变更写入 `[Unreleased]`，发版时归入对应版本节。
 
-- `device_event` 的 `beacon_change` 除原有 `payload.beacon_id` 外，兼容读取顶层 `beacon_mac.beacon_id`，并保留其 RSSI 等字段用于位置查询、导览触发和事件持久化。
+## [Unreleased]
 
-## 2026-07-28 — 信标位置语音导览
+## [0.1.1]
 
-- 信标变更会查询本地位置服务并解析楼层、展区和位置描述，随后复用 LLM 与 TTS 链路自动播报当前位置及附近展品引导。
-- 将当前室内位置注入 Agent 提示词，使用户后续询问当前位置或附近展品时使用同一上下文。
-- 位置服务无响应、404 或返回无效数据时保留信标持久化，仅提示进入新区域，避免编造位置或展品。
-- 新增无鉴权的 `/dev/ws` 开发控制通道，可查询在线设备，并按设备 MAC 或临时对端地址向真实设备注入语音问题；仅限受控内网使用。
+汇总预发布阶段 `ksz/v0.1.1dev1`（国内镜像与部署底座）、`ksz/v0.1.1dev2`（本地构建 Compose）、`ksz/v0.1.1dev3`（定向语音开发通道）及后续完善，作为 KSZ 首个正式版本。
 
-## 2026-07-23 — KSZ 文档与本地构建入口统一
+### 新增
 
-- 全模块本地构建 Compose 由项目根目录 `docker-compose-ksz.yml` 迁移并改名为 `KSZ/compose.yml`。
-- 为 server、web 服务补充本地 `build` 定义，分别使用根目录 `Dockerfile-server` 和 `Dockerfile-web`，修复本地镜像不存在时被错误拉取的问题。
-- 新增 `KSZ/.env`、`.env.example`，仅参数化 Host 网络下 MySQL、Redis 的依赖端口；默认将 MySQL 调整为 `3307`，避免与宿主机 `3306` 冲突。
-- 默认使用远程 OpenAI 兼容 ASR，移除本地 `model.pt` 文件挂载，避免模型文件缺失或类型错误阻止容器创建。
-- 删除独立 `DEVLOG.md`，将历史集中到本文件；使用和维护说明集中到 `README.md`。
-- 重构本 CHANGELOG 为纯时间线：移除命令、SQL、接口示例和配置代码块，补齐 2026-06-16 至 2026-07-22 的 KSZ 开发、迁移、排障与上游同步节点。
-- 精简 `AGENTS.md`，明确所有 KSZ 专用开发、部署、配置和文档均以 `KSZ/` 为基地。
+- 初始化 KSZ Docker 配置、Agent 协作说明与 `KSZ/` 文档基地；约定 `dev` 主线及 `feature/ksz/<name>`、`dev/<topic>` 分支策略。
+- 全模块本地构建入口 `KSZ/compose.yml`（由根目录 `docker-compose-ksz.yml` 迁入），为 server / web 补充本地 `build`，镜像标签 `server_local` / `web_local`。
+- `KSZ/.env` / `.env.example`：参数化 Host 网络下 MySQL、Redis 端口（默认 MySQL `3307`），并将数据库密码、MySQL JDBC 额外参数纳入环境变量。
+- 设备语言与蓝牙信标上下文：`manager-api` 持久化；`xiaozhi-server` 支持 `device_event` 上报与私有配置读取；通过 OpenAI 兼容请求 `extra_body` 透传给下游网关。
+- 将 `ai_device_attribute` 重构为每设备一行的 `language`、`last_beacon_id`，并提供语言 / 信标专用更新接口。
+- 信标位置语音导览：信标变更查询本地位置服务，复用 LLM / TTS 播报当前位置与附近展品；将室内位置注入 Agent 提示词。
+- `device_event` 的 `beacon_change` 兼容顶层 `beacon_mac.beacon_id` 及 RSSI 等字段。
+- 无鉴权 `/dev/ws` 开发控制通道：查询在线设备，按 MAC 或临时对端地址注入语音问题（仅限受控内网）。
+- 语言属性校验限定为 `en`、`zh-cn`；设备属性短缓存后自动同步到 LLM 请求；OpenAI LLM provider 增加请求日志。
 
-## 2026-07-22 — 同步上游
+### 变更
 
-- 将 `upstream/main` 合并到 KSZ `dev` 开发线。
-- 保留 KSZ 的设备属性、语言和蓝牙信标上下文定制。
+- 默认改用远程 OpenAI 兼容 ASR，移除本地 `model.pt` 挂载。
+- MySQL、Redis 改用国内镜像源；`.dockerignore` 排除运行时数据目录。
+- 删除独立 `DEVLOG.md`，开发记录集中到本文件；使用与维护说明集中到 `README.md`。
+- 精简 `AGENTS.md`，明确 KSZ 专用内容均以 `KSZ/` 为基地。
+- 合并 `upstream/main`，保留 KSZ 设备属性、语言与蓝牙信标定制。
 
-## 2026-07-17 — MCP 集成说明
+### 修复
 
-- 梳理统一工具处理器支持的 `SERVER_PLUGIN`、`SERVER_MCP`、`DEVICE_IOT`、`DEVICE_MCP` 和 `MCP_ENDPOINT` 五类工具。
-- 记录内置插件函数、外部 MCP 服务配置位置及相关项目文档。
+- 修复 `model.pt` 被错误创建为目录的问题。
+- 修复本地镜像不存在时被 Compose 错误拉取的问题。
+- 诊断旧 web JAR 与新表结构不匹配导致 `/config/agent-models` 500、进而使 server 无法消费 ASR 音频的问题；在配置加载与连接初始化中补充异常日志。
+- 位置服务无响应、404 或无效数据时保留信标持久化，仅提示进入新区域，避免编造位置或展品。
 
-## 2026-07-14 至 2026-07-16 — 设备属性结构化与配置诊断
+### 已知问题
 
-- 将 `ai_device_attribute` 从 key-value 结构迁移为每设备一行的 `language`、`last_beacon_id` 字段，并提供兼容接口。
-- 补充语言、蓝牙信标的专用更新接口及迁移验证流程。
-- 诊断出旧 web JAR 查询 `attr_key` 与新表结构不匹配时，会使 `/config/agent-models` 返回 500，进而令 Python server 因缺少 TTS 配置而无法消费 ASR 音频。
-- 在 `config_loader.py`、`connection.py` 增加配置获取、模块初始化和并发初始化的详细异常日志，避免错误被静默吞没。
-- 已知风险：`202607101600.sql` 尚未登记到 `db.changelog-master.yaml`；为已有环境执行该迁移前必须备份数据库。
+- `202607101600.sql` 尚未登记到 `db.changelog-master.yaml`；已有环境执行该迁移前必须备份数据库。
 
-## 2026-07-01 — KSZ 本地镜像部署
-
-- 新增全模块及单 server 的 KSZ Compose 配置。
-- 本地镜像标签定为 `xiaozhi-esp32-server:server_local` 和 `xiaozhi-esp32-server:web_local`，上游远程镜像配置保持不变。
-- 语言属性校验限定为 `en`、`zh-cn`；设备属性改动会在短缓存周期后自动同步到 LLM 请求。
-- OpenAI LLM provider 增加请求日志，便于确认 `device_id`、`language`、`last_beacon_id` 的透传结果。
-
-## 2026-06-28 至 2026-06-30 — 设备上下文接入 LLM
-
-- `manager-api` 持久化设备语言和蓝牙信标事件；`xiaozhi-server` 支持 `device_event` 上报和私有配置读取。
-- 将设备上下文写入 OpenAI 兼容请求的 `extra_body`，由下游网关负责语言和位置感知处理。
-- 先后尝试系统提示词语言约束与会话内实时指令，最终保留上下文透传方案，避免服务端自行翻译。
-- 增加用户 token 查询与临时续期的运维记录，具体操作已迁移至 README。
-
-## 2026-06-27 — KSZ Docker 与模型服务接入
-
-- `.dockerignore` 排除运行时数据目录，避免本地构建将 MySQL、上传文件和配置带入镜像。
-- 为 KSZ 本地构建使用 `web_local`、`server_local` 镜像标签，不向上游提交该部署定制。
-- 接入本地 FunASR 和 OpenAI 兼容 LLM/SLM 服务，并记录模型配置缓存清理要求。
-- 配置 WebSocket、OTA 地址和 `server.secret` 的运行时参数。
-
-## 2026-06-26 — 初始部署修复
-
-- 修复 `model.pt` 被错误创建为目录的问题，改由启动脚本创建模型文件占位。
-- 调整 MySQL、Redis 镜像源以适应国内网络环境。
-- 建立数据库模型配置、Redis 缓存刷新及服务地址维护流程。
-
-## 2026-06-16 — KSZ Fork 初始化
-
-- 初始化 KSZ Docker 配置、Agent 协作说明和部署变更记录。
-- 建立 `dev` 主开发线、`dev/<topic>` 与 `feature/ksz/<name>` 分支约定；KSZ 定制与可回馈上游的通用修改分离。
-- 整理数据持久化、端口冲突、容器名称冲突和代理导致的本地访问故障。
+[Unreleased]: https://github.com/JacobNg1/xiaozhi-esp32-server/compare/ksz/v0.1.1...HEAD
+[0.1.1]: https://github.com/JacobNg1/xiaozhi-esp32-server/releases/tag/ksz/v0.1.1
