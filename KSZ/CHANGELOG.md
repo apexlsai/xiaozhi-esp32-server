@@ -41,5 +41,5 @@
 
 - `202607101600.sql` 尚未登记到 `db.changelog-master.yaml`；已有环境执行该迁移前必须备份数据库。
 
-[Unreleased]: https://github.com/JacobNg1/xiaozhi-esp32-server/compare/ksz/v0.1.1...HEAD
-[0.1.1]: https://github.com/JacobNg1/xiaozhi-esp32-server/releases/tag/ksz/v0.1.1
+[Unreleased]: https://github.com/apexlsai/xiaozhi-esp32-server/compare/ksz/v0.1.1...HEAD
+[0.1.1]: https://github.com/apexlsai/xiaozhi-esp32-server/releases/tag/ksz/v0.1.1
