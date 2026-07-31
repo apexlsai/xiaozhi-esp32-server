@@ -259,9 +259,12 @@ docker compose exec xiaozhi-esp32-server-db \
 
 ### 设备属性迁移
 
-`ai_device_attribute` 已从 `attr_key`/`attr_value` 迁移为 `language`、`last_beacon_id` 两列。迁移脚本为 `../main/manager-api/src/main/resources/db/changelog/202607101600.sql`，但尚未登记到 Liquibase 主清单。
+`ai_device_attribute` 已从 `attr_key`/`attr_value` 迁移为每设备一行：`language`、`last_beacon_id`、`agent_name`。相关脚本已登记到 Liquibase 主清单：
 
-该脚本会重建表；仅在备份后、确认数据库仍是旧结构时执行：
+- `202607101600.sql`：列模式重建（`language`、`last_beacon_id`）
+- `202607311534.sql`：新增 `agent_name` 并按 `ai_device.agent_id` 回填
+
+正常部署由 manager-api 启动时自动执行。若旧库仍为 key-value 结构且需手动迁移，先备份再执行：
 
 ```bash
 mkdir -p backup
@@ -272,6 +275,10 @@ docker compose exec -T xiaozhi-esp32-server-db \
 docker compose exec -T xiaozhi-esp32-server-db \
   mysql -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server \
   < ../main/manager-api/src/main/resources/db/changelog/202607101600.sql
+
+docker compose exec -T xiaozhi-esp32-server-db \
+  mysql -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server \
+  < ../main/manager-api/src/main/resources/db/changelog/202607311534.sql
 ```
 
 迁移后重建 web 并检查表结构：
@@ -294,6 +301,137 @@ Body: beacon-abc-123
 ```
 
 兼容的通用接口仍可用：`GET /xiaozhi/device/attribute/{deviceId}` 与 `PUT /xiaozhi/device/attribute/{deviceId}/{attrKey}`。
+
+### 记忆模式选择
+
+本场景下设备端为公用硬件，用户选定智能体（语言）后通常会持续使用同一智能体完成一次完整服务，服务结束后再由后端归档对话记录。因此推荐以下配置：
+
+```yaml
+selected_module:
+  Memory: nomem
+```
+
+理由：
+
+- `nomem` 不在本地保存跨会话记忆，避免不同用户、不同智能体之间的上下文污染。
+- 当前会话的 LLM 上下文由 `Dialogue` 自身维护，只要连接未断开，当前智能体的多轮对话即可连续。
+- 服务结束后，由后端统一持久化完整对话 JSON，而不是让设备端或服务端维护长期记忆。
+
+#### 聊天记录上报（默认进 MySQL）
+
+当 `read_config_from_api` 启用且智控台开启聊天记录时，server 会在每轮 ASR/TTS 后自动把单条消息上报到 manager-api：
+
+```text
+POST /xiaozhi/agent/chat-history/report
+```
+
+数据最终落入 `ai_agent_chat_history`（MySQL）。`chat_history_conf` 控制上报粒度：
+
+- `0`：不上报
+- `1`：上报文本
+- `2`：上报文本 + 音频 WAV
+
+该配置通过智控台或数据库 `ai_agent_template.chat_history_conf` 维护。
+
+#### 完整对话 JSON 归档到 PostgreSQL
+
+如果需要将一整轮服务的完整对话以 JSON 形式写入外部 PG 库（例如 `127.0.0.1:5432`），不建议改动现有逐条上报表，而是扩展一个独立归档流程：
+
+1. 在 `core/connection.py` 的 `_save_and_close` 中，连接关闭前将 `self.dialogue.dialogue` 序列化为 JSON。
+2. 使用 `asyncpg` 或同步 `psycopg2` 写入 PG 业务库：
+
+```python
+import json
+import asyncpg
+
+async def archive_dialogue_to_pg(device_id, session_id, agent_id, dialogue):
+    records = [
+        {"role": m.role, "content": m.content}
+        for m in dialogue
+        if m.role in ("user", "assistant", "system")
+    ]
+    conn = await asyncpg.connect("postgresql://user:pass@127.0.0.1:5432/db")
+    await conn.execute(
+        """
+        INSERT INTO chat_archive (device_id, session_id, agent_id, dialogue_json, created_at)
+        VALUES ($1, $2, $3, $4, now())
+        """,
+        device_id, session_id, agent_id, json.dumps(records, ensure_ascii=False)
+    )
+    await conn.close()
+```
+
+3. PG 表示例：
+
+```sql
+CREATE TABLE chat_archive (
+    id BIGSERIAL PRIMARY KEY,
+    device_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    agent_id TEXT,
+    dialogue_json JSONB NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX idx_chat_archive_session ON chat_archive(session_id);
+CREATE INDEX idx_chat_archive_device ON chat_archive(device_id);
+```
+
+注意：
+
+- 不要在 `nomem` 模式下启用 `mem_local_short` 或 `mem0ai`，否则记忆会按 `device_id` 共享，导致公用设备上的上下文串扰。
+- 切换智能体（`agent_rebind`）会断开连接、清空当前 `Dialogue`，这是预期行为；PG 归档应在断连前完成。
+- 如果希望服务端也按智能体维度区分，归档时务必带上 `agent_id`。
+
+### 设备智能体换绑
+
+设备不直连 manager-api。设备经 WebSocket 上报 `device_event` / `agent_rebind`，由 `xiaozhi-server` 使用 `server.secret` 调用：
+
+```text
+POST /xiaozhi/device/rebind
+Authorization: Bearer <server.secret>
+```
+
+设备请求示例：
+
+```json
+{
+  "type": "device_event",
+  "event": "agent_rebind",
+  "request_id": "req-001",
+  "payload": {
+    "current_agent_name": "导游A",
+    "target_agent_name": "导游B",
+    "confirm": true
+  }
+}
+```
+
+约束：
+
+- `deviceId` 由 server 取当前连接 MAC，忽略设备自报身份。
+- `current_agent_name` / `target_agent_name` 在设备所属用户范围内精确匹配 `ai_agent.agent_name`；目标不存在或重名均失败。
+- `confirm` 必须为 `true`。
+- 事务内按 `device_id + old_agent_id` 条件更新 `ai_device.agent_id`，同步 `ai_device_attribute.agent_name`，并回读三处确认后才返回成功。
+
+成功响应（server → 设备）：
+
+```json
+{
+  "type": "device_event_result",
+  "event": "agent_rebind",
+  "request_id": "req-001",
+  "success": true,
+  "data": {
+    "deviceId": "aa:bb:cc:dd:ee:ff",
+    "previousAgentName": "导游A",
+    "agentName": "导游B",
+    "confirmed": true,
+    "reconnectRequired": true
+  }
+}
+```
+
+成功消息发送后 server 主动关闭 WebSocket；设备自动重连即可加载新智能体配置，无需关机重启。失败时 `success=false` 且附带 `error`，连接保持。
 
 ### 信标位置语音导览
 

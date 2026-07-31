@@ -52,6 +52,7 @@ import xiaozhi.modules.agent.service.AgentTemplateService;
 import xiaozhi.modules.agent.vo.AgentInfoVO;
 import xiaozhi.modules.correctword.service.CorrectWordFileService;
 import xiaozhi.modules.device.entity.DeviceEntity;
+import xiaozhi.modules.device.service.DeviceAttributeService;
 import xiaozhi.modules.device.service.DeviceService;
 import xiaozhi.modules.model.dto.ModelProviderDTO;
 import xiaozhi.modules.model.dto.VoiceDTO;
@@ -71,6 +72,7 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
     private final ModelConfigService modelConfigService;
     private final RedisUtils redisUtils;
     private final DeviceService deviceService;
+    private final DeviceAttributeService deviceAttributeService;
     private final AgentPluginMappingService agentPluginMappingService;
     private final AgentChatHistoryService agentChatHistoryService;
     private final AgentTemplateService agentTemplateService;
@@ -538,6 +540,9 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
             throw new RenException(ErrorCode.LLM_INTENT_PARAMS_MISMATCH);
         }
         this.updateById(existingEntity);
+        if (dto.getAgentName() != null) {
+            deviceAttributeService.syncAgentNameByAgentId(agentId, existingEntity.getAgentName());
+        }
         if (createSnapshot) {
             agentSnapshotService.createSnapshot(agentId, "config");
         }

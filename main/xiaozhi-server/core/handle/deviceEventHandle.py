@@ -1,9 +1,10 @@
 import asyncio
+import json
 from typing import Dict, Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from core.connection import ConnectionHandler
-from config.manage_api_client import report_device_event
+from config.manage_api_client import report_device_event, rebind_device_agent
 from config.logger import setup_logging
 
 TAG = __name__
@@ -15,12 +16,19 @@ async def handle_device_event(conn: "ConnectionHandler", msg_json: Dict[str, Any
     event = msg_json.get("event")
     payload = msg_json.get("payload", {})
     timestamp = msg_json.get("timestamp")
+    request_id = msg_json.get("request_id") or (
+        payload.get("request_id") if isinstance(payload, dict) else None
+    )
 
     if not event:
         logger.bind(tag=TAG).warning("收到空的 device_event")
         return
 
     logger.bind(tag=TAG).info(f"设备事件: {event}, payload: {payload}")
+
+    if event == "agent_rebind":
+        await _handle_agent_rebind(conn, payload if isinstance(payload, dict) else {}, request_id)
+        return
 
     if event == "language_change":
         language = payload.get("language")
@@ -43,6 +51,74 @@ async def handle_device_event(conn: "ConnectionHandler", msg_json: Dict[str, Any
     asyncio.create_task(
         _report_event_to_manager_api(conn, event, payload, timestamp)
     )
+
+
+async def _handle_agent_rebind(
+    conn: "ConnectionHandler", payload: Dict[str, Any], request_id: Any
+):
+    """处理设备智能体换绑：调用 manager-api，回传结果，成功后断开连接促使重连"""
+    current_agent_name = payload.get("current_agent_name") or payload.get(
+        "currentAgentName"
+    )
+    target_agent_name = payload.get("target_agent_name") or payload.get(
+        "targetAgentName"
+    )
+    confirm = payload.get("confirm", False)
+    if isinstance(confirm, str):
+        confirm = confirm.lower() in ("true", "1", "yes")
+
+    result_msg = {
+        "type": "device_event_result",
+        "event": "agent_rebind",
+        "success": False,
+    }
+    if request_id is not None:
+        result_msg["request_id"] = request_id
+
+    if not current_agent_name or not target_agent_name:
+        result_msg["error"] = "缺少 current_agent_name 或 target_agent_name"
+        await _send_json(conn, result_msg)
+        return
+
+    if not confirm:
+        result_msg["error"] = "必须确认换绑（confirm=true）"
+        await _send_json(conn, result_msg)
+        return
+
+    if not conn.read_config_from_api:
+        result_msg["error"] = "当前未启用 manager-api，无法换绑"
+        await _send_json(conn, result_msg)
+        return
+
+    try:
+        data = await rebind_device_agent(
+            device_id=conn.device_id,
+            current_agent_name=current_agent_name,
+            target_agent_name=target_agent_name,
+            confirm=True,
+        )
+        result_msg["success"] = True
+        result_msg["data"] = data or {}
+        await _send_json(conn, result_msg)
+        logger.bind(tag=TAG).info(
+            f"设备换绑成功: {conn.device_id} {current_agent_name} -> {target_agent_name}，准备断开重连"
+        )
+        await asyncio.sleep(0.1)
+        try:
+            await conn.websocket.close()
+        except Exception as close_error:
+            logger.bind(tag=TAG).warning(f"换绑成功后关闭连接失败: {close_error}")
+    except Exception as e:
+        result_msg["error"] = str(e)
+        logger.bind(tag=TAG).error(f"设备换绑失败: {e}")
+        await _send_json(conn, result_msg)
+
+
+async def _send_json(conn: "ConnectionHandler", payload: Dict[str, Any]):
+    try:
+        await conn.websocket.send(json.dumps(payload, ensure_ascii=False))
+    except Exception as e:
+        logger.bind(tag=TAG).error(f"发送设备事件结果失败: {e}")
 
 
 async def _handle_language_change(conn: "ConnectionHandler", language: str):

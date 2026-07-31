@@ -41,6 +41,22 @@ public interface DeviceAttributeService extends BaseService<DeviceAttributeEntit
     void updateLastBeaconId(String deviceId, String lastBeaconId);
 
     /**
+     * 更新设备关联智能体名称
+     *
+     * @param deviceId  设备ID
+     * @param agentName 智能体名称
+     */
+    void updateAgentName(String deviceId, String agentName);
+
+    /**
+     * 按智能体ID批量同步设备属性中的智能体名称
+     *
+     * @param agentId   智能体ID
+     * @param agentName 智能体名称
+     */
+    void syncAgentNameByAgentId(String agentId, String agentName);
+
+    /**
      * 保存或更新设备属性（兼容旧接口）
      * 
      * @param deviceId  设备ID

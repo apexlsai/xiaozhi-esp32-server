@@ -24,6 +24,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.aop.framework.AopContext;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -55,14 +56,20 @@ import xiaozhi.common.utils.JsonUtils;
 import xiaozhi.modules.device.dao.DeviceDao;
 import xiaozhi.modules.device.dto.DeviceManualAddDTO;
 import xiaozhi.modules.device.dto.DevicePageUserDTO;
+import xiaozhi.modules.device.dto.DeviceRebindDTO;
 import xiaozhi.modules.device.dto.DeviceReportReqDTO;
 import xiaozhi.modules.device.dto.DeviceReportRespDTO;
+import xiaozhi.modules.device.entity.DeviceAttributeEntity;
 import xiaozhi.modules.device.entity.DeviceEntity;
 import xiaozhi.modules.device.entity.OtaEntity;
 import xiaozhi.modules.device.service.DeviceAddressBookService;
+import xiaozhi.modules.device.service.DeviceAttributeService;
 import xiaozhi.modules.device.service.DeviceService;
 import xiaozhi.modules.device.service.OtaService;
+import xiaozhi.modules.device.vo.DeviceRebindVO;
 import xiaozhi.modules.device.vo.UserShowDeviceListVO;
+import xiaozhi.modules.agent.dao.AgentDao;
+import xiaozhi.modules.agent.entity.AgentEntity;
 import xiaozhi.modules.security.user.SecurityUser;
 import xiaozhi.modules.sys.service.SysParamsService;
 import xiaozhi.modules.sys.service.SysUserUtilService;
@@ -78,6 +85,8 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
     private final RedisUtils redisUtils;
     private final OtaService otaService;
     private final DeviceAddressBookService deviceAddressBookService;
+    private final DeviceAttributeService deviceAttributeService;
+    private final AgentDao agentDao;
 
     @Async
     public void updateDeviceConnectionInfo(String agentId, String deviceId, String appVersion) {
@@ -574,6 +583,92 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
 
         // 添加：清除智能体设备数量缓存
         redisUtils.delete(RedisKeys.getAgentDeviceCountById(dto.getAgentId()));
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public DeviceRebindVO rebindDevice(DeviceRebindDTO dto) {
+        if (dto == null || !Boolean.TRUE.equals(dto.getConfirm())) {
+            throw new RenException(ErrorCode.DEVICE_REBIND_CONFIRM_REQUIRED);
+        }
+        if (StringUtils.isBlank(dto.getDeviceId()) || StringUtils.isBlank(dto.getCurrentAgentName())
+                || StringUtils.isBlank(dto.getTargetAgentName())) {
+            throw new RenException(ErrorCode.NOT_NULL);
+        }
+
+        DeviceEntity device = getDeviceByMacAddress(dto.getDeviceId());
+        if (device == null) {
+            throw new RenException(ErrorCode.DEVICE_NOT_EXIST);
+        }
+        if (StringUtils.isBlank(device.getAgentId())) {
+            throw new RenException(ErrorCode.DEVICE_REBIND_CURRENT_AGENT_MISMATCH);
+        }
+
+        AgentEntity currentAgent = agentDao.selectById(device.getAgentId());
+        if (currentAgent == null || !dto.getCurrentAgentName().equals(currentAgent.getAgentName())) {
+            throw new RenException(ErrorCode.DEVICE_REBIND_CURRENT_AGENT_MISMATCH);
+        }
+
+        if (dto.getCurrentAgentName().equals(dto.getTargetAgentName())) {
+            DeviceRebindVO same = new DeviceRebindVO();
+            same.setDeviceId(device.getMacAddress());
+            same.setPreviousAgentId(currentAgent.getId());
+            same.setPreviousAgentName(currentAgent.getAgentName());
+            same.setAgentId(currentAgent.getId());
+            same.setAgentName(currentAgent.getAgentName());
+            same.setConfirmed(true);
+            same.setReconnectRequired(true);
+            return same;
+        }
+
+        QueryWrapper<AgentEntity> targetWrapper = new QueryWrapper<>();
+        targetWrapper.eq("user_id", device.getUserId());
+        targetWrapper.eq("agent_name", dto.getTargetAgentName());
+        List<AgentEntity> targetAgents = agentDao.selectList(targetWrapper);
+        if (targetAgents == null || targetAgents.isEmpty()) {
+            throw new RenException(ErrorCode.DEVICE_REBIND_TARGET_AGENT_NOT_FOUND);
+        }
+        if (targetAgents.size() > 1) {
+            throw new RenException(ErrorCode.DEVICE_REBIND_TARGET_AGENT_AMBIGUOUS);
+        }
+        AgentEntity targetAgent = targetAgents.get(0);
+
+        String oldAgentId = device.getAgentId();
+        UpdateWrapper<DeviceEntity> updateWrapper = new UpdateWrapper<>();
+        updateWrapper.eq("id", device.getId());
+        updateWrapper.eq("agent_id", oldAgentId);
+        updateWrapper.set("agent_id", targetAgent.getId());
+        updateWrapper.set("update_date", new Date());
+        int updated = deviceDao.update(null, updateWrapper);
+        if (updated != 1) {
+            throw new RenException(ErrorCode.DEVICE_REBIND_CONFLICT);
+        }
+
+        deviceAttributeService.updateAgentName(device.getMacAddress(), targetAgent.getAgentName());
+
+        DeviceEntity refreshed = selectById(device.getId());
+        AgentEntity refreshedAgent = agentDao.selectById(targetAgent.getId());
+        DeviceAttributeEntity attribute = deviceAttributeService.getByDeviceId(device.getMacAddress());
+        if (refreshed == null || refreshedAgent == null || attribute == null
+                || !targetAgent.getId().equals(refreshed.getAgentId())
+                || !targetAgent.getAgentName().equals(refreshedAgent.getAgentName())
+                || !targetAgent.getAgentName().equals(attribute.getAgentName())) {
+            throw new RenException(ErrorCode.DEVICE_REBIND_CONFIRM_FAILED);
+        }
+
+        redisUtils.delete(List.of(
+                RedisKeys.getAgentDeviceCountById(oldAgentId),
+                RedisKeys.getAgentDeviceCountById(targetAgent.getId())));
+
+        DeviceRebindVO result = new DeviceRebindVO();
+        result.setDeviceId(device.getMacAddress());
+        result.setPreviousAgentId(oldAgentId);
+        result.setPreviousAgentName(currentAgent.getAgentName());
+        result.setAgentId(targetAgent.getId());
+        result.setAgentName(targetAgent.getAgentName());
+        result.setConfirmed(true);
+        result.setReconnectRequired(true);
+        return result;
     }
 
     @Override

@@ -8,9 +8,11 @@ import xiaozhi.common.page.PageData;
 import xiaozhi.common.service.BaseService;
 import xiaozhi.modules.device.dto.DeviceManualAddDTO;
 import xiaozhi.modules.device.dto.DevicePageUserDTO;
+import xiaozhi.modules.device.dto.DeviceRebindDTO;
 import xiaozhi.modules.device.dto.DeviceReportReqDTO;
 import xiaozhi.modules.device.dto.DeviceReportRespDTO;
 import xiaozhi.modules.device.entity.DeviceEntity;
+import xiaozhi.modules.device.vo.DeviceRebindVO;
 import xiaozhi.modules.device.vo.UserShowDeviceListVO;
 
 public interface DeviceService extends BaseService<DeviceEntity> {
@@ -103,6 +105,11 @@ public interface DeviceService extends BaseService<DeviceEntity> {
      * 手动添加设备
      */
     void manualAddDevice(Long userId, DeviceManualAddDTO dto);
+
+    /**
+     * 设备智能体换绑（按 agent_name，含确认回读）
+     */
+    DeviceRebindVO rebindDevice(DeviceRebindDTO dto);
 
     /**
      * 更新设备连接信息

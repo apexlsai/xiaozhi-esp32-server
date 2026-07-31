@@ -27,6 +27,7 @@ import xiaozhi.modules.device.dto.DeviceAddressBookAliasDTO;
 import xiaozhi.modules.device.dto.DeviceAddressBookPermissionDTO;
 import xiaozhi.modules.device.dto.DeviceEventReportDTO;
 import xiaozhi.modules.device.dto.DeviceManualAddDTO;
+import xiaozhi.modules.device.dto.DeviceRebindDTO;
 import xiaozhi.modules.device.dto.DeviceRegisterDTO;
 import xiaozhi.modules.device.dto.DeviceToolsCallReqDTO;
 import xiaozhi.modules.device.dto.DeviceUnBindDTO;
@@ -35,6 +36,7 @@ import xiaozhi.modules.device.entity.DeviceEntity;
 import xiaozhi.modules.device.service.DeviceAddressBookService;
 import xiaozhi.modules.device.service.DeviceAttributeService;
 import xiaozhi.modules.device.service.DeviceService;
+import xiaozhi.modules.device.vo.DeviceRebindVO;
 import xiaozhi.modules.device.vo.UserShowDeviceListVO;
 import xiaozhi.modules.security.user.SecurityUser;
 import xiaozhi.modules.sys.service.SysParamsService;
@@ -115,6 +117,12 @@ public class DeviceController {
         }
 
         return new Result<Void>();
+    }
+
+    @PostMapping("/rebind")
+    @Operation(summary = "设备智能体换绑（xiaozhi-server间调用）")
+    public Result<DeviceRebindVO> rebindDevice(@Valid @RequestBody DeviceRebindDTO dto) {
+        return new Result<DeviceRebindVO>().ok(deviceService.rebindDevice(dto));
     }
 
     @GetMapping("/bind/{agentId}")
