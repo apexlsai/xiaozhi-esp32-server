@@ -151,7 +151,7 @@ docker compose logs -f xiaozhi-esp32-server | grep "发送给LLM的请求"
 - 数据库已迁移但 web 报 `Unknown column 'attr_key'`：web 镜像与数据库结构不一致，按“更新代码后的部署”重建 web。
 - 容器启动失败或端口无法监听：检查 `8000`、`8002`、`8003`、`${MYSQL_PORT}`、`${REDIS_PORT}` 是否已被宿主机进程占用。
 
-具体变更背景、数据库迁移和故障根因请参阅 [CHANGELOG.md](CHANGELOG.md)。所有 KSZ 定制开发记录均维护在该文件中。
+版本变更、迁移背景与已知问题见 [CHANGELOG.md](CHANGELOG.md)（Keep a Changelog，自 `0.1.1` 起按版本记录）。
 
 ## 运行时配置
 
