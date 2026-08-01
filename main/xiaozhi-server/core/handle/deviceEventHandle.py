@@ -1,6 +1,6 @@
 import asyncio
 import json
-from typing import Dict, Any, TYPE_CHECKING
+from typing import Dict, Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from core.connection import ConnectionHandler
@@ -31,10 +31,10 @@ async def handle_device_event(conn: "ConnectionHandler", msg_json: Dict[str, Any
         return
 
     if event == "language_change":
-        language = payload.get("language")
-        if language:
-            await _handle_language_change(conn, language)
-    elif event == "beacon_change":
+        await _handle_language_change(conn, payload if isinstance(payload, dict) else {}, request_id)
+        return
+
+    if event == "beacon_change":
         if not isinstance(payload, dict):
             payload = {}
         if not payload.get("beacon_id") and isinstance(
@@ -56,7 +56,7 @@ async def handle_device_event(conn: "ConnectionHandler", msg_json: Dict[str, Any
 async def _handle_agent_rebind(
     conn: "ConnectionHandler", payload: Dict[str, Any], request_id: Any
 ):
-    """处理设备智能体换绑：调用 manager-api，回传结果，成功后断开连接促使重连"""
+    """处理设备智能体换绑：解析 payload 后交由 _do_rebind 执行"""
     current_agent_name = payload.get("current_agent_name") or payload.get(
         "currentAgentName"
     )
@@ -66,10 +66,23 @@ async def _handle_agent_rebind(
     confirm = payload.get("confirm", False)
     if isinstance(confirm, str):
         confirm = confirm.lower() in ("true", "1", "yes")
+    await _do_rebind(
+        conn, "agent_rebind", current_agent_name, target_agent_name, request_id, confirm
+    )
 
+
+async def _do_rebind(
+    conn: "ConnectionHandler",
+    event_name: str,
+    current_agent_name: Optional[str],
+    target_agent_name: Optional[str],
+    request_id: Any,
+    confirm: bool,
+):
+    """换绑核心流程：调用 manager-api，回传结果，成功后断开连接促使重连"""
     result_msg = {
         "type": "device_event_result",
-        "event": "agent_rebind",
+        "event": event_name,
         "success": False,
     }
     if request_id is not None:
@@ -121,18 +134,43 @@ async def _send_json(conn: "ConnectionHandler", payload: Dict[str, Any]):
         logger.bind(tag=TAG).error(f"发送设备事件结果失败: {e}")
 
 
-async def _handle_language_change(conn: "ConnectionHandler", language: str):
-    """处理语言变更事件"""
-    conn.device_language = language
-    if conn.device_attributes is None:
-        conn.device_attributes = {}
-    conn.device_attributes["language"] = language
-    logger.bind(tag=TAG).info(f"设备语言已切换为: {language}")
-    # 刷新提示词增强，使 device_language 参与后续 prompt 模板渲染
-    try:
-        conn._init_prompt_enhancement()
-    except Exception as e:
-        logger.bind(tag=TAG).warning(f"语言切换后刷新提示词失败: {e}")
+async def _handle_language_change(
+    conn: "ConnectionHandler", payload: Dict[str, Any], request_id: Any
+):
+    """语言变更：改为触发智能体换绑，语言切换=智能体切换。
+
+    payload 需带 target_agent_name；current_agent_name 缺省从设备扩展属性读取。
+    language 仅作为元信息记录到内存属性，不再用于翻译。
+    """
+    target_agent_name = payload.get("target_agent_name") or payload.get("targetAgentName")
+    current_agent_name = (
+        payload.get("current_agent_name")
+        or payload.get("currentAgentName")
+        or (conn.device_attributes or {}).get("agent_name")
+    )
+    language = payload.get("language")
+    if language:
+        conn.device_language = language
+        if conn.device_attributes is None:
+            conn.device_attributes = {}
+        conn.device_attributes["language"] = language
+        logger.bind(tag=TAG).info(f"设备语言切换请求: {language}")
+
+    if not target_agent_name:
+        result_msg = {
+            "type": "device_event_result",
+            "event": "language_change",
+            "success": False,
+            "error": "缺少 target_agent_name，无法换绑到对应语言智能体",
+        }
+        if request_id is not None:
+            result_msg["request_id"] = request_id
+        await _send_json(conn, result_msg)
+        return
+
+    await _do_rebind(
+        conn, "language_change", current_agent_name, target_agent_name, request_id, confirm=True
+    )
 
 
 async def _handle_beacon_change(
