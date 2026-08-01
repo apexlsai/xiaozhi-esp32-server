@@ -138,7 +138,7 @@ PUT /xiaozhi/device/attribute/{deviceId}/last_beacon_id
 Body: beacon-abc-123
 ```
 
-`language` 仅支持 `en` 或 `zh-cn`。验证 LLM 收到的设备上下文：
+`language` 仅支持 `en` 或 `zh-cn`。该接口只写入属性，不切换智能体；切换语言请用 `language_change` 事件（见下文“语言切换”）。验证 LLM 收到的设备上下文：
 
 ```bash
 docker compose logs -f xiaozhi-esp32-server | grep "发送给LLM的请求"
@@ -432,6 +432,32 @@ Authorization: Bearer <server.secret>
 ```
 
 成功消息发送后 server 主动关闭 WebSocket；设备自动重连即可加载新智能体配置，无需关机重启。失败时 `success=false` 且附带 `error`，连接保持。
+
+### 语言切换（智能体切换路线）
+
+KSZ 不走“按 `device_language` 强制翻译”路线（`agent-base-prompt.txt` 的 `output_language_directive` 段已移除），回复语言完全由当前绑定智能体自身的 `base_prompt` 决定。因此**语言切换 = 切换到对应语言的智能体**，复用上面的换绑流程。
+
+设备通过 WebSocket 上报 `device_event` / `language_change`，payload 携带目标智能体名：
+
+```json
+{
+  "type": "device_event",
+  "event": "language_change",
+  "request_id": "lang-001",
+  "payload": {
+    "language": "en",
+    "target_agent_name": "English Guide",
+    "current_agent_name": "中文导览员"
+  }
+}
+```
+
+- `target_agent_name` 必填；`current_agent_name` 缺省从设备扩展属性 `agent_name` 读取。
+- `language` 仅作元信息记录到内存属性，不再参与提示词渲染或翻译。
+- 成功后 server 调用 `POST /xiaozhi/device/rebind` 换绑并主动断开，设备重连即加载新语言智能体；响应 `event` 为 `language_change`。
+- 失败（缺 `target_agent_name`、智能体不存在/重名、未启用 manager-api 等）时 `success=false` 且附带 `error`，连接保持。
+
+`PUT /xiaozhi/device/attribute/{deviceId}/language` 仍可用，但仅写入 `language` 属性，**不会切换智能体也不会触发翻译**；切换语言请用上面的 `language_change` 事件或直接调用 `/device/rebind`。
 
 ### 信标位置语音导览
 
