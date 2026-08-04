@@ -10,6 +10,7 @@
 
 - 设备智能体换绑：设备经 WebSocket `device_event` / `agent_rebind` 由 xiaozhi-server 以 `server.secret` 调用 `POST /device/rebind`；按用户范围内精确 `agent_name` 定位，事务内核对旧绑定、条件更新、回读确认后返回成功，并主动断开连接促使设备重连加载新智能体。
 - `ai_device_attribute` 增加冗余字段 `agent_name`（权威绑定仍为 `ai_device.agent_id`）；属性首次创建、换绑与智能体改名时同步。
+- 接入小米 MiMo TTS（`mimo-v2.5-tts`）：新增 `core/providers/tts/mimo.py`，采用 chat/completions 形式合成、`api-key` 鉴权、返回 base64 音频；provider 解码为 bytes 后复用 base 类切帧流式发送，`config.yaml` 增 `MimoTTS` 示例块。
 
 ### 变更
 
