@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
+import org.springframework.web.client.RestTemplate;
 
 import xiaozhi.common.exception.ErrorCode;
 import xiaozhi.common.redis.RedisUtils;
@@ -85,7 +86,8 @@ class DeviceControllerTest {
                 mock(DeviceAddressBookService.class),
                 mock(DeviceAttributeService.class),
                 mock(RedisUtils.class),
-                mock(SysParamsService.class));
+                mock(SysParamsService.class),
+                mock(RestTemplate.class));
     }
 
     private DeviceEntity ownedDevice() {

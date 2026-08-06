@@ -437,7 +437,32 @@ Authorization: Bearer <server.secret>
 
 KSZ 不走“按 `device_language` 强制翻译”路线（`agent-base-prompt.txt` 的 `output_language_directive` 段已移除），回复语言完全由当前绑定智能体自身的 `base_prompt` 决定。因此**语言切换 = 切换到对应语言的智能体**，复用上面的换绑流程。
 
-设备通过 WebSocket 上报 `device_event` / `language_change`，payload 携带目标智能体名：
+外部系统可先调用事件上报接口，服务按当前智能体的`<名称>-汉语` / `<名称>-英语`命名规则推导目标智能体，并经内部 HTTP 回调向在线设备下发 WS 切换命令：
+
+```json
+{
+  "deviceId": "{{DEVICE_ID}}",
+  "event": "language_change",
+  "payload": { "language": "en" },
+  "timestamp": {{$timestamp}}
+}
+```
+
+`server.internal_api` 默认是 `http://127.0.0.1:8003`，须指向 xiaozhi-server 的内部 HTTP 地址；回调使用 `server.secret` 的 Bearer 鉴权。设备收到以下 `server_command` 后，原样作为 `device_event/language_change` 上报：
+
+```json
+{
+  "type": "server_command",
+  "event": "language_change",
+  "payload": {
+    "language": "en",
+    "current_agent_name": "小硕-汉语",
+    "target_agent_name": "小硕-英语"
+  }
+}
+```
+
+设备也可直接通过 WebSocket 上报 `device_event` / `language_change`。`target_agent_name` 缺省时，server 使用同一命名规则推导：
 
 ```json
 {
@@ -452,8 +477,8 @@ KSZ 不走“按 `device_language` 强制翻译”路线（`agent-base-prompt.tx
 }
 ```
 
-- `target_agent_name` 必填；`current_agent_name` 缺省从设备扩展属性 `agent_name` 读取。
-- `language` 仅作元信息记录到内存属性，不再参与提示词渲染或翻译。
+- 当前智能体必须以 `-汉语` 或 `-英语` 结尾，否则无法推导目标智能体。
+- `language` 持久化到设备属性；重连后及后续对话会继续作为 `extra_body.language` 发送给下游 LLM。
 - 成功后 server 调用 `POST /xiaozhi/device/rebind` 换绑并主动断开，设备重连即加载新语言智能体；响应 `event` 为 `language_change`。
 - 失败（缺 `target_agent_name`、智能体不存在/重名、未启用 manager-api 等）时 `success=false` 且附带 `error`，连接保持。
 

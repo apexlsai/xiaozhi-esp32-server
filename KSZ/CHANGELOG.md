@@ -11,12 +11,13 @@
 - 设备智能体换绑：设备经 WebSocket `device_event` / `agent_rebind` 由 xiaozhi-server 以 `server.secret` 调用 `POST /device/rebind`；按用户范围内精确 `agent_name` 定位，事务内核对旧绑定、条件更新、回读确认后返回成功，并主动断开连接促使设备重连加载新智能体。
 - `ai_device_attribute` 增加冗余字段 `agent_name`（权威绑定仍为 `ai_device.agent_id`）；属性首次创建、换绑与智能体改名时同步。
 - 接入小米 MiMo TTS（`mimo-v2.5-tts`）：新增 `core/providers/tts/mimo.py`，采用 chat/completions 形式合成、`api-key` 鉴权、返回 base64 音频；provider 解码为 bytes 后复用 base 类切帧流式发送，`config.yaml` 增 `MimoTTS` 示例块。
+- `language_change` 事件上报可通过 `server.internal_api` 回调 xiaozhi-server，为在线设备下发 WS 切换命令；按 `<名称>-汉语` / `<名称>-英语` 推导目标智能体，设备回传后复用换绑流程。
 
 ### 变更
 
 - 将 `202607101600.sql` 与 `202607311534.sql` 登记到 Liquibase 主清单，自动完成设备属性列模式与 `agent_name` 迁移。
 - 移除 `agent-base-prompt.txt` 的 `output_language_directive` 强制翻译段；回复语言改由各智能体自身 `base_prompt` 决定，不再按 `device_language` 强制翻译。
-- `language_change` 事件改为触发智能体换绑：payload 携带 `target_agent_name`，`current_agent_name` 缺省从设备扩展属性读取，复用 `agent_rebind` 流程换绑并断开重连；`device_language` 仅作元信息保留，不再用于翻译。
+- `language_change` 事件改为触发智能体换绑：目标智能体可由 `<名称>-汉语` / `<名称>-英语` 自动推导，复用 `agent_rebind` 流程换绑并断开重连；`device_language` 仅作元信息保留，不再用于翻译。
 
 ### 已知问题
 

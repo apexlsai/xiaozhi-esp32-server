@@ -1,6 +1,7 @@
 import asyncio
 from aiohttp import web
 from config.logger import setup_logging
+from core.api.device_command_handler import DeviceCommandHandler
 from core.api.ota_handler import OTAHandler
 from core.api.vision_handler import VisionHandler
 
@@ -8,11 +9,12 @@ TAG = __name__
 
 
 class SimpleHttpServer:
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, websocket_server):
         self.config = config
         self.logger = setup_logging()
         self.ota_handler = OTAHandler(config)
         self.vision_handler = VisionHandler(config)
+        self.device_command_handler = DeviceCommandHandler(config, websocket_server)
 
     def _get_websocket_url(self, local_ip: str, port: int) -> str:
         """获取websocket地址
@@ -65,6 +67,10 @@ class SimpleHttpServer:
                 # 添加路由
                 app.add_routes(
                     [
+                        web.post(
+                            "/internal/device/language-change",
+                            self.device_command_handler.handle_language_change,
+                        ),
                         web.get("/mcp/vision/explain", self.vision_handler.handle_get),
                         web.post(
                             "/mcp/vision/explain", self.vision_handler.handle_post

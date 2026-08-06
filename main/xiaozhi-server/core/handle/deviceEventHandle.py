@@ -10,6 +10,28 @@ from config.logger import setup_logging
 TAG = __name__
 logger = setup_logging()
 
+_LANGUAGE_AGENT_SUFFIXES = {"zh-cn": "汉语", "en": "英语"}
+
+
+def resolve_language_agent_name(current_agent_name: Optional[str], language: Any) -> Optional[str]:
+    """根据“小硕-汉语”命名规则推导同一智能体的目标语言版本。"""
+    if not isinstance(current_agent_name, str) or not isinstance(language, str):
+        return None
+
+    target_suffix = _LANGUAGE_AGENT_SUFFIXES.get(language.lower())
+    if target_suffix is None:
+        return None
+
+    for separator in ("-", "－", "—"):
+        prefix, found_separator, current_suffix = current_agent_name.rpartition(separator)
+        if (
+            found_separator
+            and prefix
+            and current_suffix in _LANGUAGE_AGENT_SUFFIXES.values()
+        ):
+            return f"{prefix}{separator}{target_suffix}"
+    return None
+
 
 async def handle_device_event(conn: "ConnectionHandler", msg_json: Dict[str, Any]):
     """处理设备主动上报的事件"""
@@ -139,16 +161,20 @@ async def _handle_language_change(
 ):
     """语言变更：改为触发智能体换绑，语言切换=智能体切换。
 
-    payload 需带 target_agent_name；current_agent_name 缺省从设备扩展属性读取。
+    target_agent_name 缺省时按智能体名称后缀推导；current_agent_name 缺省从设备扩展属性读取。
     language 仅作为元信息记录到内存属性，不再用于翻译。
     """
-    target_agent_name = payload.get("target_agent_name") or payload.get("targetAgentName")
     current_agent_name = (
         payload.get("current_agent_name")
         or payload.get("currentAgentName")
         or (conn.device_attributes or {}).get("agent_name")
     )
     language = payload.get("language")
+    target_agent_name = (
+        payload.get("target_agent_name")
+        or payload.get("targetAgentName")
+        or resolve_language_agent_name(current_agent_name, language)
+    )
     if language:
         conn.device_language = language
         if conn.device_attributes is None:
