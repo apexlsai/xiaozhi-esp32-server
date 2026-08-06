@@ -174,12 +174,17 @@ class LanguageChangeEventTests(unittest.TestCase):
 
         asyncio.run(run())
 
-    def test_language_change_without_target_returns_error(self):
+    def test_language_change_derives_target_from_agent_name(self):
         async def run():
+            self.conn.device_attributes = {"agent_name": "小硕-汉语"}
             with patch(
                 "core.handle.deviceEventHandle.rebind_device_agent",
                 new_callable=AsyncMock,
-            ) as rebind:
+            ) as rebind, patch(
+                "core.handle.deviceEventHandle.asyncio.sleep",
+                new_callable=AsyncMock,
+            ):
+                rebind.return_value = {"agentName": "小硕-英语"}
                 await handle_device_event(
                     self.conn,
                     {
@@ -189,12 +194,16 @@ class LanguageChangeEventTests(unittest.TestCase):
                         "payload": {"language": "en"},
                     },
                 )
-                rebind.assert_not_awaited()
+                rebind.assert_awaited_once_with(
+                    device_id="aa:bb:cc:dd:ee:ff",
+                    current_agent_name="小硕-汉语",
+                    target_agent_name="小硕-英语",
+                    confirm=True,
+                )
                 sent = json.loads(self.conn.websocket.send.await_args.args[0])
-                self.assertFalse(sent["success"])
+                self.assertTrue(sent["success"])
                 self.assertEqual(sent["event"], "language_change")
-                self.assertIn("target_agent_name", sent["error"])
-                self.conn.websocket.close.assert_not_awaited()
+                self.conn.websocket.close.assert_awaited_once()
 
         asyncio.run(run())
 
