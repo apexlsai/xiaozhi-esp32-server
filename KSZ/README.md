@@ -52,7 +52,7 @@ docker compose down
 docker compose up -d --build
 ```
 
-`8000`、`8002`、`8003` 分别是 server 与 web 的对外服务端口，保持固定，不在 `.env` 中配置。
+`8000`、`8002`、`8004` 分别是 server WebSocket、智控台、server HTTP 端口，保持固定，不在 `.env` 中配置。Docker web 镜像内 Java 另占用宿主机 `8003`（由 Nginx `8002` 反代）。
 
 ## 常用操作
 
@@ -78,8 +78,9 @@ docker compose restart xiaozhi-esp32-server
 配置采用 Host 网络模式，服务直接占用宿主机端口：
 
 - `8000`：WebSocket 服务
-- `8002`：智控台与 OTA 接口
-- `8003`：视觉/HTTP 接口
+- `8002`：智控台（Nginx）与 OTA 接口
+- `8003`：manager-api Java（仅本机，由 `8002` 反代，勿当作 server HTTP）
+- `8004`：xiaozhi-server HTTP / 视觉与内部回调（`server.internal_api`）
 - `${MYSQL_PORT}`：MySQL（默认 `3307`）
 - `${REDIS_PORT}`：Redis（默认 `6379`）
 
@@ -138,7 +139,7 @@ PUT /xiaozhi/device/attribute/{deviceId}/last_beacon_id
 Body: beacon-abc-123
 ```
 
-`language` 仅支持 `en` 或 `zh-cn`。验证 LLM 收到的设备上下文：
+`language` 须使用下文「语言码约定」中的规范写法。该接口只写入属性，不切换智能体；切换语言请用 `language_change` 事件（见下文“语言切换”）。验证 LLM 收到的设备上下文：
 
 ```bash
 docker compose logs -f xiaozhi-esp32-server | grep "发送给LLM的请求"
@@ -165,8 +166,10 @@ manager-api:
   secret: <从 sys_params 的 server.secret 获取>
 server:
   port: 8000
-  http_port: 8003
+  http_port: 8004
 ```
+
+> Host 网络下 web 容器 Java 固定监听 `8003`，因此 `server.http_port` 必须用 `8004`；`sys_params.server.internal_api` 同步为 `http://127.0.0.1:8004`。
 
 服务对外地址在 `sys_params` 中维护。将 `<HOST_IP>` 替换为实际 IP 或域名：
 
@@ -259,9 +262,12 @@ docker compose exec xiaozhi-esp32-server-db \
 
 ### 设备属性迁移
 
-`ai_device_attribute` 已从 `attr_key`/`attr_value` 迁移为 `language`、`last_beacon_id` 两列。迁移脚本为 `../main/manager-api/src/main/resources/db/changelog/202607101600.sql`，但尚未登记到 Liquibase 主清单。
+`ai_device_attribute` 已从 `attr_key`/`attr_value` 迁移为每设备一行：`language`、`last_beacon_id`、`agent_name`。相关脚本已登记到 Liquibase 主清单：
 
-该脚本会重建表；仅在备份后、确认数据库仍是旧结构时执行：
+- `202607101600.sql`：列模式重建（`language`、`last_beacon_id`）
+- `202607311534.sql`：新增 `agent_name` 并按 `ai_device.agent_id` 回填
+
+正常部署由 manager-api 启动时自动执行。若旧库仍为 key-value 结构且需手动迁移，先备份再执行：
 
 ```bash
 mkdir -p backup
@@ -272,6 +278,10 @@ docker compose exec -T xiaozhi-esp32-server-db \
 docker compose exec -T xiaozhi-esp32-server-db \
   mysql -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server \
   < ../main/manager-api/src/main/resources/db/changelog/202607101600.sql
+
+docker compose exec -T xiaozhi-esp32-server-db \
+  mysql -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server \
+  < ../main/manager-api/src/main/resources/db/changelog/202607311534.sql
 ```
 
 迁移后重建 web 并检查表结构：
@@ -294,6 +304,202 @@ Body: beacon-abc-123
 ```
 
 兼容的通用接口仍可用：`GET /xiaozhi/device/attribute/{deviceId}` 与 `PUT /xiaozhi/device/attribute/{deviceId}/{attrKey}`。
+
+### 记忆模式选择
+
+本场景下设备端为公用硬件，用户选定智能体（语言）后通常会持续使用同一智能体完成一次完整服务，服务结束后再由后端归档对话记录。因此推荐以下配置：
+
+```yaml
+selected_module:
+  Memory: nomem
+```
+
+理由：
+
+- `nomem` 不在本地保存跨会话记忆，避免不同用户、不同智能体之间的上下文污染。
+- 当前会话的 LLM 上下文由 `Dialogue` 自身维护，只要连接未断开，当前智能体的多轮对话即可连续。
+- 服务结束后，由后端统一持久化完整对话 JSON，而不是让设备端或服务端维护长期记忆。
+
+#### 聊天记录上报（默认进 MySQL）
+
+当 `read_config_from_api` 启用且智控台开启聊天记录时，server 会在每轮 ASR/TTS 后自动把单条消息上报到 manager-api：
+
+```text
+POST /xiaozhi/agent/chat-history/report
+```
+
+数据最终落入 `ai_agent_chat_history`（MySQL）。`chat_history_conf` 控制上报粒度：
+
+- `0`：不上报
+- `1`：上报文本
+- `2`：上报文本 + 音频 WAV
+
+该配置通过智控台或数据库 `ai_agent_template.chat_history_conf` 维护。
+
+#### 完整对话 JSON 归档到 PostgreSQL
+
+如果需要将一整轮服务的完整对话以 JSON 形式写入外部 PG 库（例如 `127.0.0.1:5432`），不建议改动现有逐条上报表，而是扩展一个独立归档流程：
+
+1. 在 `core/connection.py` 的 `_save_and_close` 中，连接关闭前将 `self.dialogue.dialogue` 序列化为 JSON。
+2. 使用 `asyncpg` 或同步 `psycopg2` 写入 PG 业务库：
+
+```python
+import json
+import asyncpg
+
+async def archive_dialogue_to_pg(device_id, session_id, agent_id, dialogue):
+    records = [
+        {"role": m.role, "content": m.content}
+        for m in dialogue
+        if m.role in ("user", "assistant", "system")
+    ]
+    conn = await asyncpg.connect("postgresql://user:pass@127.0.0.1:5432/db")
+    await conn.execute(
+        """
+        INSERT INTO chat_archive (device_id, session_id, agent_id, dialogue_json, created_at)
+        VALUES ($1, $2, $3, $4, now())
+        """,
+        device_id, session_id, agent_id, json.dumps(records, ensure_ascii=False)
+    )
+    await conn.close()
+```
+
+3. PG 表示例：
+
+```sql
+CREATE TABLE chat_archive (
+    id BIGSERIAL PRIMARY KEY,
+    device_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    agent_id TEXT,
+    dialogue_json JSONB NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX idx_chat_archive_session ON chat_archive(session_id);
+CREATE INDEX idx_chat_archive_device ON chat_archive(device_id);
+```
+
+注意：
+
+- 不要在 `nomem` 模式下启用 `mem_local_short` 或 `mem0ai`，否则记忆会按 `device_id` 共享，导致公用设备上的上下文串扰。
+- 切换智能体（`agent_rebind`）会断开连接、清空当前 `Dialogue`，这是预期行为；PG 归档应在断连前完成。
+- 如果希望服务端也按智能体维度区分，归档时务必带上 `agent_id`。
+
+### 设备智能体换绑
+
+设备不直连 manager-api。设备经 WebSocket 上报 `device_event` / `agent_rebind`，由 `xiaozhi-server` 使用 `server.secret` 调用：
+
+```text
+POST /xiaozhi/device/rebind
+Authorization: Bearer <server.secret>
+```
+
+设备请求示例：
+
+```json
+{
+  "type": "device_event",
+  "event": "agent_rebind",
+  "request_id": "req-001",
+  "payload": {
+    "current_agent_name": "导游A",
+    "target_agent_name": "导游B",
+    "confirm": true
+  }
+}
+```
+
+约束：
+
+- `deviceId` 由 server 取当前连接 MAC，忽略设备自报身份。
+- `current_agent_name` / `target_agent_name` 在设备所属用户范围内精确匹配 `ai_agent.agent_name`；目标不存在或重名均失败。
+- `confirm` 必须为 `true`。
+- 事务内按 `device_id + old_agent_id` 条件更新 `ai_device.agent_id`，同步 `ai_device_attribute.agent_name`，并回读三处确认后才返回成功。
+
+成功响应（server → 设备）：
+
+```json
+{
+  "type": "device_event_result",
+  "event": "agent_rebind",
+  "request_id": "req-001",
+  "success": true,
+  "data": {
+    "deviceId": "aa:bb:cc:dd:ee:ff",
+    "previousAgentName": "导游A",
+    "agentName": "导游B",
+    "confirmed": true,
+    "reconnectRequired": true
+  }
+}
+```
+
+成功消息发送后 server 主动关闭 WebSocket；设备自动重连即可加载新智能体配置，无需关机重启。失败时 `success=false` 且附带 `error`，连接保持。
+
+### 语言码约定
+
+`payload.language` **大小写固定**，禁止 `zh-cn` / `ZH-CN` 等变体；manager-api、内部 HTTP 与 WebSocket 事件均按下表规范码精确校验并原样持久化、透传。
+
+| 规范码 | 智能体名后缀 | 说明 |
+|--------|--------------|------|
+| `zh-CN` | 汉语 | 普通话 |
+| `en` | 英语 | 英语 |
+| `ja` | 日语 | 日语 |
+| `ko` | 韩语 | 韩语 |
+| `zh-CN-yue` | 粤语 | 粤语 |
+| `zh-CN-sichuan` | 四川话 | 方言示例 |
+| `zh-CN-shanghai` | 上海话 | 方言示例 |
+| `zh-CN-minnan` | 闽南语 | 方言示例 |
+| `zh-CN-shanxi` | 陕西话 | 方言示例 |
+
+规则：
+
+- 语种：`zh-CN` / `en` / `ja` / `ko`（语言小写或 `zh`，地区大写；与 BCP 47 常见写法一致）。
+- 汉语方言：`zh-CN-{pinyin_of_region}`，地区拼音全小写、无声调，如 `zh-CN-sichuan`。
+- 粤语固定为 `zh-CN-yue`（不写 `zh-HK` / `yue`）。
+- 智能体命名必须为 `<基名>-<后缀>`，例如 `小硕-汉语`、`小硕-英语`、`小硕-粤语`、`小硕-日语`、`小硕-韩语`；换绑按后缀推导，同一基名下各语言智能体并存。
+
+服务会根据当前智能体的任一已知语言后缀和目标语言码推导目标智能体，例如 `小硕-粤语` + `ja` → `小硕-日语`。
+
+### 语言切换（智能体切换路线）
+
+KSZ 不走“按 `device_language` 强制翻译”路线（`agent-base-prompt.txt` 的 `output_language_directive` 段已移除），回复语言完全由当前绑定智能体自身的 `base_prompt` 决定。因此**语言切换 = 切换到对应语言的智能体**，复用上面的换绑流程。
+
+外部系统调用事件上报接口后，manager-api 先持久化 `language`，再回调 xiaozhi-server 内部接口；**server 在线时直接换绑并断开重连**，不再依赖设备回传命令：
+
+```json
+{
+  "deviceId": "{{DEVICE_ID}}",
+  "event": "language_change",
+  "payload": { "language": "zh-CN-yue" },
+  "timestamp": {{$timestamp}}
+}
+```
+
+HTTP 层恒为 `200`，业务成败看 JSON 的 `code`（`0` 成功，非 `0` 失败）。这是 manager-api 的 `Result` 约定，不是传输异常。`code=0` 表示语言已保存且换绑已在 server 侧执行（设备须在线）。
+
+`server.internal_api`（参数字典）**必须**指向 xiaozhi-server 内部 HTTP，Host 网络 Docker 部署下为 `http://127.0.0.1:8004`（不要填 `8003`，那是 manager-api Java）；回调使用 `server.secret` 的 Bearer 鉴权。未配置时会出现：语言属性已写入，但 `code=500`，msg 含「下发设备语言切换命令失败」/ `未配置 server.internal_api`。
+
+设备也可直接通过 WebSocket 上报 `device_event` / `language_change`，效果相同。`target_agent_name` 缺省时，server 使用命名规则推导：
+
+```json
+{
+  "type": "device_event",
+  "event": "language_change",
+  "request_id": "lang-001",
+  "payload": {
+    "language": "zh-CN-yue",
+    "current_agent_name": "小硕-英语"
+  }
+}
+```
+
+- 当前智能体名后缀须在「语言码约定」表中，否则无法推导目标智能体（例如 `小硕-英语` + `zh-CN-yue` → `小硕-粤语`）。
+- `language` 持久化到设备属性；重连后及后续对话会继续作为 `extra_body.language` 发送给下游 LLM。
+- 成功后 server 调用 `POST /xiaozhi/device/rebind` 换绑并主动断开，设备重连即加载新语言智能体。
+- 失败（无法推导目标、智能体不存在/重名、设备离线、未配置 `server.internal_api`、未启用 manager-api 等）时业务 `code≠0` 或 WS `success=false`。
+
+`PUT /xiaozhi/device/attribute/{deviceId}/language` 仍可用，但仅写入 `language` 属性，**不会切换智能体也不会触发翻译**；切换语言请用上面的 `language_change` 事件或直接调用 `/device/rebind`。
 
 ### 信标位置语音导览
 

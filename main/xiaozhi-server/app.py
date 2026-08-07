@@ -72,7 +72,7 @@ async def main():
     ws_server = WebSocketServer(config)
     ws_task = asyncio.create_task(ws_server.start())
     # 启动 Simple http 服务器
-    ota_server = SimpleHttpServer(config)
+    ota_server = SimpleHttpServer(config, ws_server)
     ota_task = asyncio.create_task(ota_server.start())
 
     read_config_from_api = config.get("read_config_from_api", False)

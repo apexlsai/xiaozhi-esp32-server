@@ -9,20 +9,24 @@ import static org.mockito.Mockito.when;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
+import org.springframework.web.client.RestTemplate;
 
 import xiaozhi.common.exception.ErrorCode;
 import xiaozhi.common.redis.RedisUtils;
 import xiaozhi.common.user.UserDetail;
 import xiaozhi.common.utils.MessageUtils;
 import xiaozhi.common.utils.Result;
+import xiaozhi.modules.device.dto.DeviceRebindDTO;
 import xiaozhi.modules.device.dto.DeviceUpdateDTO;
 import xiaozhi.modules.device.entity.DeviceEntity;
 import xiaozhi.modules.device.service.DeviceAddressBookService;
+import xiaozhi.modules.device.service.DeviceAttributeService;
 import xiaozhi.modules.device.service.DeviceService;
+import xiaozhi.modules.device.vo.DeviceRebindVO;
 import xiaozhi.modules.security.user.SecurityUser;
 import xiaozhi.modules.sys.service.SysParamsService;
 
-@DisplayName("设备更新接口回归测试")
+@DisplayName("设备接口回归测试")
 class DeviceControllerTest {
 
     private static final String DEVICE_ID = "device-id";
@@ -54,12 +58,36 @@ class DeviceControllerTest {
         }
     }
 
+    @Test
+    @DisplayName("换绑接口委托 DeviceService 并返回成功结果")
+    void rebindDelegatesToService() {
+        DeviceService deviceService = mock(DeviceService.class);
+        DeviceRebindDTO dto = new DeviceRebindDTO();
+        dto.setDeviceId("aa:bb:cc:dd:ee:ff");
+        dto.setCurrentAgentName("导游A");
+        dto.setTargetAgentName("导游B");
+        dto.setConfirm(true);
+        DeviceRebindVO vo = new DeviceRebindVO();
+        vo.setDeviceId(dto.getDeviceId());
+        vo.setConfirmed(true);
+        vo.setReconnectRequired(true);
+        when(deviceService.rebindDevice(dto)).thenReturn(vo);
+
+        Result<DeviceRebindVO> result = controller(deviceService).rebindDevice(dto);
+
+        assertEquals(0, result.getCode());
+        assertEquals(true, result.getData().getConfirmed());
+        verify(deviceService).rebindDevice(dto);
+    }
+
     private DeviceController controller(DeviceService deviceService) {
         return new DeviceController(
                 deviceService,
                 mock(DeviceAddressBookService.class),
+                mock(DeviceAttributeService.class),
                 mock(RedisUtils.class),
-                mock(SysParamsService.class));
+                mock(SysParamsService.class),
+                mock(RestTemplate.class));
     }
 
     private DeviceEntity ownedDevice() {

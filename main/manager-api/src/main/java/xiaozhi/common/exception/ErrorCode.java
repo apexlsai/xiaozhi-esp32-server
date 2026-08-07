@@ -169,7 +169,15 @@ public interface ErrorCode {
     int CHAT_HISTORY_DOWNLOAD_FAILED = 10135; // 聊天记录下载失败
 
     // 设备属性相关错误码
-    int DEVICE_ATTRIBUTE_LANGUAGE_INVALID = 10250; // 语言类型仅支持 en 或 zh-cn
+    int DEVICE_ATTRIBUTE_LANGUAGE_INVALID = 10250; // 语言必须使用受支持的规范码
+
+    // 设备换绑相关错误码
+    int DEVICE_REBIND_CONFIRM_REQUIRED = 10251; // 必须确认换绑
+    int DEVICE_REBIND_CURRENT_AGENT_MISMATCH = 10252; // 当前智能体名称与绑定不符
+    int DEVICE_REBIND_TARGET_AGENT_NOT_FOUND = 10253; // 目标智能体不存在
+    int DEVICE_REBIND_TARGET_AGENT_AMBIGUOUS = 10254; // 同用户下目标智能体名称重复
+    int DEVICE_REBIND_CONFLICT = 10255; // 换绑冲突，设备绑定已变化
+    int DEVICE_REBIND_CONFIRM_FAILED = 10256; // 换绑回读确认失败
 
     int DOWNLOAD_LINK_EXPIRED = 10136; // 下载链接已过期或无效
     int DOWNLOAD_LINK_INVALID = 10137; // 下载链接无效

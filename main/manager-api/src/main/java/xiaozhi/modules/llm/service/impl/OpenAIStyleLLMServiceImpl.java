@@ -36,6 +36,7 @@ public class OpenAIStyleLLMServiceImpl implements LLMService {
     static {
         THINKING_DISABLED_DOMAINS.put("aliyuncs.com", Map.of("enable_thinking", false));
         Map<String, Object> thinkingDisabled = Map.of("thinking", Map.of("type", "disabled"));
+        THINKING_DISABLED_DOMAINS.put("deepseek.com", thinkingDisabled);
         THINKING_DISABLED_DOMAINS.put("bigmodel.cn", thinkingDisabled);
         THINKING_DISABLED_DOMAINS.put("moonshot.cn", thinkingDisabled);
         THINKING_DISABLED_DOMAINS.put("volces.com", thinkingDisabled);

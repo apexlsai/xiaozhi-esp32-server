@@ -28,7 +28,7 @@ public interface DeviceAttributeService extends BaseService<DeviceAttributeEntit
      * 更新设备语言
      * 
      * @param deviceId 设备ID
-     * @param language 语言代码（en, zh-cn）
+     * @param language 规范语言码
      */
     void updateLanguage(String deviceId, String language);
 
@@ -39,6 +39,22 @@ public interface DeviceAttributeService extends BaseService<DeviceAttributeEntit
      * @param lastBeaconId 蓝牙信标ID
      */
     void updateLastBeaconId(String deviceId, String lastBeaconId);
+
+    /**
+     * 更新设备关联智能体名称
+     *
+     * @param deviceId  设备ID
+     * @param agentName 智能体名称
+     */
+    void updateAgentName(String deviceId, String agentName);
+
+    /**
+     * 按智能体ID批量同步设备属性中的智能体名称
+     *
+     * @param agentId   智能体ID
+     * @param agentName 智能体名称
+     */
+    void syncAgentNameByAgentId(String agentId, String agentName);
 
     /**
      * 保存或更新设备属性（兼容旧接口）

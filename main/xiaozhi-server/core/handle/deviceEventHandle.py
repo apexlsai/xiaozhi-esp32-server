@@ -1,13 +1,58 @@
 import asyncio
-from typing import Dict, Any, TYPE_CHECKING
+import json
+from typing import Dict, Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from core.connection import ConnectionHandler
-from config.manage_api_client import report_device_event
+from config.manage_api_client import report_device_event, rebind_device_agent
 from config.logger import setup_logging
 
 TAG = __name__
 logger = setup_logging()
+
+LANGUAGE_AGENT_SUFFIXES = {
+    "zh-CN": "汉语",
+    "en": "英语",
+    "ja": "日语",
+    "ko": "韩语",
+    "zh-CN-yue": "粤语",
+    "zh-CN-sichuan": "四川话",
+    "zh-CN-shanghai": "上海话",
+    "zh-CN-minnan": "闽南语",
+    "zh-CN-shanxi": "陕西话",
+}
+
+
+def resolve_language_code_from_agent_name(agent_name: Optional[str]) -> Optional[str]:
+    """从智能体名后缀反查规范语言码，如 小硕-粤语 → zh-CN-yue。"""
+    if not isinstance(agent_name, str) or not agent_name:
+        return None
+    suffix_to_language = {suffix: code for code, suffix in LANGUAGE_AGENT_SUFFIXES.items()}
+    for separator in ("-", "－", "—"):
+        _, found_separator, current_suffix = agent_name.rpartition(separator)
+        if found_separator and current_suffix in suffix_to_language:
+            return suffix_to_language[current_suffix]
+    return None
+
+
+def resolve_language_agent_name(current_agent_name: Optional[str], language: Any) -> Optional[str]:
+    """根据“小硕-汉语”命名规则推导同一智能体的目标语言版本。"""
+    if not isinstance(current_agent_name, str) or not isinstance(language, str):
+        return None
+
+    target_suffix = LANGUAGE_AGENT_SUFFIXES.get(language)
+    if target_suffix is None:
+        return None
+
+    for separator in ("-", "－", "—"):
+        prefix, found_separator, current_suffix = current_agent_name.rpartition(separator)
+        if (
+            found_separator
+            and prefix
+            and current_suffix in LANGUAGE_AGENT_SUFFIXES.values()
+        ):
+            return f"{prefix}{separator}{target_suffix}"
+    return None
 
 
 async def handle_device_event(conn: "ConnectionHandler", msg_json: Dict[str, Any]):
@@ -15,6 +60,9 @@ async def handle_device_event(conn: "ConnectionHandler", msg_json: Dict[str, Any
     event = msg_json.get("event")
     payload = msg_json.get("payload", {})
     timestamp = msg_json.get("timestamp")
+    request_id = msg_json.get("request_id") or (
+        payload.get("request_id") if isinstance(payload, dict) else None
+    )
 
     if not event:
         logger.bind(tag=TAG).warning("收到空的 device_event")
@@ -22,11 +70,15 @@ async def handle_device_event(conn: "ConnectionHandler", msg_json: Dict[str, Any
 
     logger.bind(tag=TAG).info(f"设备事件: {event}, payload: {payload}")
 
+    if event == "agent_rebind":
+        await _handle_agent_rebind(conn, payload if isinstance(payload, dict) else {}, request_id)
+        return
+
     if event == "language_change":
-        language = payload.get("language")
-        if language:
-            await _handle_language_change(conn, language)
-    elif event == "beacon_change":
+        await _handle_language_change(conn, payload if isinstance(payload, dict) else {}, request_id)
+        return
+
+    if event == "beacon_change":
         if not isinstance(payload, dict):
             payload = {}
         if not payload.get("beacon_id") and isinstance(
@@ -45,18 +97,180 @@ async def handle_device_event(conn: "ConnectionHandler", msg_json: Dict[str, Any
     )
 
 
-async def _handle_language_change(conn: "ConnectionHandler", language: str):
-    """处理语言变更事件"""
+async def _handle_agent_rebind(
+    conn: "ConnectionHandler", payload: Dict[str, Any], request_id: Any
+):
+    """处理设备智能体换绑：解析 payload 后交由 _do_rebind 执行"""
+    current_agent_name = payload.get("current_agent_name") or payload.get(
+        "currentAgentName"
+    )
+    target_agent_name = payload.get("target_agent_name") or payload.get(
+        "targetAgentName"
+    )
+    confirm = payload.get("confirm", False)
+    if isinstance(confirm, str):
+        confirm = confirm.lower() in ("true", "1", "yes")
+    await _do_rebind(
+        conn, "agent_rebind", current_agent_name, target_agent_name, request_id, confirm
+    )
+
+
+async def _do_rebind(
+    conn: "ConnectionHandler",
+    event_name: str,
+    current_agent_name: Optional[str],
+    target_agent_name: Optional[str],
+    request_id: Any,
+    confirm: bool,
+):
+    """换绑核心流程：调用 manager-api，回传结果，成功后断开连接促使重连"""
+    result_msg = {
+        "type": "device_event_result",
+        "event": event_name,
+        "success": False,
+    }
+    if request_id is not None:
+        result_msg["request_id"] = request_id
+
+    if not current_agent_name or not target_agent_name:
+        result_msg["error"] = "缺少 current_agent_name 或 target_agent_name"
+        await _send_json(conn, result_msg)
+        return
+
+    if not confirm:
+        result_msg["error"] = "必须确认换绑（confirm=true）"
+        await _send_json(conn, result_msg)
+        return
+
+    if not conn.read_config_from_api:
+        result_msg["error"] = "当前未启用 manager-api，无法换绑"
+        await _send_json(conn, result_msg)
+        return
+
+    try:
+        data = await rebind_device_agent(
+            device_id=conn.device_id,
+            current_agent_name=current_agent_name,
+            target_agent_name=target_agent_name,
+            confirm=True,
+        )
+        result_msg["success"] = True
+        result_msg["data"] = data or {}
+        await _send_json(conn, result_msg)
+        logger.bind(tag=TAG).info(
+            f"设备换绑成功: {conn.device_id} {current_agent_name} -> {target_agent_name}，准备断开重连"
+        )
+        await asyncio.sleep(0.1)
+        try:
+            await conn.websocket.close()
+        except Exception as close_error:
+            logger.bind(tag=TAG).warning(f"换绑成功后关闭连接失败: {close_error}")
+    except Exception as e:
+        result_msg["error"] = str(e)
+        logger.bind(tag=TAG).error(f"设备换绑失败: {e}")
+        await _send_json(conn, result_msg)
+
+
+async def _send_json(conn: "ConnectionHandler", payload: Dict[str, Any]):
+    try:
+        await conn.websocket.send(json.dumps(payload, ensure_ascii=False))
+    except Exception as e:
+        logger.bind(tag=TAG).error(f"发送设备事件结果失败: {e}")
+
+
+async def apply_language_change(
+    conn: "ConnectionHandler",
+    language: str,
+    *,
+    current_agent_name: Optional[str] = None,
+    target_agent_name: Optional[str] = None,
+    request_id: Any = None,
+) -> dict:
+    """语言切换=智能体换绑。供 WS 事件与内部 HTTP 共用。"""
+    if language not in LANGUAGE_AGENT_SUFFIXES:
+        raise ValueError(
+            f"language 必须使用规范码: {', '.join(LANGUAGE_AGENT_SUFFIXES)}"
+        )
+
+    resolved_current = current_agent_name or (conn.device_attributes or {}).get(
+        "agent_name"
+    )
+    resolved_target = target_agent_name or resolve_language_agent_name(
+        resolved_current, language
+    )
+    if not resolved_target:
+        raise ValueError("无法从当前智能体名称推导目标语言智能体")
+
     conn.device_language = language
     if conn.device_attributes is None:
         conn.device_attributes = {}
     conn.device_attributes["language"] = language
-    logger.bind(tag=TAG).info(f"设备语言已切换为: {language}")
-    # 刷新提示词增强，使 device_language 参与后续 prompt 模板渲染
+    logger.bind(tag=TAG).info(
+        f"设备语言切换: {conn.device_id} {language} "
+        f"{resolved_current} -> {resolved_target}"
+    )
+
+    await _do_rebind(
+        conn,
+        "language_change",
+        resolved_current,
+        resolved_target,
+        request_id,
+        confirm=True,
+    )
+    return {
+        "deviceId": conn.device_id,
+        "language": language,
+        "currentAgentName": resolved_current,
+        "targetAgentName": resolved_target,
+    }
+
+
+async def _handle_language_change(
+    conn: "ConnectionHandler", payload: Dict[str, Any], request_id: Any
+):
+    """语言变更：改为触发智能体换绑，语言切换=智能体切换。
+
+    target_agent_name 缺省时按智能体名称后缀推导；current_agent_name 缺省从设备扩展属性读取。
+    language 仅作为元信息记录到内存属性，不再用于翻译。
+    """
+    language = payload.get("language")
+    if not isinstance(language, str) or language not in LANGUAGE_AGENT_SUFFIXES:
+        result_msg = {
+            "type": "device_event_result",
+            "event": "language_change",
+            "success": False,
+            "error": f"language 必须使用规范码: {', '.join(LANGUAGE_AGENT_SUFFIXES)}",
+        }
+        if request_id is not None:
+            result_msg["request_id"] = request_id
+        await _send_json(conn, result_msg)
+        return
+
     try:
-        conn._init_prompt_enhancement()
-    except Exception as e:
-        logger.bind(tag=TAG).warning(f"语言切换后刷新提示词失败: {e}")
+        await apply_language_change(
+            conn,
+            language,
+            current_agent_name=(
+                payload.get("current_agent_name")
+                or payload.get("currentAgentName")
+            ),
+            target_agent_name=(
+                payload.get("target_agent_name")
+                or payload.get("targetAgentName")
+            ),
+            request_id=request_id,
+        )
+    except ValueError as error:
+        result_msg = {
+            "type": "device_event_result",
+            "event": "language_change",
+            "success": False,
+            "error": str(error),
+        }
+        if request_id is not None:
+            result_msg["request_id"] = request_id
+        await _send_json(conn, result_msg)
 
 
 async def _handle_beacon_change(

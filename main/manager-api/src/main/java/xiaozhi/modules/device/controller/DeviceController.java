@@ -6,6 +6,9 @@ import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.shiro.authz.annotation.RequiresPermissions;
 import org.springframework.beans.BeanUtils;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -14,7 +17,9 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.client.RestTemplate;
 
+import xiaozhi.common.constant.Constant;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -27,6 +32,7 @@ import xiaozhi.modules.device.dto.DeviceAddressBookAliasDTO;
 import xiaozhi.modules.device.dto.DeviceAddressBookPermissionDTO;
 import xiaozhi.modules.device.dto.DeviceEventReportDTO;
 import xiaozhi.modules.device.dto.DeviceManualAddDTO;
+import xiaozhi.modules.device.dto.DeviceRebindDTO;
 import xiaozhi.modules.device.dto.DeviceRegisterDTO;
 import xiaozhi.modules.device.dto.DeviceToolsCallReqDTO;
 import xiaozhi.modules.device.dto.DeviceUnBindDTO;
@@ -35,6 +41,7 @@ import xiaozhi.modules.device.entity.DeviceEntity;
 import xiaozhi.modules.device.service.DeviceAddressBookService;
 import xiaozhi.modules.device.service.DeviceAttributeService;
 import xiaozhi.modules.device.service.DeviceService;
+import xiaozhi.modules.device.vo.DeviceRebindVO;
 import xiaozhi.modules.device.vo.UserShowDeviceListVO;
 import xiaozhi.modules.security.user.SecurityUser;
 import xiaozhi.modules.sys.service.SysParamsService;
@@ -48,14 +55,17 @@ public class DeviceController {
     private final DeviceAttributeService deviceAttributeService;
     private final RedisUtils redisUtils;
     private final SysParamsService sysParamsService;
+    private final RestTemplate restTemplate;
 
     public DeviceController(DeviceService deviceService, DeviceAddressBookService deviceAddressBookService,
-            DeviceAttributeService deviceAttributeService, RedisUtils redisUtils, SysParamsService sysParamsService) {
+            DeviceAttributeService deviceAttributeService, RedisUtils redisUtils, SysParamsService sysParamsService,
+            RestTemplate restTemplate) {
         this.deviceService = deviceService;
         this.deviceAddressBookService = deviceAddressBookService;
         this.deviceAttributeService = deviceAttributeService;
         this.redisUtils = redisUtils;
         this.sysParamsService = sysParamsService;
+        this.restTemplate = restTemplate;
     }
 
     @PostMapping("/bind/{agentId}/{deviceCode}")
@@ -103,7 +113,13 @@ public class DeviceController {
         if ("language_change".equals(dto.getEvent())) {
             Object language = dto.getPayload() == null ? null : dto.getPayload().get("language");
             if (language != null) {
-                deviceAttributeService.updateLanguage(deviceId, language.toString());
+                String languageValue = language.toString();
+                deviceAttributeService.updateLanguage(deviceId, languageValue);
+                try {
+                    notifyLanguageChange(deviceId, languageValue);
+                } catch (Exception e) {
+                    return new Result<Void>().error("语言已保存，但下发设备语言切换命令失败: " + e.getMessage());
+                }
             }
         }
         // 处理蓝牙信标变更事件
@@ -115,6 +131,32 @@ public class DeviceController {
         }
 
         return new Result<Void>();
+    }
+
+    private void notifyLanguageChange(String deviceId, String language) {
+        String internalApi = sysParamsService.getValue(Constant.SERVER_INTERNAL_API, false);
+        if (StringUtils.isBlank(internalApi) || "null".equalsIgnoreCase(internalApi)) {
+            throw new IllegalStateException("未配置 server.internal_api");
+        }
+        String secret = sysParamsService.getValue(Constant.SERVER_SECRET, false);
+        if (StringUtils.isBlank(secret) || "null".equalsIgnoreCase(secret)) {
+            throw new IllegalStateException("未配置 server.secret");
+        }
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(secret);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        Map<String, String> payload = Map.of("deviceId", deviceId, "language", language);
+        restTemplate.postForEntity(
+                StringUtils.removeEnd(internalApi, "/") + "/internal/device/language-change",
+                new HttpEntity<>(payload, headers),
+                Void.class);
+    }
+
+    @PostMapping("/rebind")
+    @Operation(summary = "设备智能体换绑（xiaozhi-server间调用）")
+    public Result<DeviceRebindVO> rebindDevice(@Valid @RequestBody DeviceRebindDTO dto) {
+        return new Result<DeviceRebindVO>().ok(deviceService.rebindDevice(dto));
     }
 
     @GetMapping("/bind/{agentId}")

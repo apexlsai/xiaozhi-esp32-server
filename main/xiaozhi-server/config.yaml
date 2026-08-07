@@ -286,8 +286,7 @@ Intent:
       # play_music是服务器自带的音乐播放，hass_play_music是通过home assistant控制的独立外部程序音乐播放
       # 如果用了hass_play_music，就不要开启play_music，两者只留一个
       - play_music
-      #- hass_get_state
-      #- hass_set_state
+      #- hass_state
       #- hass_play_music
 
 Memory:
@@ -650,7 +649,7 @@ LLM:
     # 定义LLM API类型
     type: openai
     # 可在这里找到你的api key https://platform.deepseek.com/
-    model_name: deepseek-chat
+    model_name: deepseek-v4-flash
     url: https://api.deepseek.com
     api_key: 你的deepseek web key
   ChatGLMLLM:
@@ -1087,6 +1086,18 @@ TTS:
     speed: 1
     output_dir: tmp/
     # language: "中文"  # 指定输出语种,如:中文、英语、日语、韩语等,请根据所选音色支持的语言进行设置,不填则默认为中文
+  MimoTTS:
+    # 小米 MiMo TTS，采用 chat/completions 形式合成语音，返回 base64 音频
+    # 鉴权 header 为 api-key（非 Authorization Bearer）
+    type: mimo
+    api_key: 你的mimo api key
+    api_url: https://api.xiaomimimo.com/v1/chat/completions
+    model: mimo-v2.5-tts
+    voice: mimo_default
+    format: wav
+    # 风格/语调描述（可选），作为 user message 传入，留空则只发 assistant 文本
+    # style: "Bright, bouncy, slightly sing-song tone"
+    output_dir: tmp/
   CustomTTS:
     # 自定义的TTS接口服务，请求参数可自定义，可接入众多TTS服务
     # 以本地部署的KokoroTTS为例

@@ -6,6 +6,29 @@
 
 ## [Unreleased]
 
+## [0.1.2]
+
+### 新增
+
+- 设备智能体换绑：设备经 WebSocket `device_event` / `agent_rebind` 由 xiaozhi-server 以 `server.secret` 调用 `POST /device/rebind`；按用户范围内精确 `agent_name` 定位，事务内核对旧绑定、条件更新、回读确认后返回成功，并主动断开连接促使设备重连加载新智能体。
+- `ai_device_attribute` 增加冗余字段 `agent_name`（权威绑定仍为 `ai_device.agent_id`）；属性首次创建、换绑与智能体改名时同步。
+- 接入小米 MiMo TTS（`mimo-v2.5-tts`）：新增 `core/providers/tts/mimo.py`，采用 chat/completions 形式合成、`api-key` 鉴权、返回 base64 音频；provider 解码为 bytes 后复用 base 类切帧流式发送，`config.yaml` 增 `MimoTTS` 示例块。
+- `language_change` 事件上报可通过 `server.internal_api` 回调 xiaozhi-server，为在线设备下发 WS 切换命令；按 `<名称>-汉语` / `<名称>-英语` 推导目标智能体，设备回传后复用换绑流程。
+
+### 变更
+
+- 将 `202607101600.sql` 与 `202607311534.sql` 登记到 Liquibase 主清单，自动完成设备属性列模式与 `agent_name` 迁移。
+- 移除 `agent-base-prompt.txt` 的 `output_language_directive` 强制翻译段；回复语言改由各智能体自身 `base_prompt` 决定，不再按 `device_language` 强制翻译。
+- `language_change` 事件改为触发智能体换绑：目标智能体可由 `<名称>-汉语` / `<名称>-英语` 自动推导，复用 `agent_rebind` 流程换绑并断开重连；`device_language` 仅作元信息保留，不再用于翻译。
+- `language_change` 统一使用大小写敏感的规范语言码，支持 `zh-CN`、`en`、`ja`、`ko`、`zh-CN-yue` 及四川话、上海话、闽南语、陕西话方言码；按对应智能体后缀自动推导换绑目标，并将原码持久化后通过 `extra_body.language` 透传。
+- `extra_body.language` 优先用设备属性规范码；缺失或非规范时按智能体名后缀反查（如 `小硕-日语` → `ja`）。
+- 补偿写入 `server.internal_api`：旧迁移误用 `id=107`（与 `server.ota` 冲突）导致参数缺失；新迁移按 `param_code` 幂等插入，默认 `http://127.0.0.1:8004`（避开 web Java 占用的 `8003`）。
+- `POST /device/event/report` 的 `language_change` 经 `server.internal_api` 回调后，由 xiaozhi-server **直接换绑并断开重连**，不再等待设备回传 `server_command`。
+
+### 已知问题
+
+- 同用户下若存在重名智能体，换绑会拒绝；需保证 `agent_name` 在用户范围内唯一。
+
 ## [0.1.1]
 
 汇总预发布阶段 `ksz/v0.1.1dev1`（国内镜像与部署底座）、`ksz/v0.1.1dev2`（本地构建 Compose）、`ksz/v0.1.1dev3`（定向语音开发通道）及后续完善，作为 KSZ 首个正式版本。
@@ -41,5 +64,6 @@
 
 - `202607101600.sql` 尚未登记到 `db.changelog-master.yaml`；已有环境执行该迁移前必须备份数据库。
 
-[Unreleased]: https://github.com/apexlsai/xiaozhi-esp32-server/compare/ksz/v0.1.1...HEAD
+[Unreleased]: https://github.com/apexlsai/xiaozhi-esp32-server/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/apexlsai/xiaozhi-esp32-server/releases/tag/v0.1.2
 [0.1.1]: https://github.com/apexlsai/xiaozhi-esp32-server/releases/tag/ksz/v0.1.1

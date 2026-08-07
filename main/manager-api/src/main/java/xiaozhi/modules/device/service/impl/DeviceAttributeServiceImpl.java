@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
@@ -17,8 +18,12 @@ import lombok.AllArgsConstructor;
 import xiaozhi.common.exception.ErrorCode;
 import xiaozhi.common.exception.RenException;
 import xiaozhi.common.service.impl.BaseServiceImpl;
+import xiaozhi.modules.agent.dao.AgentDao;
+import xiaozhi.modules.agent.entity.AgentEntity;
 import xiaozhi.modules.device.dao.DeviceAttributeDao;
+import xiaozhi.modules.device.dao.DeviceDao;
 import xiaozhi.modules.device.entity.DeviceAttributeEntity;
+import xiaozhi.modules.device.entity.DeviceEntity;
 import xiaozhi.modules.device.service.DeviceAttributeService;
 
 @Service
@@ -27,8 +32,19 @@ public class DeviceAttributeServiceImpl extends BaseServiceImpl<DeviceAttributeD
         implements DeviceAttributeService {
 
     private final DeviceAttributeDao deviceAttributeDao;
+    private final DeviceDao deviceDao;
+    private final AgentDao agentDao;
 
-    private static final List<String> SUPPORTED_LANGUAGES = Arrays.asList("en", "zh-cn");
+    private static final List<String> SUPPORTED_LANGUAGES = Arrays.asList(
+            "zh-CN",
+            "en",
+            "ja",
+            "ko",
+            "zh-CN-yue",
+            "zh-CN-sichuan",
+            "zh-CN-shanghai",
+            "zh-CN-minnan",
+            "zh-CN-shanxi");
 
     @Override
     public DeviceAttributeEntity getByDeviceId(String deviceId) {
@@ -53,6 +69,9 @@ public class DeviceAttributeServiceImpl extends BaseServiceImpl<DeviceAttributeD
         if (entity.getLastBeaconId() != null) {
             result.put("last_beacon_id", entity.getLastBeaconId());
         }
+        if (entity.getAgentName() != null) {
+            result.put("agent_name", entity.getAgentName());
+        }
         return result;
     }
 
@@ -62,7 +81,7 @@ public class DeviceAttributeServiceImpl extends BaseServiceImpl<DeviceAttributeD
         if (StringUtils.isBlank(deviceId)) {
             return;
         }
-        if (StringUtils.isNotBlank(language) && !SUPPORTED_LANGUAGES.contains(language.toLowerCase())) {
+        if (StringUtils.isNotBlank(language) && !SUPPORTED_LANGUAGES.contains(language)) {
             throw new RenException(ErrorCode.DEVICE_ATTRIBUTE_LANGUAGE_INVALID);
         }
         DeviceAttributeEntity entity = getByDeviceId(deviceId);
@@ -70,6 +89,7 @@ public class DeviceAttributeServiceImpl extends BaseServiceImpl<DeviceAttributeD
             entity = new DeviceAttributeEntity();
             entity.setDeviceId(deviceId);
             entity.setLanguage(language);
+            entity.setAgentName(resolveAgentName(deviceId));
             deviceAttributeDao.insert(entity);
         } else {
             entity.setLanguage(language);
@@ -88,10 +108,50 @@ public class DeviceAttributeServiceImpl extends BaseServiceImpl<DeviceAttributeD
             entity = new DeviceAttributeEntity();
             entity.setDeviceId(deviceId);
             entity.setLastBeaconId(lastBeaconId);
+            entity.setAgentName(resolveAgentName(deviceId));
             deviceAttributeDao.insert(entity);
         } else {
             entity.setLastBeaconId(lastBeaconId);
             deviceAttributeDao.updateById(entity);
+        }
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void updateAgentName(String deviceId, String agentName) {
+        if (StringUtils.isBlank(deviceId)) {
+            return;
+        }
+        DeviceAttributeEntity entity = getByDeviceId(deviceId);
+        if (entity == null) {
+            entity = new DeviceAttributeEntity();
+            entity.setDeviceId(deviceId);
+            entity.setAgentName(agentName);
+            deviceAttributeDao.insert(entity);
+        } else {
+            entity.setAgentName(agentName);
+            deviceAttributeDao.updateById(entity);
+        }
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void syncAgentNameByAgentId(String agentId, String agentName) {
+        if (StringUtils.isBlank(agentId)) {
+            return;
+        }
+        QueryWrapper<DeviceEntity> deviceWrapper = new QueryWrapper<>();
+        deviceWrapper.eq("agent_id", agentId);
+        List<DeviceEntity> devices = deviceDao.selectList(deviceWrapper);
+        if (devices == null || devices.isEmpty()) {
+            return;
+        }
+        List<String> deviceIds = devices.stream()
+                .map(DeviceEntity::getMacAddress)
+                .filter(StringUtils::isNotBlank)
+                .collect(Collectors.toList());
+        for (String deviceId : deviceIds) {
+            updateAgentName(deviceId, agentName);
         }
     }
 
@@ -105,6 +165,8 @@ public class DeviceAttributeServiceImpl extends BaseServiceImpl<DeviceAttributeD
             updateLanguage(deviceId, attrValue);
         } else if ("last_beacon_id".equals(attrKey)) {
             updateLastBeaconId(deviceId, attrValue);
+        } else if ("agent_name".equals(attrKey)) {
+            updateAgentName(deviceId, attrValue);
         }
     }
 
@@ -128,5 +190,16 @@ public class DeviceAttributeServiceImpl extends BaseServiceImpl<DeviceAttributeD
         UpdateWrapper<DeviceAttributeEntity> wrapper = new UpdateWrapper<>();
         wrapper.in("device_id", deviceIds);
         deviceAttributeDao.delete(wrapper);
+    }
+
+    private String resolveAgentName(String deviceId) {
+        QueryWrapper<DeviceEntity> wrapper = new QueryWrapper<>();
+        wrapper.eq("mac_address", deviceId);
+        DeviceEntity device = deviceDao.selectOne(wrapper);
+        if (device == null || StringUtils.isBlank(device.getAgentId())) {
+            return null;
+        }
+        AgentEntity agent = agentDao.selectById(device.getAgentId());
+        return agent == null ? null : agent.getAgentName();
     }
 }

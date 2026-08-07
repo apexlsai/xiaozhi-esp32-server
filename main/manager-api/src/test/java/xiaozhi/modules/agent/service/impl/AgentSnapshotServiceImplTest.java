@@ -65,6 +65,7 @@ import xiaozhi.modules.agent.service.AgentTemplateService;
 import xiaozhi.modules.agent.vo.AgentSnapshotVO;
 import xiaozhi.modules.agent.vo.AgentInfoVO;
 import xiaozhi.modules.correctword.service.CorrectWordFileService;
+import xiaozhi.modules.device.service.DeviceAttributeService;
 import xiaozhi.modules.model.service.ModelProviderService;
 import xiaozhi.modules.timbre.service.TimbreService;
 
@@ -1079,8 +1080,9 @@ class AgentSnapshotServiceImplTest {
         AgentContextProviderService contextProviderService = mock(AgentContextProviderService.class);
         CorrectWordFileService correctWordFileService = mock(CorrectWordFileService.class);
         AgentSnapshotService snapshotService = mock(AgentSnapshotService.class);
-        AgentServiceImpl service = new AgentServiceImpl(agentDao, null, null, null, null, null, null, null,
-                null, null, contextProviderService, null, correctWordFileService, snapshotService);
+        DeviceAttributeService deviceAttributeService = mock(DeviceAttributeService.class);
+        AgentServiceImpl service = new AgentServiceImpl(agentDao, null, null, null, null, null, deviceAttributeService, null,
+                null, null, null, contextProviderService, null, correctWordFileService, snapshotService);
         ReflectionTestUtils.setField(service, "baseDao", agentDao);
 
         String agentId = "agent-id";
@@ -1105,6 +1107,7 @@ class AgentSnapshotServiceImplTest {
         inOrder.verify(snapshotService).createSnapshot(agentId, "initial");
         inOrder.verify(agentDao).updateById(argThat((AgentEntity agent) -> "new-name".equals(agent.getAgentName())));
         inOrder.verify(snapshotService).createSnapshot(agentId, "config");
+        verify(deviceAttributeService).syncAgentNameByAgentId(agentId, "new-name");
     }
 
     @Test
@@ -1113,8 +1116,9 @@ class AgentSnapshotServiceImplTest {
         AgentContextProviderService contextProviderService = mock(AgentContextProviderService.class);
         CorrectWordFileService correctWordFileService = mock(CorrectWordFileService.class);
         AgentSnapshotService snapshotService = mock(AgentSnapshotService.class);
-        AgentServiceImpl service = new AgentServiceImpl(agentDao, null, null, null, null, null, null, null,
-                null, null, contextProviderService, null, correctWordFileService, snapshotService);
+        DeviceAttributeService deviceAttributeService = mock(DeviceAttributeService.class);
+        AgentServiceImpl service = new AgentServiceImpl(agentDao, null, null, null, null, null, deviceAttributeService,
+                null, null, null, null, contextProviderService, null, correctWordFileService, snapshotService);
         ReflectionTestUtils.setField(service, "baseDao", agentDao);
 
         String agentId = "agent-id";
@@ -1139,6 +1143,7 @@ class AgentSnapshotServiceImplTest {
         inOrder.verify(snapshotService).createSnapshot(agentId, "current");
         inOrder.verify(agentDao).updateById(argThat((AgentEntity agent) -> "new-name".equals(agent.getAgentName())));
         inOrder.verify(snapshotService).createSnapshot(agentId, "config");
+        verify(deviceAttributeService).syncAgentNameByAgentId(agentId, "new-name");
     }
 
     @Test
@@ -1149,7 +1154,7 @@ class AgentSnapshotServiceImplTest {
         AgentTemplateService templateService = mock(AgentTemplateService.class);
         ModelProviderService providerService = mock(ModelProviderService.class);
         AgentSnapshotService snapshotService = mock(AgentSnapshotService.class);
-        AgentServiceImpl service = new AgentServiceImpl(agentDao, null, timbreService, null, null, null,
+        AgentServiceImpl service = new AgentServiceImpl(agentDao, null, timbreService, null, null, null, null,
                 pluginMappingService, null, templateService, providerService, null, null, null, snapshotService);
         ReflectionTestUtils.setField(service, "baseDao", agentDao);
 
