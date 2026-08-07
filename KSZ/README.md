@@ -52,7 +52,7 @@ docker compose down
 docker compose up -d --build
 ```
 
-`8000`、`8002`、`8003` 分别是 server 与 web 的对外服务端口，保持固定，不在 `.env` 中配置。
+`8000`、`8002`、`8004` 分别是 server WebSocket、智控台、server HTTP 端口，保持固定，不在 `.env` 中配置。Docker web 镜像内 Java 另占用宿主机 `8003`（由 Nginx `8002` 反代）。
 
 ## 常用操作
 
@@ -78,8 +78,9 @@ docker compose restart xiaozhi-esp32-server
 配置采用 Host 网络模式，服务直接占用宿主机端口：
 
 - `8000`：WebSocket 服务
-- `8002`：智控台与 OTA 接口
-- `8003`：视觉/HTTP 接口
+- `8002`：智控台（Nginx）与 OTA 接口
+- `8003`：manager-api Java（仅本机，由 `8002` 反代，勿当作 server HTTP）
+- `8004`：xiaozhi-server HTTP / 视觉与内部回调（`server.internal_api`）
 - `${MYSQL_PORT}`：MySQL（默认 `3307`）
 - `${REDIS_PORT}`：Redis（默认 `6379`）
 
@@ -165,8 +166,10 @@ manager-api:
   secret: <从 sys_params 的 server.secret 获取>
 server:
   port: 8000
-  http_port: 8003
+  http_port: 8004
 ```
+
+> Host 网络下 web 容器 Java 固定监听 `8003`，因此 `server.http_port` 必须用 `8004`；`sys_params.server.internal_api` 同步为 `http://127.0.0.1:8004`。
 
 服务对外地址在 `sys_params` 中维护。将 `<HOST_IP>` 替换为实际 IP 或域名：
 
@@ -474,7 +477,7 @@ KSZ 不走“按 `device_language` 强制翻译”路线（`agent-base-prompt.tx
 
 HTTP 层恒为 `200`，业务成败看 JSON 的 `code`（`0` 成功，非 `0` 失败）。这是 manager-api 的 `Result` 约定，不是传输异常。
 
-`server.internal_api`（参数字典）**必须**指向 xiaozhi-server 内部 HTTP，例如 Host 网络下 `http://127.0.0.1:8003`；回调使用 `server.secret` 的 Bearer 鉴权。未配置时会出现：语言属性已写入，但 `code=500`，msg 含「下发设备语言切换命令失败」/ `未配置 server.internal_api`。
+`server.internal_api`（参数字典）**必须**指向 xiaozhi-server 内部 HTTP，Host 网络 Docker 部署下为 `http://127.0.0.1:8004`（不要填 `8003`，那是 manager-api Java）；回调使用 `server.secret` 的 Bearer 鉴权。未配置时会出现：语言属性已写入，但 `code=500`，msg 含「下发设备语言切换命令失败」/ `未配置 server.internal_api`。
 
 设备收到以下 `server_command` 后，原样作为 `device_event/language_change` 上报：
 
