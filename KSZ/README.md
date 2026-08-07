@@ -464,36 +464,22 @@ Authorization: Bearer <server.secret>
 
 KSZ 不走“按 `device_language` 强制翻译”路线（`agent-base-prompt.txt` 的 `output_language_directive` 段已移除），回复语言完全由当前绑定智能体自身的 `base_prompt` 决定。因此**语言切换 = 切换到对应语言的智能体**，复用上面的换绑流程。
 
-外部系统可先调用事件上报接口，服务按当前智能体的命名规则推导目标智能体，并经内部 HTTP 回调向在线设备下发 WS 切换命令：
+外部系统调用事件上报接口后，manager-api 先持久化 `language`，再回调 xiaozhi-server 内部接口；**server 在线时直接换绑并断开重连**，不再依赖设备回传命令：
 
 ```json
 {
   "deviceId": "{{DEVICE_ID}}",
   "event": "language_change",
-  "payload": { "language": "zh-CN" },
+  "payload": { "language": "zh-CN-yue" },
   "timestamp": {{$timestamp}}
 }
 ```
 
-HTTP 层恒为 `200`，业务成败看 JSON 的 `code`（`0` 成功，非 `0` 失败）。这是 manager-api 的 `Result` 约定，不是传输异常。
+HTTP 层恒为 `200`，业务成败看 JSON 的 `code`（`0` 成功，非 `0` 失败）。这是 manager-api 的 `Result` 约定，不是传输异常。`code=0` 表示语言已保存且换绑已在 server 侧执行（设备须在线）。
 
 `server.internal_api`（参数字典）**必须**指向 xiaozhi-server 内部 HTTP，Host 网络 Docker 部署下为 `http://127.0.0.1:8004`（不要填 `8003`，那是 manager-api Java）；回调使用 `server.secret` 的 Bearer 鉴权。未配置时会出现：语言属性已写入，但 `code=500`，msg 含「下发设备语言切换命令失败」/ `未配置 server.internal_api`。
 
-设备收到以下 `server_command` 后，原样作为 `device_event/language_change` 上报：
-
-```json
-{
-  "type": "server_command",
-  "event": "language_change",
-  "payload": {
-    "language": "en",
-    "current_agent_name": "小硕-汉语",
-    "target_agent_name": "小硕-英语"
-  }
-}
-```
-
-设备也可直接通过 WebSocket 上报 `device_event` / `language_change`。`target_agent_name` 缺省时，server 使用同一命名规则推导：
+设备也可直接通过 WebSocket 上报 `device_event` / `language_change`，效果相同。`target_agent_name` 缺省时，server 使用命名规则推导：
 
 ```json
 {
@@ -501,17 +487,16 @@ HTTP 层恒为 `200`，业务成败看 JSON 的 `code`（`0` 成功，非 `0` �
   "event": "language_change",
   "request_id": "lang-001",
   "payload": {
-    "language": "en",
-    "target_agent_name": "小硕-英语",
-    "current_agent_name": "小硕-汉语"
+    "language": "zh-CN-yue",
+    "current_agent_name": "小硕-英语"
   }
 }
 ```
 
-- 当前智能体名后缀须在「语言码约定」表中，否则无法推导目标智能体。
+- 当前智能体名后缀须在「语言码约定」表中，否则无法推导目标智能体（例如 `小硕-英语` + `zh-CN-yue` → `小硕-粤语`）。
 - `language` 持久化到设备属性；重连后及后续对话会继续作为 `extra_body.language` 发送给下游 LLM。
-- 成功后 server 调用 `POST /xiaozhi/device/rebind` 换绑并主动断开，设备重连即加载新语言智能体；响应 `event` 为 `language_change`。
-- 失败（缺 `target_agent_name`、智能体不存在/重名、设备离线、未配置 `server.internal_api`、未启用 manager-api 等）时业务 `code≠0` 或 WS `success=false`，连接在 WS 失败路径下保持。
+- 成功后 server 调用 `POST /xiaozhi/device/rebind` 换绑并主动断开，设备重连即加载新语言智能体。
+- 失败（无法推导目标、智能体不存在/重名、设备离线、未配置 `server.internal_api`、未启用 manager-api 等）时业务 `code≠0` 或 WS `success=false`。
 
 `PUT /xiaozhi/device/attribute/{deviceId}/language` 仍可用，但仅写入 `language` 属性，**不会切换智能体也不会触发翻译**；切换语言请用上面的 `language_change` 事件或直接调用 `/device/rebind`。
 

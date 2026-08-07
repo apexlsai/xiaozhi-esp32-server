@@ -20,6 +20,7 @@
 - `language_change` 事件改为触发智能体换绑：目标智能体可由 `<名称>-汉语` / `<名称>-英语` 自动推导，复用 `agent_rebind` 流程换绑并断开重连；`device_language` 仅作元信息保留，不再用于翻译。
 - `language_change` 统一使用大小写敏感的规范语言码，支持 `zh-CN`、`en`、`ja`、`zh-CN-yue` 及四川话、上海话、闽南语、陕西话方言码；按对应智能体后缀自动推导换绑目标，并将原码持久化后通过 `extra_body.language` 透传。
 - 补偿写入 `server.internal_api`：旧迁移误用 `id=107`（与 `server.ota` 冲突）导致参数缺失；新迁移按 `param_code` 幂等插入，默认 `http://127.0.0.1:8004`（避开 web Java 占用的 `8003`）。
+- `POST /device/event/report` 的 `language_change` 经 `server.internal_api` 回调后，由 xiaozhi-server **直接换绑并断开重连**，不再等待设备回传 `server_command`。
 
 ### 已知问题
 

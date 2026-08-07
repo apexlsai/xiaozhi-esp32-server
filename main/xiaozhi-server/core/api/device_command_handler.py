@@ -5,7 +5,7 @@ from aiohttp import web
 from config.logger import setup_logging
 from core.handle.deviceEventHandle import (
     LANGUAGE_AGENT_SUFFIXES,
-    resolve_language_agent_name,
+    apply_language_change,
 )
 
 TAG = __name__
@@ -43,39 +43,19 @@ class DeviceCommandHandler:
         if conn is None:
             raise web.HTTPNotFound(text="device is offline")
 
-        current_agent_name = (conn.device_attributes or {}).get("agent_name")
-        target_agent_name = resolve_language_agent_name(current_agent_name, language)
-        if target_agent_name is None:
-            raise web.HTTPConflict(
-                text="cannot resolve target agent from current agent name"
-            )
-
-        payload = {
-            "type": "server_command",
-            "event": "language_change",
-            "payload": {
-                "language": language,
-                "current_agent_name": current_agent_name,
-                "target_agent_name": target_agent_name,
-            },
-        }
         try:
-            await conn.websocket.send(json.dumps(payload, ensure_ascii=False))
+            result = await apply_language_change(conn, language)
+        except ValueError as error:
+            raise web.HTTPConflict(text=str(error))
         except Exception as error:
-            self.logger.bind(tag=TAG).error(f"下发语言切换命令失败: {error}")
-            raise web.HTTPServiceUnavailable(text="failed to send device command")
+            self.logger.bind(tag=TAG).error(f"语言切换换绑失败: {error}")
+            raise web.HTTPServiceUnavailable(text=f"language change failed: {error}")
 
         self.logger.bind(tag=TAG).info(
-            f"已下发语言切换命令: {device_id} {current_agent_name} -> {target_agent_name}"
+            "内部接口已完成语言切换换绑: "
+            f"{result['deviceId']} {result['currentAgentName']} -> {result['targetAgentName']}"
         )
-        return web.json_response(
-            {
-                "deviceId": device_id,
-                "language": language,
-                "currentAgentName": current_agent_name,
-                "targetAgentName": target_agent_name,
-            }
-        )
+        return web.json_response(result)
 
     def _is_authorized(self, request: web.Request) -> bool:
         secret = self.config.get("manager-api", {}).get("secret")
