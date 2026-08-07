@@ -39,6 +39,7 @@ public class DeviceAttributeServiceImpl extends BaseServiceImpl<DeviceAttributeD
             "zh-CN",
             "en",
             "ja",
+            "ko",
             "zh-CN-yue",
             "zh-CN-sichuan",
             "zh-CN-shanghai",

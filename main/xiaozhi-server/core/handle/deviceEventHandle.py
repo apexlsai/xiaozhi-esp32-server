@@ -14,6 +14,7 @@ LANGUAGE_AGENT_SUFFIXES = {
     "zh-CN": "汉语",
     "en": "英语",
     "ja": "日语",
+    "ko": "韩语",
     "zh-CN-yue": "粤语",
     "zh-CN-sichuan": "四川话",
     "zh-CN-shanghai": "上海话",
