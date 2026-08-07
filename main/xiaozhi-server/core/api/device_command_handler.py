@@ -3,7 +3,10 @@ import json
 from aiohttp import web
 
 from config.logger import setup_logging
-from core.handle.deviceEventHandle import resolve_language_agent_name
+from core.handle.deviceEventHandle import (
+    LANGUAGE_AGENT_SUFFIXES,
+    resolve_language_agent_name,
+)
 
 TAG = __name__
 
@@ -30,8 +33,11 @@ class DeviceCommandHandler:
         language = data.get("language")
         if not isinstance(device_id, str) or not device_id:
             raise web.HTTPBadRequest(text="deviceId is required")
-        if not isinstance(language, str) or language.lower() not in ("en", "zh-cn"):
-            raise web.HTTPBadRequest(text="language must be en or zh-cn")
+        if not isinstance(language, str) or language not in LANGUAGE_AGENT_SUFFIXES:
+            supported = ", ".join(LANGUAGE_AGENT_SUFFIXES)
+            raise web.HTTPBadRequest(
+                text=f"language must use a canonical code: {supported}"
+            )
 
         conn = self.websocket_server.find_device_connection({"device_id": device_id})
         if conn is None:
@@ -48,7 +54,7 @@ class DeviceCommandHandler:
             "type": "server_command",
             "event": "language_change",
             "payload": {
-                "language": language.lower(),
+                "language": language,
                 "current_agent_name": current_agent_name,
                 "target_agent_name": target_agent_name,
             },
@@ -65,7 +71,7 @@ class DeviceCommandHandler:
         return web.json_response(
             {
                 "deviceId": device_id,
-                "language": language.lower(),
+                "language": language,
                 "currentAgentName": current_agent_name,
                 "targetAgentName": target_agent_name,
             }

@@ -25,7 +25,7 @@ public class DeviceAttributeEntity {
     @Schema(description = "设备ID（mac地址）")
     private String deviceId;
 
-    @Schema(description = "设备语言（en, zh-cn）")
+    @Schema(description = "设备规范语言码")
     private String language;
 
     @Schema(description = "最近检测到的蓝牙信标ID")

@@ -138,7 +138,7 @@ PUT /xiaozhi/device/attribute/{deviceId}/last_beacon_id
 Body: beacon-abc-123
 ```
 
-`language` 仅支持 `en` 或 `zh-cn`。该接口只写入属性，不切换智能体；切换语言请用 `language_change` 事件（见下文“语言切换”）。验证 LLM 收到的设备上下文：
+`language` 须使用下文「语言码约定」中的规范写法。该接口只写入属性，不切换智能体；切换语言请用 `language_change` 事件（见下文“语言切换”）。验证 LLM 收到的设备上下文：
 
 ```bash
 docker compose logs -f xiaozhi-esp32-server | grep "发送给LLM的请求"
@@ -433,22 +433,50 @@ Authorization: Bearer <server.secret>
 
 成功消息发送后 server 主动关闭 WebSocket；设备自动重连即可加载新智能体配置，无需关机重启。失败时 `success=false` 且附带 `error`，连接保持。
 
+### 语言码约定
+
+`payload.language` **大小写固定**，禁止 `zh-cn` / `ZH-CN` 等变体；manager-api、内部 HTTP 与 WebSocket 事件均按下表规范码精确校验并原样持久化、透传。
+
+| 规范码 | 智能体名后缀 | 说明 |
+|--------|--------------|------|
+| `zh-CN` | 汉语 | 普通话 |
+| `en` | 英语 | 英语 |
+| `ja` | 日语 | 日语 |
+| `zh-CN-yue` | 粤语 | 粤语 |
+| `zh-CN-sichuan` | 四川话 | 方言示例 |
+| `zh-CN-shanghai` | 上海话 | 方言示例 |
+| `zh-CN-minnan` | 闽南语 | 方言示例 |
+| `zh-CN-shanxi` | 陕西话 | 方言示例 |
+
+规则：
+
+- 语种：`zh-CN` / `en` / `ja`（语言小写或 `zh`，地区大写；与 BCP 47 常见写法一致）。
+- 汉语方言：`zh-CN-{pinyin_of_region}`，地区拼音全小写、无声调，如 `zh-CN-sichuan`。
+- 粤语固定为 `zh-CN-yue`（不写 `zh-HK` / `yue`）。
+- 智能体命名必须为 `<基名>-<后缀>`，例如 `小硕-汉语`、`小硕-英语`、`小硕-粤语`、`小硕-日语`；换绑按后缀推导，同一基名下各语言智能体并存。
+
+服务会根据当前智能体的任一已知语言后缀和目标语言码推导目标智能体，例如 `小硕-粤语` + `ja` → `小硕-日语`。
+
 ### 语言切换（智能体切换路线）
 
 KSZ 不走“按 `device_language` 强制翻译”路线（`agent-base-prompt.txt` 的 `output_language_directive` 段已移除），回复语言完全由当前绑定智能体自身的 `base_prompt` 决定。因此**语言切换 = 切换到对应语言的智能体**，复用上面的换绑流程。
 
-外部系统可先调用事件上报接口，服务按当前智能体的`<名称>-汉语` / `<名称>-英语`命名规则推导目标智能体，并经内部 HTTP 回调向在线设备下发 WS 切换命令：
+外部系统可先调用事件上报接口，服务按当前智能体的命名规则推导目标智能体，并经内部 HTTP 回调向在线设备下发 WS 切换命令：
 
 ```json
 {
   "deviceId": "{{DEVICE_ID}}",
   "event": "language_change",
-  "payload": { "language": "en" },
+  "payload": { "language": "zh-CN" },
   "timestamp": {{$timestamp}}
 }
 ```
 
-`server.internal_api` 默认是 `http://127.0.0.1:8003`，须指向 xiaozhi-server 的内部 HTTP 地址；回调使用 `server.secret` 的 Bearer 鉴权。设备收到以下 `server_command` 后，原样作为 `device_event/language_change` 上报：
+HTTP 层恒为 `200`，业务成败看 JSON 的 `code`（`0` 成功，非 `0` 失败）。这是 manager-api 的 `Result` 约定，不是传输异常。
+
+`server.internal_api`（参数字典）**必须**指向 xiaozhi-server 内部 HTTP，例如 Host 网络下 `http://127.0.0.1:8003`；回调使用 `server.secret` 的 Bearer 鉴权。未配置时会出现：语言属性已写入，但 `code=500`，msg 含「下发设备语言切换命令失败」/ `未配置 server.internal_api`。
+
+设备收到以下 `server_command` 后，原样作为 `device_event/language_change` 上报：
 
 ```json
 {
@@ -471,16 +499,16 @@ KSZ 不走“按 `device_language` 强制翻译”路线（`agent-base-prompt.tx
   "request_id": "lang-001",
   "payload": {
     "language": "en",
-    "target_agent_name": "English Guide",
-    "current_agent_name": "中文导览员"
+    "target_agent_name": "小硕-英语",
+    "current_agent_name": "小硕-汉语"
   }
 }
 ```
 
-- 当前智能体必须以 `-汉语` 或 `-英语` 结尾，否则无法推导目标智能体。
+- 当前智能体名后缀须在「语言码约定」表中，否则无法推导目标智能体。
 - `language` 持久化到设备属性；重连后及后续对话会继续作为 `extra_body.language` 发送给下游 LLM。
 - 成功后 server 调用 `POST /xiaozhi/device/rebind` 换绑并主动断开，设备重连即加载新语言智能体；响应 `event` 为 `language_change`。
-- 失败（缺 `target_agent_name`、智能体不存在/重名、未启用 manager-api 等）时 `success=false` 且附带 `error`，连接保持。
+- 失败（缺 `target_agent_name`、智能体不存在/重名、设备离线、未配置 `server.internal_api`、未启用 manager-api 等）时业务 `code≠0` 或 WS `success=false`，连接在 WS 失败路径下保持。
 
 `PUT /xiaozhi/device/attribute/{deviceId}/language` 仍可用，但仅写入 `language` 属性，**不会切换智能体也不会触发翻译**；切换语言请用上面的 `language_change` 事件或直接调用 `/device/rebind`。
 

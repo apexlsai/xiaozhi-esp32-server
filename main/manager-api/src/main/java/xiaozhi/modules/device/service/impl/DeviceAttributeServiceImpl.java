@@ -35,7 +35,15 @@ public class DeviceAttributeServiceImpl extends BaseServiceImpl<DeviceAttributeD
     private final DeviceDao deviceDao;
     private final AgentDao agentDao;
 
-    private static final List<String> SUPPORTED_LANGUAGES = Arrays.asList("en", "zh-cn");
+    private static final List<String> SUPPORTED_LANGUAGES = Arrays.asList(
+            "zh-CN",
+            "en",
+            "ja",
+            "zh-CN-yue",
+            "zh-CN-sichuan",
+            "zh-CN-shanghai",
+            "zh-CN-minnan",
+            "zh-CN-shanxi");
 
     @Override
     public DeviceAttributeEntity getByDeviceId(String deviceId) {
@@ -72,7 +80,7 @@ public class DeviceAttributeServiceImpl extends BaseServiceImpl<DeviceAttributeD
         if (StringUtils.isBlank(deviceId)) {
             return;
         }
-        if (StringUtils.isNotBlank(language) && !SUPPORTED_LANGUAGES.contains(language.toLowerCase())) {
+        if (StringUtils.isNotBlank(language) && !SUPPORTED_LANGUAGES.contains(language)) {
             throw new RenException(ErrorCode.DEVICE_ATTRIBUTE_LANGUAGE_INVALID);
         }
         DeviceAttributeEntity entity = getByDeviceId(deviceId);

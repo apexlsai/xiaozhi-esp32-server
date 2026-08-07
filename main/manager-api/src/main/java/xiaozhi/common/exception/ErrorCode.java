@@ -169,7 +169,7 @@ public interface ErrorCode {
     int CHAT_HISTORY_DOWNLOAD_FAILED = 10135; // 聊天记录下载失败
 
     // 设备属性相关错误码
-    int DEVICE_ATTRIBUTE_LANGUAGE_INVALID = 10250; // 语言类型仅支持 en 或 zh-cn
+    int DEVICE_ATTRIBUTE_LANGUAGE_INVALID = 10250; // 语言必须使用受支持的规范码
 
     // 设备换绑相关错误码
     int DEVICE_REBIND_CONFIRM_REQUIRED = 10251; // 必须确认换绑

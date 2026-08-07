@@ -18,6 +18,7 @@
 - 将 `202607101600.sql` 与 `202607311534.sql` 登记到 Liquibase 主清单，自动完成设备属性列模式与 `agent_name` 迁移。
 - 移除 `agent-base-prompt.txt` 的 `output_language_directive` 强制翻译段；回复语言改由各智能体自身 `base_prompt` 决定，不再按 `device_language` 强制翻译。
 - `language_change` 事件改为触发智能体换绑：目标智能体可由 `<名称>-汉语` / `<名称>-英语` 自动推导，复用 `agent_rebind` 流程换绑并断开重连；`device_language` 仅作元信息保留，不再用于翻译。
+- `language_change` 统一使用大小写敏感的规范语言码，支持 `zh-CN`、`en`、`ja`、`zh-CN-yue` 及四川话、上海话、闽南语、陕西话方言码；按对应智能体后缀自动推导换绑目标，并将原码持久化后通过 `extra_body.language` 透传。
 
 ### 已知问题
 

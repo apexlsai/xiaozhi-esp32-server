@@ -10,7 +10,16 @@ from config.logger import setup_logging
 TAG = __name__
 logger = setup_logging()
 
-_LANGUAGE_AGENT_SUFFIXES = {"zh-cn": "汉语", "en": "英语"}
+LANGUAGE_AGENT_SUFFIXES = {
+    "zh-CN": "汉语",
+    "en": "英语",
+    "ja": "日语",
+    "zh-CN-yue": "粤语",
+    "zh-CN-sichuan": "四川话",
+    "zh-CN-shanghai": "上海话",
+    "zh-CN-minnan": "闽南语",
+    "zh-CN-shanxi": "陕西话",
+}
 
 
 def resolve_language_agent_name(current_agent_name: Optional[str], language: Any) -> Optional[str]:
@@ -18,7 +27,7 @@ def resolve_language_agent_name(current_agent_name: Optional[str], language: Any
     if not isinstance(current_agent_name, str) or not isinstance(language, str):
         return None
 
-    target_suffix = _LANGUAGE_AGENT_SUFFIXES.get(language.lower())
+    target_suffix = LANGUAGE_AGENT_SUFFIXES.get(language)
     if target_suffix is None:
         return None
 
@@ -27,7 +36,7 @@ def resolve_language_agent_name(current_agent_name: Optional[str], language: Any
         if (
             found_separator
             and prefix
-            and current_suffix in _LANGUAGE_AGENT_SUFFIXES.values()
+            and current_suffix in LANGUAGE_AGENT_SUFFIXES.values()
         ):
             return f"{prefix}{separator}{target_suffix}"
     return None
@@ -170,17 +179,28 @@ async def _handle_language_change(
         or (conn.device_attributes or {}).get("agent_name")
     )
     language = payload.get("language")
+    if not isinstance(language, str) or language not in LANGUAGE_AGENT_SUFFIXES:
+        result_msg = {
+            "type": "device_event_result",
+            "event": "language_change",
+            "success": False,
+            "error": f"language 必须使用规范码: {', '.join(LANGUAGE_AGENT_SUFFIXES)}",
+        }
+        if request_id is not None:
+            result_msg["request_id"] = request_id
+        await _send_json(conn, result_msg)
+        return
+
     target_agent_name = (
         payload.get("target_agent_name")
         or payload.get("targetAgentName")
         or resolve_language_agent_name(current_agent_name, language)
     )
-    if language:
-        conn.device_language = language
-        if conn.device_attributes is None:
-            conn.device_attributes = {}
-        conn.device_attributes["language"] = language
-        logger.bind(tag=TAG).info(f"设备语言切换请求: {language}")
+    conn.device_language = language
+    if conn.device_attributes is None:
+        conn.device_attributes = {}
+    conn.device_attributes["language"] = language
+    logger.bind(tag=TAG).info(f"设备语言切换请求: {language}")
 
     if not target_agent_name:
         result_msg = {

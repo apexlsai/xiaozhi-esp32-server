@@ -113,7 +113,7 @@ public class DeviceController {
         if ("language_change".equals(dto.getEvent())) {
             Object language = dto.getPayload() == null ? null : dto.getPayload().get("language");
             if (language != null) {
-                String languageValue = language.toString().toLowerCase();
+                String languageValue = language.toString();
                 deviceAttributeService.updateLanguage(deviceId, languageValue);
                 try {
                     notifyLanguageChange(deviceId, languageValue);

@@ -9,7 +9,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core.handle.deviceEventHandle import handle_device_event
+from core.handle.deviceEventHandle import (
+    LANGUAGE_AGENT_SUFFIXES,
+    handle_device_event,
+    resolve_language_agent_name,
+)
 
 
 class AgentRebindEventTests(unittest.TestCase):
@@ -204,6 +208,39 @@ class LanguageChangeEventTests(unittest.TestCase):
                 self.assertTrue(sent["success"])
                 self.assertEqual(sent["event"], "language_change")
                 self.conn.websocket.close.assert_awaited_once()
+
+        asyncio.run(run())
+
+    def test_all_canonical_languages_derive_agent_suffix(self):
+        for language, target_suffix in LANGUAGE_AGENT_SUFFIXES.items():
+            with self.subTest(language=language):
+                self.assertEqual(
+                    resolve_language_agent_name("小硕-汉语", language),
+                    f"小硕-{target_suffix}",
+                )
+
+    def test_language_change_rejects_noncanonical_case(self):
+        async def run():
+            self.conn.device_attributes = {"agent_name": "小硕-汉语"}
+            with patch(
+                "core.handle.deviceEventHandle.rebind_device_agent",
+                new_callable=AsyncMock,
+            ) as rebind:
+                await handle_device_event(
+                    self.conn,
+                    {
+                        "type": "device_event",
+                        "event": "language_change",
+                        "request_id": "lang-invalid",
+                        "payload": {"language": "zh-cn"},
+                    },
+                )
+                rebind.assert_not_awaited()
+                sent = json.loads(self.conn.websocket.send.await_args.args[0])
+                self.assertFalse(sent["success"])
+                self.assertEqual(sent["request_id"], "lang-invalid")
+                self.assertIn("规范码", sent["error"])
+                self.assertNotIn("language", self.conn.device_attributes)
 
         asyncio.run(run())
 

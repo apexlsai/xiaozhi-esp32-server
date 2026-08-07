@@ -28,7 +28,7 @@ public interface DeviceAttributeService extends BaseService<DeviceAttributeEntit
      * 更新设备语言
      * 
      * @param deviceId 设备ID
-     * @param language 语言代码（en, zh-cn）
+     * @param language 规范语言码
      */
     void updateLanguage(String deviceId, String language);
 
