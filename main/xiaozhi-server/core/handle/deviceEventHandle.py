@@ -22,6 +22,18 @@ LANGUAGE_AGENT_SUFFIXES = {
 }
 
 
+def resolve_language_code_from_agent_name(agent_name: Optional[str]) -> Optional[str]:
+    """从智能体名后缀反查规范语言码，如 小硕-粤语 → zh-CN-yue。"""
+    if not isinstance(agent_name, str) or not agent_name:
+        return None
+    suffix_to_language = {suffix: code for code, suffix in LANGUAGE_AGENT_SUFFIXES.items()}
+    for separator in ("-", "－", "—"):
+        _, found_separator, current_suffix = agent_name.rpartition(separator)
+        if found_separator and current_suffix in suffix_to_language:
+            return suffix_to_language[current_suffix]
+    return None
+
+
 def resolve_language_agent_name(current_agent_name: Optional[str], language: Any) -> Optional[str]:
     """根据“小硕-汉语”命名规则推导同一智能体的目标语言版本。"""
     if not isinstance(current_agent_name, str) or not isinstance(language, str):

@@ -1105,12 +1105,24 @@ class ConnectionHandler:
 
     def _build_llm_extra_body(self) -> dict:
         """构造传给 LLM 网关的额外设备上下文参数"""
+        from core.handle.deviceEventHandle import (
+            LANGUAGE_AGENT_SUFFIXES,
+            resolve_language_code_from_agent_name,
+        )
+
         extra_body = {}
         if self.device_id:
             extra_body["device_id"] = self.device_id
         if self.device_attributes:
-            if self.device_attributes.get("language"):
-                extra_body["language"] = self.device_attributes.get("language")
+            # 当前绑定智能体后缀为准，避免属性滞后导致仍发 zh-CN
+            language = resolve_language_code_from_agent_name(
+                self.device_attributes.get("agent_name")
+            )
+            attr_language = self.device_attributes.get("language")
+            if language is None and attr_language in LANGUAGE_AGENT_SUFFIXES:
+                language = attr_language
+            if language:
+                extra_body["language"] = language
             if self.device_attributes.get("last_beacon_id"):
                 extra_body["last_beacon_id"] = self.device_attributes.get("last_beacon_id")
         return extra_body

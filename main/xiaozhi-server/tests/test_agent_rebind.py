@@ -14,6 +14,7 @@ from core.handle.deviceEventHandle import (
     LANGUAGE_AGENT_SUFFIXES,
     handle_device_event,
     resolve_language_agent_name,
+    resolve_language_code_from_agent_name,
 )
 
 
@@ -218,6 +219,10 @@ class LanguageChangeEventTests(unittest.TestCase):
                 self.assertEqual(
                     resolve_language_agent_name("小硕-汉语", language),
                     f"小硕-{target_suffix}",
+                )
+                self.assertEqual(
+                    resolve_language_code_from_agent_name(f"小硕-{target_suffix}"),
+                    language,
                 )
 
     def test_language_change_rejects_noncanonical_case(self):
