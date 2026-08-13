@@ -1,10 +1,14 @@
 package xiaozhi.modules.device.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+
+import java.util.Map;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -12,11 +16,13 @@ import org.mockito.MockedStatic;
 import org.springframework.web.client.RestTemplate;
 
 import xiaozhi.common.exception.ErrorCode;
+import xiaozhi.common.exception.RenException;
 import xiaozhi.common.redis.RedisUtils;
 import xiaozhi.common.user.UserDetail;
 import xiaozhi.common.utils.MessageUtils;
 import xiaozhi.common.utils.Result;
 import xiaozhi.modules.device.dto.DeviceRebindDTO;
+import xiaozhi.modules.device.dto.DeviceEventReportDTO;
 import xiaozhi.modules.device.dto.DeviceUpdateDTO;
 import xiaozhi.modules.device.entity.DeviceEntity;
 import xiaozhi.modules.device.service.DeviceAddressBookService;
@@ -78,6 +84,47 @@ class DeviceControllerTest {
         assertEquals(0, result.getCode());
         assertEquals(true, result.getData().getConfirmed());
         verify(deviceService).rebindDevice(dto);
+    }
+
+    @Test
+    @DisplayName("目标测试智能体不存在时不保存语言也不调用内部接口")
+    void missingTestAgentDoesNotPersistLanguage() {
+        DeviceService deviceService = mock(DeviceService.class);
+        DeviceAttributeService attributeService = mock(DeviceAttributeService.class);
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        SysParamsService sysParamsService = mock(SysParamsService.class);
+        DeviceEntity device = ownedDevice();
+        when(deviceService.getDeviceByMacAddress(DEVICE_ID)).thenReturn(device);
+
+        DeviceEventReportDTO dto = new DeviceEventReportDTO();
+        dto.setDeviceId(DEVICE_ID);
+        dto.setEvent("language_change");
+        dto.setPayload(Map.of("language", "zh-CN-yue-test"));
+
+        try (MockedStatic<MessageUtils> messageUtils = mockStatic(MessageUtils.class)) {
+            messageUtils.when(() -> MessageUtils.getMessage(
+                    ErrorCode.DEVICE_REBIND_TARGET_AGENT_NOT_FOUND, "小硕-粤语-测试"))
+                    .thenReturn("需要名为小硕-粤语-测试的智能体");
+            RenException failure = new RenException(
+                    ErrorCode.DEVICE_REBIND_TARGET_AGENT_NOT_FOUND, "小硕-粤语-测试");
+            when(deviceService.validateLanguageTargetAgent(DEVICE_ID, "zh-CN-yue-test"))
+                    .thenThrow(failure);
+
+            DeviceController controller = new DeviceController(
+                    deviceService,
+                    mock(DeviceAddressBookService.class),
+                    attributeService,
+                    mock(RedisUtils.class),
+                    sysParamsService,
+                    restTemplate);
+
+            RenException thrown = assertThrows(RenException.class, () -> controller.reportDeviceEvent(dto));
+            assertEquals("需要名为小硕-粤语-测试的智能体", thrown.getMsg());
+        }
+
+        verify(attributeService, never()).updateLanguage(DEVICE_ID, "zh-CN-yue-test");
+        verify(sysParamsService, never()).getValue(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyBoolean());
     }
 
     private DeviceController controller(DeviceService deviceService) {

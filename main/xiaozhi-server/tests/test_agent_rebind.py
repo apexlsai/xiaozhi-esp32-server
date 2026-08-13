@@ -225,6 +225,48 @@ class LanguageChangeEventTests(unittest.TestCase):
                     language,
                 )
 
+    def test_test_agent_can_switch_to_test_or_production_agent(self):
+        self.assertEqual(
+            resolve_language_agent_name("小硕-粤语-测试", "en-test"),
+            "小硕-英语-测试",
+        )
+        self.assertEqual(
+            resolve_language_agent_name("小硕-粤语-测试", "en"),
+            "小硕-英语",
+        )
+        self.assertEqual(
+            resolve_language_code_from_agent_name("小硕-粤语-测试"),
+            "zh-CN-yue-test",
+        )
+
+    def test_missing_test_agent_returns_name_without_mutating_language(self):
+        async def run():
+            self.conn.device_attributes = {"agent_name": "小硕-汉语"}
+            with patch(
+                "core.handle.deviceEventHandle.rebind_device_agent",
+                new_callable=AsyncMock,
+            ) as rebind:
+                rebind.side_effect = Exception(
+                    "API返回错误: 需要名为小硕-粤语-测试的智能体"
+                )
+                await handle_device_event(
+                    self.conn,
+                    {
+                        "type": "device_event",
+                        "event": "language_change",
+                        "request_id": "lang-test-missing",
+                        "payload": {"language": "zh-CN-yue-test"},
+                    },
+                )
+                sent = json.loads(self.conn.websocket.send.await_args.args[0])
+                self.assertFalse(sent["success"])
+                self.assertIn("需要名为小硕-粤语-测试的智能体", sent["error"])
+                self.assertNotIn("language", self.conn.device_attributes)
+                self.assertIsNone(self.conn.device_language)
+                self.conn.websocket.close.assert_not_awaited()
+
+        asyncio.run(run())
+
     def test_language_change_rejects_noncanonical_case(self):
         async def run():
             self.conn.device_attributes = {"agent_name": "小硕-汉语"}

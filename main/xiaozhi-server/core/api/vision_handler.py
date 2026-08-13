@@ -65,25 +65,24 @@ class VisionHandler(BaseHandler):
             client_id = request.headers.get("Client-Id", "")
             if device_id != token_device_id:
                 raise ValueError("设备ID与token不匹配")
-            # 解析multipart/form-data请求
+
+            question = None
+            image_data = None
             reader = await request.multipart()
+            while True:
+                field = await reader.next()
+                if field is None:
+                    break
+                if field.name == "question":
+                    raw = await field.read(decode=False)
+                    question = raw.decode("utf-8").strip()
+                elif field.name == "image":
+                    image_data = await field.read(decode=False)
 
-            # 读取question字段
-            question_field = await reader.next()
-            if question_field is None:
+            if not question:
                 raise ValueError("缺少问题字段")
-            question = await question_field.text()
-            self.logger.bind(tag=TAG).debug(f"Question: {question}")
-
-            # 读取图片文件
-            image_field = await reader.next()
-            if image_field is None:
-                raise ValueError("缺少图片文件")
-
-            # 读取图片数据
-            image_data = await image_field.read()
             if not image_data:
-                raise ValueError("图片数据为空")
+                raise ValueError("缺少图片文件")
 
             # 检查文件大小
             if len(image_data) > MAX_FILE_SIZE:
@@ -136,22 +135,22 @@ class VisionHandler(BaseHandler):
             }
 
             response = web.Response(
-                text=json.dumps(return_json, separators=(",", ":")),
-                content_type="application/json",
+                text=json.dumps(return_json, ensure_ascii=False, separators=(",", ":")),
+                content_type="application/json; charset=utf-8",
             )
         except ValueError as e:
             self.logger.bind(tag=TAG).error(f"MCP Vision POST请求异常: {e}")
             return_json = self._create_error_response(str(e))
             response = web.Response(
-                text=json.dumps(return_json, separators=(",", ":")),
-                content_type="application/json",
+                text=json.dumps(return_json, ensure_ascii=False, separators=(",", ":")),
+                content_type="application/json; charset=utf-8",
             )
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"MCP Vision POST请求异常: {e}")
-            return_json = self._create_error_response("处理请求时发生错误")
+            return_json = self._create_error_response(str(e))
             response = web.Response(
-                text=json.dumps(return_json, separators=(",", ":")),
-                content_type="application/json",
+                text=json.dumps(return_json, ensure_ascii=False, separators=(",", ":")),
+                content_type="application/json; charset=utf-8",
             )
         finally:
             if response:

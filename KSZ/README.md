@@ -39,20 +39,13 @@ docker compose up -d --build
 
 ## 依赖服务端口
 
-Host 网络模式下，web 容器通过宿主机端口连接 MySQL 和 Redis。使用 `KSZ/.env` 配置这两个依赖端口；首次部署默认配置为 MySQL `3307`、Redis `6379`。如需重新生成配置：
+Bridge 网络模式下，MySQL、Redis 仅在 Compose 内网暴露，不占用宿主机自定义端口。信标位置服务在宿主机运行时，server 容器经 `host.docker.internal` 访问，可在 `KSZ/.env` 中配置 `BEACON_LOCATION_API`：
 
 ```bash
 cp .env.example .env
 ```
 
-修改 `MYSQL_PORT` 或 `REDIS_PORT` 后，需重新创建整套服务，使 MySQL、Redis 和 web 使用同一组端口：
-
-```bash
-docker compose down
-docker compose up -d --build
-```
-
-`8000`、`8002`、`8004` 分别是 server WebSocket、智控台、server HTTP 端口，保持固定，不在 `.env` 中配置。Docker web 镜像内 Java 另占用宿主机 `8003`（由 Nginx `8002` 反代）。
+`8000`、`8002`、`8003` 分别是 server WebSocket、智控台、server HTTP 端口，与上游全模块 Docker 一致。
 
 ## 常用操作
 
@@ -150,7 +143,8 @@ docker compose logs -f xiaozhi-esp32-server | grep "发送给LLM的请求"
 - `pull access denied for xiaozhi-esp32-server`：确认命令在 `KSZ/` 执行，并使用 `docker compose up -d --build`；本地镜像必须由 `build` 段生成。
 - server 报缺少 `TTS` 或设备无法识别语音：重建 web，清 Redis 的 `server:config`，再重启 server。
 - 数据库已迁移但 web 报 `Unknown column 'attr_key'`：web 镜像与数据库结构不一致，按“更新代码后的部署”重建 web。
-- 容器启动失败或端口无法监听：检查 `8000`、`8002`、`8003`、`${MYSQL_PORT}`、`${REDIS_PORT}` 是否已被宿主机进程占用。
+- 容器启动失败或端口无法监听：检查 `8000`、`8002`、`8003`、`8004`、`${MYSQL_PORT}`、`${REDIS_PORT}` 是否已被宿主机进程占用。
+- `curl :8004/mcp/vision/explain` 报「MCP Vision 接口运行不正常」：`data/.config.yaml` 缺 `server.vision_explain` 或仍为上游默认 `8003`；见下文「Server 与智控台连接」。
 
 版本变更、迁移背景与已知问题见 [CHANGELOG.md](CHANGELOG.md)（Keep a Changelog，自 `0.1.1` 起按版本记录）。
 
@@ -158,20 +152,42 @@ docker compose logs -f xiaozhi-esp32-server | grep "发送给LLM的请求"
 
 ### Server 与智控台连接
 
-`data/.config.yaml` 中的 `manager-api.url` 必须指向智控台 API；`secret` 与数据库 `sys_params` 表的 `server.secret` 保持一致。Host 网络模式下可使用宿主机地址或 `127.0.0.1`：
+全模块部署时，`data/.config.yaml` 只需保留连接智控台与 Host 网络端口相关项；模型密钥等在智控台【模型配置】维护。`secret` 与 `sys_params` 表中的 `server.secret` 保持一致。
+
+Host 网络下 **不要沿用上游默认 `http_port: 8003`**：Java manager-api 已占用宿主机 `8003`，xiaozhi-server HTTP（视觉、内部回调）须用 **`8004`**。
+
+推荐 `data/.config.yaml` 模板（将 `<HOST_IP>` 换为设备可达的局域网 IP 或公网 IP/域名）：
 
 ```yaml
+server:
+  ip: 0.0.0.0
+  port: 8000
+  http_port: 8004
+  # 必填：GET /mcp/vision/explain 健康检查及设备下发均依赖此项
+  # 内网可先留占位符，启动时自动探测本机 IP + http_port
+  vision_explain: http://<HOST_IP>:8004/mcp/vision/explain
+
 manager-api:
   url: http://127.0.0.1:8002/xiaozhi
   secret: <从 sys_params 的 server.secret 获取>
-server:
-  port: 8000
-  http_port: 8004
+
+prompt_template: agent-base-prompt.txt
 ```
 
-> Host 网络下 web 容器 Java 固定监听 `8003`，因此 `server.http_port` 必须用 `8004`；`sys_params.server.internal_api` 同步为 `http://127.0.0.1:8004`。
+配置职责（避免与上游 bridge 默认混淆）：
 
-服务对外地址在 `sys_params` 中维护。将 `<HOST_IP>` 替换为实际 IP 或域名：
+| 配置项 | 写入位置 | KSZ 端口 / 地址 |
+|--------|----------|-----------------|
+| 连接智控台 | `.config.yaml` → `manager-api` | `http://127.0.0.1:8002/xiaozhi` |
+| WebSocket（设备） | `sys_params.server.websocket` | `ws://<HOST_IP>:8000/xiaozhi/v1/` |
+| OTA（设备） | `sys_params.server.ota` | `http://<HOST_IP>:8002/xiaozhi/ota/` |
+| 视觉 HTTP | `.config.yaml` + `sys_params.server.vision_explain` | `http://<HOST_IP>:8004/mcp/vision/explain` |
+| 内部回调 | `sys_params.server.internal_api` | `http://127.0.0.1:8004`（勿填 `8003`） |
+| manager-api Java | 无需配置 | 宿主机 `8003`，由 `8002` 反代 |
+
+> 全模块模式下，`.config.yaml` 的 `server` 段会覆盖 API 返回值。若未写 `vision_explain`，即使智控台已填 `server.vision_explain`，GET 检查仍会报「运行不正常」。
+
+设备与对外地址写入 `sys_params`：
 
 ```bash
 docker compose exec xiaozhi-esp32-server-db \
@@ -179,10 +195,39 @@ docker compose exec xiaozhi-esp32-server-db \
   UPDATE sys_params SET param_value='ws://<HOST_IP>:8000/xiaozhi/v1/'
   WHERE param_code='server.websocket';
   UPDATE sys_params SET param_value='http://<HOST_IP>:8002/xiaozhi/ota/'
-  WHERE param_code='server.ota';"
+  WHERE param_code='server.ota';
+  UPDATE sys_params SET param_value='8004'
+  WHERE param_code='server.http_port';
+  UPDATE sys_params SET param_value='http://127.0.0.1:8004'
+  WHERE param_code='server.internal_api';
+  UPDATE sys_params SET param_value='http://<HOST_IP>:8004/mcp/vision/explain'
+  WHERE param_code='server.vision_explain';"
 ```
 
-修改后清除配置缓存并重启 server。
+修改后清除配置缓存并重启 server：
+
+```bash
+docker compose exec xiaozhi-esp32-server-redis redis-cli DEL server:config
+docker compose restart xiaozhi-esp32-server
+```
+
+验证视觉接口（公网部署须放行安全组/防火墙 **8004**）：
+
+```bash
+curl http://<HOST_IP>:8004/mcp/vision/explain
+# 正常：MCP Vision 接口运行正常，视觉解释接口地址是：http://...
+```
+
+视觉模型密钥与智能体绑定见下文「视觉模型（VLLM）」；上游 [`mcp-vision-integration.md`](../docs/mcp-vision-integration.md) 中的 **`8003` 端口不适用 KSZ Host 部署**，一律改为 **`8004`**。
+
+### 视觉模型（VLLM）
+
+地址与端口按上文「Server 与智控台连接」配好 `vision_explain` 并通过 `curl` 健康检查后再启用识图。
+
+1. 智控台【模型配置】→【视觉大语言模型】，为所用 VLLM（如 `VLLM_ChatGLMVLLM`）填写 API 密钥并保存。
+2. 在目标智能体【配置角色】中，将「视觉大语言模型(VLLM)」选为上述模型并保存。
+3. 清除 Redis 配置缓存并重启 server（见上文命令）。
+4. 设备固件 ≥ 1.6.6，唤醒后说「请打开摄像头，说你看到了什么」，并查看 server 日志是否有 VLLM 报错。
 
 ### 配置 FunASR
 
@@ -454,12 +499,15 @@ Authorization: Bearer <server.secret>
 
 规则：
 
+- 任一规范码均可追加小写 `-test`，用于切换到对应测试智能体；例如 `zh-CN-yue-test` 对应 `小硕-粤语-测试`，`en-test` 对应 `小硕-英语-测试`。
+- `-test` 只能追加一次且严格区分大小写；`-Test`、`-test-test` 均为非法语言码。
 - 语种：`zh-CN` / `en` / `ja` / `ko`（语言小写或 `zh`，地区大写；与 BCP 47 常见写法一致）。
 - 汉语方言：`zh-CN-{pinyin_of_region}`，地区拼音全小写、无声调，如 `zh-CN-sichuan`。
 - 粤语固定为 `zh-CN-yue`（不写 `zh-HK` / `yue`）。
 - 智能体命名必须为 `<基名>-<后缀>`，例如 `小硕-汉语`、`小硕-英语`、`小硕-粤语`、`小硕-日语`、`小硕-韩语`；换绑按后缀推导，同一基名下各语言智能体并存。
 
 服务会根据当前智能体的任一已知语言后缀和目标语言码推导目标智能体，例如 `小硕-粤语` + `ja` → `小硕-日语`。
+生产与测试智能体可双向切换，例如 `小硕-粤语-测试` + `en-test` → `小硕-英语-测试`，`小硕-粤语-测试` + `en` → `小硕-英语`。
 
 ### 语言切换（智能体切换路线）
 
@@ -498,6 +546,7 @@ HTTP 层恒为 `200`，业务成败看 JSON 的 `code`（`0` 成功，非 `0` �
 - `language` 持久化到设备属性；重连后及后续对话会继续作为 `extra_body.language` 发送给下游 LLM。
 - 成功后 server 调用 `POST /xiaozhi/device/rebind` 换绑并主动断开，设备重连即加载新语言智能体。
 - 失败（无法推导目标、智能体不存在/重名、设备离线、未配置 `server.internal_api`、未启用 manager-api 等）时业务 `code≠0` 或 WS `success=false`。
+- manager-api 会在保存语言前校验同用户下的目标智能体。若上报 `zh-CN-yue-test` 但 `小硕-粤语-测试` 不存在，返回 `code=10253`、`msg=需要名为小硕-粤语-测试的智能体`，语言属性和设备绑定保持不变。
 
 `PUT /xiaozhi/device/attribute/{deviceId}/language` 仍可用，但仅写入 `language` 属性，**不会切换智能体也不会触发翻译**；切换语言请用上面的 `language_change` 事件或直接调用 `/device/rebind`。
 
@@ -596,5 +645,5 @@ docker compose restart xiaozhi-esp32-server
 
 - [MCP 接入点部署](../docs/mcp-endpoint-enable.md)
 - [MCP 接入点使用](../docs/mcp-endpoint-integration.md)
-- [视觉模型 MCP 集成](../docs/mcp-vision-integration.md)
+- [视觉模型 MCP 集成](../docs/mcp-vision-integration.md)（KSZ Host 部署请将文档中 **8003** 改为 **8004**）
 - [通过 MCP 获取设备信息](../docs/mcp-get-device-info.md)

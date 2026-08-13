@@ -10,7 +10,7 @@ from config.logger import setup_logging
 TAG = __name__
 logger = setup_logging()
 
-LANGUAGE_AGENT_SUFFIXES = {
+BASE_LANGUAGE_AGENT_SUFFIXES = {
     "zh-CN": "汉语",
     "en": "英语",
     "ja": "日语",
@@ -21,17 +21,25 @@ LANGUAGE_AGENT_SUFFIXES = {
     "zh-CN-minnan": "闽南语",
     "zh-CN-shanxi": "陕西话",
 }
+LANGUAGE_AGENT_SUFFIXES = {
+    **BASE_LANGUAGE_AGENT_SUFFIXES,
+    **{
+        f"{language}-test": f"{suffix}-测试"
+        for language, suffix in BASE_LANGUAGE_AGENT_SUFFIXES.items()
+    },
+}
 
 
 def resolve_language_code_from_agent_name(agent_name: Optional[str]) -> Optional[str]:
     """从智能体名后缀反查规范语言码，如 小硕-粤语 → zh-CN-yue。"""
     if not isinstance(agent_name, str) or not agent_name:
         return None
-    suffix_to_language = {suffix: code for code, suffix in LANGUAGE_AGENT_SUFFIXES.items()}
     for separator in ("-", "－", "—"):
-        _, found_separator, current_suffix = agent_name.rpartition(separator)
-        if found_separator and current_suffix in suffix_to_language:
-            return suffix_to_language[current_suffix]
+        for language, suffix in sorted(
+            LANGUAGE_AGENT_SUFFIXES.items(), key=lambda item: len(item[1]), reverse=True
+        ):
+            if agent_name.endswith(f"{separator}{suffix}"):
+                return language
     return None
 
 
@@ -45,13 +53,13 @@ def resolve_language_agent_name(current_agent_name: Optional[str], language: Any
         return None
 
     for separator in ("-", "－", "—"):
-        prefix, found_separator, current_suffix = current_agent_name.rpartition(separator)
-        if (
-            found_separator
-            and prefix
-            and current_suffix in LANGUAGE_AGENT_SUFFIXES.values()
+        for current_suffix in sorted(
+            LANGUAGE_AGENT_SUFFIXES.values(), key=len, reverse=True
         ):
-            return f"{prefix}{separator}{target_suffix}"
+            marker = f"{separator}{current_suffix}"
+            if current_agent_name.endswith(marker):
+                prefix = current_agent_name[: -len(marker)]
+                return f"{prefix}{separator}{target_suffix}" if prefix else None
     return None
 
 
@@ -122,6 +130,7 @@ async def _do_rebind(
     target_agent_name: Optional[str],
     request_id: Any,
     confirm: bool,
+    raise_on_error: bool = False,
 ):
     """换绑核心流程：调用 manager-api，回传结果，成功后断开连接促使重连"""
     result_msg = {
@@ -133,17 +142,26 @@ async def _do_rebind(
         result_msg["request_id"] = request_id
 
     if not current_agent_name or not target_agent_name:
-        result_msg["error"] = "缺少 current_agent_name 或 target_agent_name"
+        error = "缺少 current_agent_name 或 target_agent_name"
+        if raise_on_error:
+            raise ValueError(error)
+        result_msg["error"] = error
         await _send_json(conn, result_msg)
         return
 
     if not confirm:
-        result_msg["error"] = "必须确认换绑（confirm=true）"
+        error = "必须确认换绑（confirm=true）"
+        if raise_on_error:
+            raise ValueError(error)
+        result_msg["error"] = error
         await _send_json(conn, result_msg)
         return
 
     if not conn.read_config_from_api:
-        result_msg["error"] = "当前未启用 manager-api，无法换绑"
+        error = "当前未启用 manager-api，无法换绑"
+        if raise_on_error:
+            raise ValueError(error)
+        result_msg["error"] = error
         await _send_json(conn, result_msg)
         return
 
@@ -165,9 +183,12 @@ async def _do_rebind(
             await conn.websocket.close()
         except Exception as close_error:
             logger.bind(tag=TAG).warning(f"换绑成功后关闭连接失败: {close_error}")
+        return data
     except Exception as e:
-        result_msg["error"] = str(e)
         logger.bind(tag=TAG).error(f"设备换绑失败: {e}")
+        if raise_on_error:
+            raise
+        result_msg["error"] = str(e)
         await _send_json(conn, result_msg)
 
 
@@ -201,10 +222,6 @@ async def apply_language_change(
     if not resolved_target:
         raise ValueError("无法从当前智能体名称推导目标语言智能体")
 
-    conn.device_language = language
-    if conn.device_attributes is None:
-        conn.device_attributes = {}
-    conn.device_attributes["language"] = language
     logger.bind(tag=TAG).info(
         f"设备语言切换: {conn.device_id} {language} "
         f"{resolved_current} -> {resolved_target}"
@@ -217,7 +234,12 @@ async def apply_language_change(
         resolved_target,
         request_id,
         confirm=True,
+        raise_on_error=True,
     )
+    conn.device_language = language
+    if conn.device_attributes is None:
+        conn.device_attributes = {}
+    conn.device_attributes["language"] = language
     return {
         "deviceId": conn.device_id,
         "language": language,
@@ -261,7 +283,7 @@ async def _handle_language_change(
             ),
             request_id=request_id,
         )
-    except ValueError as error:
+    except Exception as error:
         result_msg = {
             "type": "device_event_result",
             "event": "language_change",

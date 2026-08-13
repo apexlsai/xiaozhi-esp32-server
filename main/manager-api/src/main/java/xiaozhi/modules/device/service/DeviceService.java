@@ -111,6 +111,8 @@ public interface DeviceService extends BaseService<DeviceEntity> {
      */
     DeviceRebindVO rebindDevice(DeviceRebindDTO dto);
 
+    String validateLanguageTargetAgent(String deviceId, String language);
+
     /**
      * 更新设备连接信息
      */

@@ -209,6 +209,35 @@ class DeviceServiceImplRebindTest {
         verify(agentDao).selectList(any(QueryWrapper.class));
     }
 
+    @Test
+    @DisplayName("测试语言预校验定位同用户测试智能体")
+    void validatesTestLanguageTargetAgent() {
+        when(deviceDao.selectOne(any(QueryWrapper.class))).thenReturn(device(OLD_AGENT_ID));
+        when(agentDao.selectById(OLD_AGENT_ID)).thenReturn(agent(OLD_AGENT_ID, "小硕-汉语"));
+        when(agentDao.selectList(any(QueryWrapper.class)))
+                .thenReturn(List.of(agent(NEW_AGENT_ID, "小硕-粤语-测试")));
+
+        assertEquals("小硕-粤语-测试", service.validateLanguageTargetAgent(MAC, "zh-CN-yue-test"));
+    }
+
+    @Test
+    @DisplayName("测试语言目标智能体不存在时返回所需名称")
+    void rejectsMissingTestLanguageTargetAgent() {
+        when(deviceDao.selectOne(any(QueryWrapper.class))).thenReturn(device(OLD_AGENT_ID));
+        when(agentDao.selectById(OLD_AGENT_ID)).thenReturn(agent(OLD_AGENT_ID, "小硕-汉语"));
+        when(agentDao.selectList(any(QueryWrapper.class))).thenReturn(Collections.emptyList());
+
+        try (MockedStatic<MessageUtils> messageUtils = mockStatic(MessageUtils.class)) {
+            messageUtils.when(() -> MessageUtils.getMessage(
+                    ErrorCode.DEVICE_REBIND_TARGET_AGENT_NOT_FOUND, "小硕-粤语-测试"))
+                    .thenReturn("需要名为小硕-粤语-测试的智能体");
+            RenException ex = assertThrows(RenException.class,
+                    () -> service.validateLanguageTargetAgent(MAC, "zh-CN-yue-test"));
+            assertEquals(ErrorCode.DEVICE_REBIND_TARGET_AGENT_NOT_FOUND, ex.getCode());
+            assertEquals("需要名为小硕-粤语-测试的智能体", ex.getMsg());
+        }
+    }
+
     private MockedStatic<MessageUtils> mockMessageUtils() {
         MockedStatic<MessageUtils> messageUtils = mockStatic(MessageUtils.class);
         messageUtils.when(() -> MessageUtils.getMessage(anyInt())).thenReturn("error");

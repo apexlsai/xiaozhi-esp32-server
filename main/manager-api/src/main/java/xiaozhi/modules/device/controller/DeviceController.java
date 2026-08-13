@@ -114,6 +114,7 @@ public class DeviceController {
             Object language = dto.getPayload() == null ? null : dto.getPayload().get("language");
             if (language != null) {
                 String languageValue = language.toString();
+                deviceService.validateLanguageTargetAgent(deviceId, languageValue);
                 deviceAttributeService.updateLanguage(deviceId, languageValue);
                 try {
                     notifyLanguageChange(deviceId, languageValue);

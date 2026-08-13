@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+### 变更
+
+- 语言切换支持在规范语言码后追加 `-test`，自动定位 `<基名>-<语言后缀>-测试` 智能体；目标不存在时返回所需智能体名称，并在写入语言属性前失败。
+- README：补充 KSZ Host 下 `data/.config.yaml` 完整模板、`server.vision_explain` 与 `sys_params` 同步 SQL、配置职责表、视觉健康检查及 VLLM 启用步骤；明确上游视觉文档端口 `8003` 不适用于 KSZ。
+- 修复 MCP Vision POST 中文 `question` 触发 ASCII 编码错误；VLLM 请求改用 httpx 直连并返回可读错误信息。
+- VLLM `base_url` 自动规范化：缺 `/v1` 时补全，避免 404。
+- VLLM：API Key 仍为占位符时在初始化阶段 fail-fast，避免 httpx 组装 Authorization 头时出现 `'ascii' codec can't encode` 误导性报错。
+
 ## [0.1.2]
 
 ### 新增
