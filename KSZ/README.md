@@ -311,6 +311,7 @@ docker compose exec xiaozhi-esp32-server-db \
 
 - `202607101600.sql`：列模式重建（`language`、`last_beacon_id`）
 - `202607311534.sql`：新增 `agent_name` 并按 `ai_device.agent_id` 回填
+- `202608131200.sql`：将旧 `*-test` 及 `VARCHAR(16)` 截断值清理为基础规范语言码
 
 正常部署由 manager-api 启动时自动执行。若旧库仍为 key-value 结构且需手动迁移，先备份再执行：
 
@@ -499,36 +500,36 @@ Authorization: Bearer <server.secret>
 
 规则：
 
-- 任一规范码均可追加小写 `-test`，用于切换到对应测试智能体；例如 `zh-CN-yue-test` 对应 `小硕-粤语-测试`，`en-test` 对应 `小硕-英语-测试`。
-- `-test` 只能追加一次且严格区分大小写；`-Test`、`-test-test` 均为非法语言码。
+- `language` 始终使用表中的规范码，不允许追加 `-test`；测试智能体由同级布尔参数 `dev` 选择。
+- `dev=true` 切换到 `<基名>-<语言后缀>-测试`，缺省或 `false` 切换到生产智能体。例如 `language=zh-CN-yue, dev=true` 对应 `小硕-粤语-测试`。
 - 语种：`zh-CN` / `en` / `ja` / `ko`（语言小写或 `zh`，地区大写；与 BCP 47 常见写法一致）。
 - 汉语方言：`zh-CN-{pinyin_of_region}`，地区拼音全小写、无声调，如 `zh-CN-sichuan`。
 - 粤语固定为 `zh-CN-yue`（不写 `zh-HK` / `yue`）。
 - 智能体命名必须为 `<基名>-<后缀>`，例如 `小硕-汉语`、`小硕-英语`、`小硕-粤语`、`小硕-日语`、`小硕-韩语`；换绑按后缀推导，同一基名下各语言智能体并存。
 
 服务会根据当前智能体的任一已知语言后缀和目标语言码推导目标智能体，例如 `小硕-粤语` + `ja` → `小硕-日语`。
-生产与测试智能体可双向切换，例如 `小硕-粤语-测试` + `en-test` → `小硕-英语-测试`，`小硕-粤语-测试` + `en` → `小硕-英语`。
+生产与测试智能体可双向切换，例如 `小硕-粤语-测试` + `language=en, dev=true` → `小硕-英语-测试`，`小硕-粤语-测试` + `language=en, dev=false` → `小硕-英语`。
 
 ### 语言切换（智能体切换路线）
 
 KSZ 不走“按 `device_language` 强制翻译”路线（`agent-base-prompt.txt` 的 `output_language_directive` 段已移除），回复语言完全由当前绑定智能体自身的 `base_prompt` 决定。因此**语言切换 = 切换到对应语言的智能体**，复用上面的换绑流程。
 
-外部系统调用事件上报接口后，manager-api 先持久化 `language`，再回调 xiaozhi-server 内部接口；**server 在线时直接换绑并断开重连**，不再依赖设备回传命令：
+外部系统调用事件上报接口后，manager-api 先校验语言与目标智能体，再回调 xiaozhi-server 的 `/internal/device/language-change-v2`；server 调用 `/device/rebind`，在同一事务内完成智能体换绑及基础 `language` 持久化，随后断开设备连接。v2 端点用于在滚动升级时拒绝旧 server，避免 `dev` 被忽略后误绑生产智能体；旧内部端点仅保留用于兼容旧 manager-api，并会在新 server 内把历史 `*-test` 入参规范化为基础语言码。滚动发布须先升级 manager-api、再升级 xiaozhi-server：中间阶段 v2 回调会安全失败且不改库，待 server 升级后恢复：
 
 ```json
 {
   "deviceId": "{{DEVICE_ID}}",
   "event": "language_change",
-  "payload": { "language": "zh-CN-yue" },
+  "payload": { "language": "zh-CN-yue", "dev": true },
   "timestamp": {{$timestamp}}
 }
 ```
 
 HTTP 层恒为 `200`，业务成败看 JSON 的 `code`（`0` 成功，非 `0` 失败）。这是 manager-api 的 `Result` 约定，不是传输异常。`code=0` 表示语言已保存且换绑已在 server 侧执行（设备须在线）。
 
-`server.internal_api`（参数字典）**必须**指向 xiaozhi-server 内部 HTTP，Host 网络 Docker 部署下为 `http://127.0.0.1:8004`（不要填 `8003`，那是 manager-api Java）；回调使用 `server.secret` 的 Bearer 鉴权。未配置时会出现：语言属性已写入，但 `code=500`，msg 含「下发设备语言切换命令失败」/ `未配置 server.internal_api`。
+`server.internal_api`（参数字典）**必须**指向 xiaozhi-server 内部 HTTP，Host 网络 Docker 部署下为 `http://127.0.0.1:8004`（不要填 `8003`，那是 manager-api Java）；回调使用 `server.secret` 的 Bearer 鉴权。未配置或换绑失败时返回非零业务码，语言属性与设备绑定均保持原值。
 
-设备也可直接通过 WebSocket 上报 `device_event` / `language_change`，效果相同。`target_agent_name` 缺省时，server 使用命名规则推导：
+设备也可直接通过 WebSocket 上报 `device_event` / `language_change`，效果相同。目标智能体始终由 `language` 与 `dev` 推导，设备传入的 `target_agent_name` 不会覆盖该规则：
 
 ```json
 {
@@ -537,16 +538,17 @@ HTTP 层恒为 `200`，业务成败看 JSON 的 `code`（`0` 成功，非 `0` �
   "request_id": "lang-001",
   "payload": {
     "language": "zh-CN-yue",
+    "dev": true,
     "current_agent_name": "小硕-英语"
   }
 }
 ```
 
 - 当前智能体名后缀须在「语言码约定」表中，否则无法推导目标智能体（例如 `小硕-英语` + `zh-CN-yue` → `小硕-粤语`）。
-- `language` 持久化到设备属性；重连后及后续对话会继续作为 `extra_body.language` 发送给下游 LLM。
+- `language` 持久化到设备属性；无论 `dev` 取值如何，数据库与下游 `extra_body.language` 都只使用原规范码，不写入 `-test`。
 - 成功后 server 调用 `POST /xiaozhi/device/rebind` 换绑并主动断开，设备重连即加载新语言智能体。
 - 失败（无法推导目标、智能体不存在/重名、设备离线、未配置 `server.internal_api`、未启用 manager-api 等）时业务 `code≠0` 或 WS `success=false`。
-- manager-api 会在保存语言前校验同用户下的目标智能体。若上报 `zh-CN-yue-test` 但 `小硕-粤语-测试` 不存在，返回 `code=10253`、`msg=需要名为小硕-粤语-测试的智能体`，语言属性和设备绑定保持不变。
+- manager-api 会在回调前校验同用户下的目标智能体。若上报 `language=zh-CN-yue, dev=true` 但 `小硕-粤语-测试` 不存在，返回 `code=10253`、`msg=需要名为小硕-粤语-测试的智能体`，语言属性和设备绑定保持不变。
 
 `PUT /xiaozhi/device/attribute/{deviceId}/language` 仍可用，但仅写入 `language` 属性，**不会切换智能体也不会触发翻译**；切换语言请用上面的 `language_change` 事件或直接调用 `/device/rebind`。
 

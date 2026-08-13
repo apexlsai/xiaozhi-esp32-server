@@ -14,15 +14,15 @@ class DeviceLanguageSpecTest {
             "zh-CN-shanghai", "zh-CN-minnan", "zh-CN-shanxi");
 
     @Test
-    void acceptsBaseAndTestLanguages() {
+    void acceptsOnlyBaseLanguages() {
         for (String language : BASE_LANGUAGES) {
             assertTrue(DeviceLanguageSpec.isSupported(language));
-            assertTrue(DeviceLanguageSpec.isSupported(language + "-test"));
+            assertFalse(DeviceLanguageSpec.isSupported(language + "-test"));
         }
     }
 
     @Test
-    void rejectsInvalidTestVariants() {
+    void rejectsInvalidLanguages() {
         assertFalse(DeviceLanguageSpec.isSupported("zh-CN-yue-Test"));
         assertFalse(DeviceLanguageSpec.isSupported("zh-CN-yue-test-test"));
         assertFalse(DeviceLanguageSpec.isSupported("unknown-test"));
@@ -31,10 +31,10 @@ class DeviceLanguageSpecTest {
     @Test
     void resolvesProductionAndTestAgentNames() {
         assertEquals("小硕-粤语-测试",
-                DeviceLanguageSpec.resolveTargetAgentName("小硕-汉语", "zh-CN-yue-test"));
+                DeviceLanguageSpec.resolveTargetAgentName("小硕-汉语", "zh-CN-yue", true));
         assertEquals("小硕-英语-测试",
-                DeviceLanguageSpec.resolveTargetAgentName("小硕-粤语-测试", "en-test"));
+                DeviceLanguageSpec.resolveTargetAgentName("小硕-粤语-测试", "en", true));
         assertEquals("小硕-英语",
-                DeviceLanguageSpec.resolveTargetAgentName("小硕-粤语-测试", "en"));
+                DeviceLanguageSpec.resolveTargetAgentName("小硕-粤语-测试", "en", false));
     }
 }

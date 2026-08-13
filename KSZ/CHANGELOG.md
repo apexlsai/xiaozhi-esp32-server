@@ -8,7 +8,7 @@
 
 ### 变更
 
-- 语言切换支持在规范语言码后追加 `-test`，自动定位 `<基名>-<语言后缀>-测试` 智能体；目标不存在时返回所需智能体名称，并在写入语言属性前失败。
+- 语言切换改用独立布尔参数 `dev` 选择 `<基名>-<语言后缀>-测试` 智能体；`language` 始终保持原规范码，并与智能体换绑在同一事务持久化；新增 v2 内部回调防止滚动升级时旧 server 忽略 `dev`，并增加迁移清理旧 `-test` 及可能被截断的历史值。
 - README：补充 KSZ Host 下 `data/.config.yaml` 完整模板、`server.vision_explain` 与 `sys_params` 同步 SQL、配置职责表、视觉健康检查及 VLLM 启用步骤；明确上游视觉文档端口 `8003` 不适用于 KSZ。
 - 修复 MCP Vision POST 中文 `question` 触发 ASCII 编码错误；VLLM 请求改用 httpx 直连并返回可读错误信息。
 - VLLM `base_url` 自动规范化：缺 `/v1` 时补全，避免 404。

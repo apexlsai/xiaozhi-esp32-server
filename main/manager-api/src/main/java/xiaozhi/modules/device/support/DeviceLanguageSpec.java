@@ -6,18 +6,18 @@ import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
 
 public final class DeviceLanguageSpec {
-    private static final String TEST_SUFFIX = "-test";
     private static final Map<String, String> AGENT_SUFFIXES = createAgentSuffixes();
 
     private DeviceLanguageSpec() {
     }
 
     public static boolean isSupported(String language) {
-        return resolveAgentSuffix(language) != null;
+        return AGENT_SUFFIXES.containsKey(language);
     }
 
-    public static String resolveTargetAgentName(String currentAgentName, String language) {
-        String targetSuffix = resolveAgentSuffix(language);
+    public static String resolveTargetAgentName(String currentAgentName, String language, boolean dev) {
+        String languageSuffix = AGENT_SUFFIXES.get(language);
+        String targetSuffix = languageSuffix == null ? null : languageSuffix + (dev ? "-测试" : "");
         if (StringUtils.isBlank(currentAgentName) || targetSuffix == null) {
             return null;
         }
@@ -38,16 +38,6 @@ public final class DeviceLanguageSpec {
             }
         }
         return null;
-    }
-
-    private static String resolveAgentSuffix(String language) {
-        if (StringUtils.isBlank(language)) {
-            return null;
-        }
-        boolean test = language.endsWith(TEST_SUFFIX);
-        String baseLanguage = test ? language.substring(0, language.length() - TEST_SUFFIX.length()) : language;
-        String suffix = AGENT_SUFFIXES.get(baseLanguage);
-        return suffix == null ? null : suffix + (test ? "-测试" : "");
     }
 
     private static Map<String, String> createAgentSuffixes() {

@@ -69,6 +69,10 @@ class SimpleHttpServer:
                     [
                         web.post(
                             "/internal/device/language-change",
+                            self.device_command_handler.handle_legacy_language_change,
+                        ),
+                        web.post(
+                            "/internal/device/language-change-v2",
                             self.device_command_handler.handle_language_change,
                         ),
                         web.get("/mcp/vision/explain", self.vision_handler.handle_get),

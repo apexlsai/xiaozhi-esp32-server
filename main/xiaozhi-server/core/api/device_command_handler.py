@@ -17,7 +17,17 @@ class DeviceCommandHandler:
         self.websocket_server = websocket_server
         self.logger = setup_logging(config)
 
+    async def handle_legacy_language_change(
+        self, request: web.Request
+    ) -> web.Response:
+        return await self._handle_language_change(request, allow_legacy_test_suffix=True)
+
     async def handle_language_change(self, request: web.Request) -> web.Response:
+        return await self._handle_language_change(request, allow_legacy_test_suffix=False)
+
+    async def _handle_language_change(
+        self, request: web.Request, *, allow_legacy_test_suffix: bool
+    ) -> web.Response:
         if not self._is_authorized(request):
             raise web.HTTPUnauthorized(text="unauthorized")
 
@@ -31,6 +41,18 @@ class DeviceCommandHandler:
 
         device_id = data.get("deviceId")
         language = data.get("language")
+        dev = data.get("dev", False)
+        target_agent_name = data.get("targetAgentName")
+        request_id = data.get("requestId")
+        if (
+            allow_legacy_test_suffix
+            and "dev" not in data
+            and isinstance(language, str)
+            and language.endswith("-test")
+            and language[: -len("-test")] in LANGUAGE_AGENT_SUFFIXES
+        ):
+            language = language[: -len("-test")]
+            dev = True
         if not isinstance(device_id, str) or not device_id:
             raise web.HTTPBadRequest(text="deviceId is required")
         if not isinstance(language, str) or language not in LANGUAGE_AGENT_SUFFIXES:
@@ -38,13 +60,25 @@ class DeviceCommandHandler:
             raise web.HTTPBadRequest(
                 text=f"language must use a canonical code: {supported}"
             )
+        if not isinstance(dev, bool):
+            raise web.HTTPBadRequest(text="dev must be a boolean")
+        if target_agent_name is not None and (
+            not isinstance(target_agent_name, str) or not target_agent_name
+        ):
+            raise web.HTTPBadRequest(text="targetAgentName must be a non-empty string")
 
         conn = self.websocket_server.find_device_connection({"device_id": device_id})
         if conn is None:
             raise web.HTTPNotFound(text="device is offline")
 
         try:
-            result = await apply_language_change(conn, language)
+            result = await apply_language_change(
+                conn,
+                language,
+                target_agent_name=target_agent_name,
+                request_id=request_id,
+                dev=dev,
+            )
         except ValueError as error:
             raise web.HTTPConflict(text=str(error))
         except Exception as error:

@@ -10,7 +10,7 @@ from config.logger import setup_logging
 TAG = __name__
 logger = setup_logging()
 
-BASE_LANGUAGE_AGENT_SUFFIXES = {
+LANGUAGE_AGENT_SUFFIXES = {
     "zh-CN": "汉语",
     "en": "英语",
     "ja": "日语",
@@ -21,13 +21,6 @@ BASE_LANGUAGE_AGENT_SUFFIXES = {
     "zh-CN-minnan": "闽南语",
     "zh-CN-shanxi": "陕西话",
 }
-LANGUAGE_AGENT_SUFFIXES = {
-    **BASE_LANGUAGE_AGENT_SUFFIXES,
-    **{
-        f"{language}-test": f"{suffix}-测试"
-        for language, suffix in BASE_LANGUAGE_AGENT_SUFFIXES.items()
-    },
-}
 
 
 def resolve_language_code_from_agent_name(agent_name: Optional[str]) -> Optional[str]:
@@ -35,15 +28,17 @@ def resolve_language_code_from_agent_name(agent_name: Optional[str]) -> Optional
     if not isinstance(agent_name, str) or not agent_name:
         return None
     for separator in ("-", "－", "—"):
-        for language, suffix in sorted(
-            LANGUAGE_AGENT_SUFFIXES.items(), key=lambda item: len(item[1]), reverse=True
-        ):
-            if agent_name.endswith(f"{separator}{suffix}"):
+        for language, suffix in LANGUAGE_AGENT_SUFFIXES.items():
+            if agent_name.endswith(f"{separator}{suffix}-测试") or agent_name.endswith(
+                f"{separator}{suffix}"
+            ):
                 return language
     return None
 
 
-def resolve_language_agent_name(current_agent_name: Optional[str], language: Any) -> Optional[str]:
+def resolve_language_agent_name(
+    current_agent_name: Optional[str], language: Any, dev: bool = False
+) -> Optional[str]:
     """根据“小硕-汉语”命名规则推导同一智能体的目标语言版本。"""
     if not isinstance(current_agent_name, str) or not isinstance(language, str):
         return None
@@ -51,11 +46,16 @@ def resolve_language_agent_name(current_agent_name: Optional[str], language: Any
     target_suffix = LANGUAGE_AGENT_SUFFIXES.get(language)
     if target_suffix is None:
         return None
+    if dev:
+        target_suffix = f"{target_suffix}-测试"
 
     for separator in ("-", "－", "—"):
-        for current_suffix in sorted(
-            LANGUAGE_AGENT_SUFFIXES.values(), key=len, reverse=True
-        ):
+        current_suffixes = [
+            candidate
+            for suffix in LANGUAGE_AGENT_SUFFIXES.values()
+            for candidate in (f"{suffix}-测试", suffix)
+        ]
+        for current_suffix in sorted(current_suffixes, key=len, reverse=True):
             marker = f"{separator}{current_suffix}"
             if current_agent_name.endswith(marker):
                 prefix = current_agent_name[: -len(marker)]
@@ -131,6 +131,8 @@ async def _do_rebind(
     request_id: Any,
     confirm: bool,
     raise_on_error: bool = False,
+    language: Optional[str] = None,
+    dev: bool = False,
 ):
     """换绑核心流程：调用 manager-api，回传结果，成功后断开连接促使重连"""
     result_msg = {
@@ -166,12 +168,16 @@ async def _do_rebind(
         return
 
     try:
-        data = await rebind_device_agent(
-            device_id=conn.device_id,
-            current_agent_name=current_agent_name,
-            target_agent_name=target_agent_name,
-            confirm=True,
-        )
+        rebind_args = {
+            "device_id": conn.device_id,
+            "current_agent_name": current_agent_name,
+            "target_agent_name": target_agent_name,
+            "confirm": True,
+        }
+        if language is not None:
+            rebind_args["language"] = language
+            rebind_args["dev"] = dev
+        data = await rebind_device_agent(**rebind_args)
         result_msg["success"] = True
         result_msg["data"] = data or {}
         await _send_json(conn, result_msg)
@@ -206,6 +212,7 @@ async def apply_language_change(
     current_agent_name: Optional[str] = None,
     target_agent_name: Optional[str] = None,
     request_id: Any = None,
+    dev: bool = False,
 ) -> dict:
     """语言切换=智能体换绑。供 WS 事件与内部 HTTP 共用。"""
     if language not in LANGUAGE_AGENT_SUFFIXES:
@@ -217,13 +224,13 @@ async def apply_language_change(
         "agent_name"
     )
     resolved_target = target_agent_name or resolve_language_agent_name(
-        resolved_current, language
+        resolved_current, language, dev
     )
     if not resolved_target:
         raise ValueError("无法从当前智能体名称推导目标语言智能体")
 
     logger.bind(tag=TAG).info(
-        f"设备语言切换: {conn.device_id} {language} "
+        f"设备语言切换: {conn.device_id} {language} dev={dev} "
         f"{resolved_current} -> {resolved_target}"
     )
 
@@ -235,6 +242,8 @@ async def apply_language_change(
         request_id,
         confirm=True,
         raise_on_error=True,
+        language=language,
+        dev=dev,
     )
     conn.device_language = language
     if conn.device_attributes is None:
@@ -243,6 +252,7 @@ async def apply_language_change(
     return {
         "deviceId": conn.device_id,
         "language": language,
+        "dev": dev,
         "currentAgentName": resolved_current,
         "targetAgentName": resolved_target,
     }
@@ -253,16 +263,28 @@ async def _handle_language_change(
 ):
     """语言变更：改为触发智能体换绑，语言切换=智能体切换。
 
-    target_agent_name 缺省时按智能体名称后缀推导；current_agent_name 缺省从设备扩展属性读取。
-    language 仅作为元信息记录到内存属性，不再用于翻译。
+    目标智能体只按 language/dev 推导；current_agent_name 缺省从设备扩展属性读取。
+    language 以基础规范码随换绑事务持久化，不再用于强制翻译。
     """
     language = payload.get("language")
+    dev = payload.get("dev", False)
     if not isinstance(language, str) or language not in LANGUAGE_AGENT_SUFFIXES:
         result_msg = {
             "type": "device_event_result",
             "event": "language_change",
             "success": False,
             "error": f"language 必须使用规范码: {', '.join(LANGUAGE_AGENT_SUFFIXES)}",
+        }
+        if request_id is not None:
+            result_msg["request_id"] = request_id
+        await _send_json(conn, result_msg)
+        return
+    if not isinstance(dev, bool):
+        result_msg = {
+            "type": "device_event_result",
+            "event": "language_change",
+            "success": False,
+            "error": "dev 必须是布尔值",
         }
         if request_id is not None:
             result_msg["request_id"] = request_id
@@ -277,11 +299,8 @@ async def _handle_language_change(
                 payload.get("current_agent_name")
                 or payload.get("currentAgentName")
             ),
-            target_agent_name=(
-                payload.get("target_agent_name")
-                or payload.get("targetAgentName")
-            ),
             request_id=request_id,
+            dev=dev,
         )
     except Exception as error:
         result_msg = {

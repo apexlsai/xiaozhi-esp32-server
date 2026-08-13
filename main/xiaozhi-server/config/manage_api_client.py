@@ -251,21 +251,17 @@ async def report_device_event(
 ) -> Optional[Dict]:
     """异步上报设备事件（语言切换、蓝牙信标变更等）"""
     if not ManageApiClient._instance:
-        return None
-    try:
-        return await ManageApiClient._instance._execute_async_request(
-            "POST",
-            "/device/event/report",
-            json={
-                "deviceId": device_id,
-                "event": event,
-                "payload": payload or {},
-                "timestamp": timestamp,
-            },
-        )
-    except Exception as e:
-        print(f"设备事件上报失败: {e}")
-        return None
+        raise Exception("manager-api 客户端未初始化")
+    return await ManageApiClient._instance._execute_async_request(
+        "POST",
+        "/device/event/report",
+        json={
+            "deviceId": device_id,
+            "event": event,
+            "payload": payload or {},
+            "timestamp": timestamp,
+        },
+    )
 
 
 async def rebind_device_agent(
@@ -273,19 +269,25 @@ async def rebind_device_agent(
     current_agent_name: str,
     target_agent_name: str,
     confirm: bool = True,
+    language: Optional[str] = None,
+    dev: bool = False,
 ) -> Optional[Dict]:
     """设备智能体换绑（经 server.secret 调用 manager-api）"""
     if not ManageApiClient._instance:
         raise Exception("manager-api 客户端未初始化")
+    payload = {
+        "deviceId": device_id,
+        "currentAgentName": current_agent_name,
+        "targetAgentName": target_agent_name,
+        "confirm": confirm,
+    }
+    if language is not None:
+        payload["language"] = language
+        payload["dev"] = dev
     return await ManageApiClient._instance._execute_async_request(
         "POST",
         "/device/rebind",
-        json={
-            "deviceId": device_id,
-            "currentAgentName": current_agent_name,
-            "targetAgentName": target_agent_name,
-            "confirm": confirm,
-        },
+        json=payload,
     )
 
 

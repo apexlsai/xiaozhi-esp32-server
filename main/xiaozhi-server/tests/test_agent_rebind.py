@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from aiohttp import web
+
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -140,7 +142,7 @@ class LanguageChangeEventTests(unittest.TestCase):
 
     def test_language_change_triggers_rebind_with_current_from_attributes(self):
         async def run():
-            self.conn.device_attributes = {"agent_name": "导游A"}
+            self.conn.device_attributes = {"agent_name": "小硕-汉语"}
             with patch(
                 "core.handle.deviceEventHandle.rebind_device_agent",
                 new_callable=AsyncMock,
@@ -150,7 +152,7 @@ class LanguageChangeEventTests(unittest.TestCase):
             ):
                 rebind.return_value = {
                     "deviceId": "aa:bb:cc:dd:ee:ff",
-                    "agentName": "English Guide",
+                    "agentName": "小硕-英语",
                 }
                 await handle_device_event(
                     self.conn,
@@ -160,15 +162,17 @@ class LanguageChangeEventTests(unittest.TestCase):
                         "request_id": "lang-1",
                         "payload": {
                             "language": "en",
-                            "target_agent_name": "English Guide",
+                            "target_agent_name": "不应采用的智能体",
                         },
                     },
                 )
                 rebind.assert_awaited_once_with(
                     device_id="aa:bb:cc:dd:ee:ff",
-                    current_agent_name="导游A",
-                    target_agent_name="English Guide",
+                    current_agent_name="小硕-汉语",
+                    target_agent_name="小硕-英语",
                     confirm=True,
+                    language="en",
+                    dev=False,
                 )
                 sent = json.loads(self.conn.websocket.send.await_args.args[0])
                 self.assertEqual(sent["event"], "language_change")
@@ -205,6 +209,8 @@ class LanguageChangeEventTests(unittest.TestCase):
                     current_agent_name="小硕-汉语",
                     target_agent_name="小硕-英语",
                     confirm=True,
+                    language="en",
+                    dev=False,
                 )
                 sent = json.loads(self.conn.websocket.send.await_args.args[0])
                 self.assertTrue(sent["success"])
@@ -227,7 +233,7 @@ class LanguageChangeEventTests(unittest.TestCase):
 
     def test_test_agent_can_switch_to_test_or_production_agent(self):
         self.assertEqual(
-            resolve_language_agent_name("小硕-粤语-测试", "en-test"),
+            resolve_language_agent_name("小硕-粤语-测试", "en", dev=True),
             "小硕-英语-测试",
         )
         self.assertEqual(
@@ -236,7 +242,7 @@ class LanguageChangeEventTests(unittest.TestCase):
         )
         self.assertEqual(
             resolve_language_code_from_agent_name("小硕-粤语-测试"),
-            "zh-CN-yue-test",
+            "zh-CN-yue",
         )
 
     def test_missing_test_agent_returns_name_without_mutating_language(self):
@@ -255,7 +261,7 @@ class LanguageChangeEventTests(unittest.TestCase):
                         "type": "device_event",
                         "event": "language_change",
                         "request_id": "lang-test-missing",
-                        "payload": {"language": "zh-CN-yue-test"},
+                        "payload": {"language": "zh-CN-yue", "dev": True},
                     },
                 )
                 sent = json.loads(self.conn.websocket.send.await_args.args[0])
@@ -264,6 +270,52 @@ class LanguageChangeEventTests(unittest.TestCase):
                 self.assertNotIn("language", self.conn.device_attributes)
                 self.assertIsNone(self.conn.device_language)
                 self.conn.websocket.close.assert_not_awaited()
+
+        asyncio.run(run())
+
+    def test_language_change_rejects_test_suffix_in_language(self):
+        async def run():
+            self.conn.device_attributes = {"agent_name": "小硕-汉语"}
+            with patch(
+                "core.handle.deviceEventHandle.rebind_device_agent",
+                new_callable=AsyncMock,
+            ) as rebind:
+                await handle_device_event(
+                    self.conn,
+                    {
+                        "type": "device_event",
+                        "event": "language_change",
+                        "request_id": "lang-test-invalid",
+                        "payload": {"language": "zh-CN-yue-test", "dev": True},
+                    },
+                )
+                rebind.assert_not_awaited()
+                sent = json.loads(self.conn.websocket.send.await_args.args[0])
+                self.assertFalse(sent["success"])
+                self.assertIn("规范码", sent["error"])
+
+        asyncio.run(run())
+
+    def test_language_change_rejects_non_boolean_dev(self):
+        async def run():
+            self.conn.device_attributes = {"agent_name": "小硕-汉语"}
+            with patch(
+                "core.handle.deviceEventHandle.rebind_device_agent",
+                new_callable=AsyncMock,
+            ) as rebind:
+                await handle_device_event(
+                    self.conn,
+                    {
+                        "type": "device_event",
+                        "event": "language_change",
+                        "request_id": "lang-dev-invalid",
+                        "payload": {"language": "zh-CN-yue", "dev": "true"},
+                    },
+                )
+                rebind.assert_not_awaited()
+                sent = json.loads(self.conn.websocket.send.await_args.args[0])
+                self.assertFalse(sent["success"])
+                self.assertIn("布尔值", sent["error"])
 
         asyncio.run(run())
 
@@ -301,6 +353,7 @@ class LanguageChangeEventTests(unittest.TestCase):
                     return_value={
                         "deviceId": "aa:bb:cc:dd:ee:ff",
                         "language": "zh-CN-yue",
+                        "dev": True,
                     }
                 ),
             )
@@ -320,19 +373,101 @@ class LanguageChangeEventTests(unittest.TestCase):
                         find_device_connection=MagicMock(return_value=self.conn)
                     ),
                 )
-                rebind.return_value = {"agentName": "小硕-粤语"}
+                rebind.return_value = {"agentName": "小硕-粤语-测试"}
                 response = await handler.handle_language_change(request)
                 self.assertEqual(response.status, 200)
                 body = json.loads(response.text)
-                self.assertEqual(body["targetAgentName"], "小硕-粤语")
+                self.assertEqual(body["targetAgentName"], "小硕-粤语-测试")
+                self.assertEqual(body["language"], "zh-CN-yue")
+                self.assertTrue(body["dev"])
                 rebind.assert_awaited_once_with(
                     device_id="aa:bb:cc:dd:ee:ff",
                     current_agent_name="小硕-英语",
-                    target_agent_name="小硕-粤语",
+                    target_agent_name="小硕-粤语-测试",
                     confirm=True,
+                    language="zh-CN-yue",
+                    dev=True,
                 )
                 self.conn.websocket.close.assert_awaited_once()
                 self.assertEqual(self.conn.device_attributes["language"], "zh-CN-yue")
+
+        asyncio.run(run())
+
+    def test_legacy_internal_http_normalizes_test_suffix(self):
+        async def run():
+            self.conn.device_attributes = {"agent_name": "小硕-英语"}
+            request = SimpleNamespace(
+                headers={"Authorization": "Bearer test-secret"},
+                json=AsyncMock(
+                    return_value={
+                        "deviceId": "aa:bb:cc:dd:ee:ff",
+                        "language": "zh-CN-yue-test",
+                    }
+                ),
+            )
+            with patch(
+                "core.api.device_command_handler.setup_logging",
+                return_value=MagicMock(),
+            ), patch(
+                "core.handle.deviceEventHandle.rebind_device_agent",
+                new_callable=AsyncMock,
+            ) as rebind, patch(
+                "core.handle.deviceEventHandle.asyncio.sleep",
+                new_callable=AsyncMock,
+            ):
+                handler = DeviceCommandHandler(
+                    {"manager-api": {"secret": "test-secret"}},
+                    SimpleNamespace(
+                        find_device_connection=MagicMock(return_value=self.conn)
+                    ),
+                )
+                rebind.return_value = {"agentName": "小硕-粤语-测试"}
+
+                response = await handler.handle_legacy_language_change(request)
+
+                body = json.loads(response.text)
+                self.assertEqual(body["language"], "zh-CN-yue")
+                self.assertTrue(body["dev"])
+                rebind.assert_awaited_once_with(
+                    device_id="aa:bb:cc:dd:ee:ff",
+                    current_agent_name="小硕-英语",
+                    target_agent_name="小硕-粤语-测试",
+                    confirm=True,
+                    language="zh-CN-yue",
+                    dev=True,
+                )
+
+        asyncio.run(run())
+
+    def test_v2_internal_http_rejects_test_suffix(self):
+        async def run():
+            request = SimpleNamespace(
+                headers={"Authorization": "Bearer test-secret"},
+                json=AsyncMock(
+                    return_value={
+                        "deviceId": "aa:bb:cc:dd:ee:ff",
+                        "language": "zh-CN-yue-test",
+                        "dev": True,
+                    }
+                ),
+            )
+            with patch(
+                "core.api.device_command_handler.setup_logging",
+                return_value=MagicMock(),
+            ), patch(
+                "core.handle.deviceEventHandle.rebind_device_agent",
+                new_callable=AsyncMock,
+            ) as rebind:
+                handler = DeviceCommandHandler(
+                    {"manager-api": {"secret": "test-secret"}},
+                    SimpleNamespace(
+                        find_device_connection=MagicMock(return_value=self.conn)
+                    ),
+                )
+
+                with self.assertRaises(web.HTTPBadRequest):
+                    await handler.handle_language_change(request)
+                rebind.assert_not_awaited()
 
         asyncio.run(run())
 

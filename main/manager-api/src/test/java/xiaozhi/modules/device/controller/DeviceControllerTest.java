@@ -2,6 +2,9 @@ package xiaozhi.modules.device.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
@@ -12,9 +15,12 @@ import java.util.Map;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.MockedStatic;
+import org.springframework.http.HttpEntity;
 import org.springframework.web.client.RestTemplate;
 
+import xiaozhi.common.constant.Constant;
 import xiaozhi.common.exception.ErrorCode;
 import xiaozhi.common.exception.RenException;
 import xiaozhi.common.redis.RedisUtils;
@@ -99,7 +105,7 @@ class DeviceControllerTest {
         DeviceEventReportDTO dto = new DeviceEventReportDTO();
         dto.setDeviceId(DEVICE_ID);
         dto.setEvent("language_change");
-        dto.setPayload(Map.of("language", "zh-CN-yue-test"));
+        dto.setPayload(Map.of("language", "zh-CN-yue", "dev", true));
 
         try (MockedStatic<MessageUtils> messageUtils = mockStatic(MessageUtils.class)) {
             messageUtils.when(() -> MessageUtils.getMessage(
@@ -107,7 +113,7 @@ class DeviceControllerTest {
                     .thenReturn("需要名为小硕-粤语-测试的智能体");
             RenException failure = new RenException(
                     ErrorCode.DEVICE_REBIND_TARGET_AGENT_NOT_FOUND, "小硕-粤语-测试");
-            when(deviceService.validateLanguageTargetAgent(DEVICE_ID, "zh-CN-yue-test"))
+            when(deviceService.validateLanguageTargetAgent(DEVICE_ID, "zh-CN-yue", true))
                     .thenThrow(failure);
 
             DeviceController controller = new DeviceController(
@@ -122,9 +128,106 @@ class DeviceControllerTest {
             assertEquals("需要名为小硕-粤语-测试的智能体", thrown.getMsg());
         }
 
-        verify(attributeService, never()).updateLanguage(DEVICE_ID, "zh-CN-yue-test");
+        verify(attributeService, never()).updateLanguage(DEVICE_ID, "zh-CN-yue");
         verify(sysParamsService, never()).getValue(org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    @Test
+    @DisplayName("dev=true 时不预写语言并向内部接口透传基础语言和目标智能体")
+    void devLanguageRouteDefersPersistenceToRebind() {
+        DeviceService deviceService = mock(DeviceService.class);
+        DeviceAttributeService attributeService = mock(DeviceAttributeService.class);
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        SysParamsService sysParamsService = mock(SysParamsService.class);
+        when(deviceService.getDeviceByMacAddress(DEVICE_ID)).thenReturn(ownedDevice());
+        when(deviceService.validateLanguageTargetAgent(DEVICE_ID, "zh-CN-yue", true))
+                .thenReturn("小硕-粤语-测试");
+        when(sysParamsService.getValue(Constant.SERVER_INTERNAL_API, false)).thenReturn("http://127.0.0.1:8004");
+        when(sysParamsService.getValue(Constant.SERVER_SECRET, false)).thenReturn("secret");
+
+        DeviceEventReportDTO dto = new DeviceEventReportDTO();
+        dto.setDeviceId(DEVICE_ID);
+        dto.setEvent("language_change");
+        dto.setPayload(Map.of("language", "zh-CN-yue", "dev", true));
+        DeviceController controller = new DeviceController(
+                deviceService,
+                mock(DeviceAddressBookService.class),
+                attributeService,
+                mock(RedisUtils.class),
+                sysParamsService,
+                restTemplate);
+
+        Result<Void> result = controller.reportDeviceEvent(dto);
+
+        assertEquals(0, result.getCode());
+        verify(attributeService, never()).updateLanguage(DEVICE_ID, "zh-CN-yue");
+        ArgumentCaptor<HttpEntity> requestCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+        verify(restTemplate).postForEntity(
+                eq("http://127.0.0.1:8004/internal/device/language-change-v2"),
+                requestCaptor.capture(),
+                eq(Void.class));
+        Map<?, ?> body = (Map<?, ?>) requestCaptor.getValue().getBody();
+        assertEquals("zh-CN-yue", body.get("language"));
+        assertEquals(true, body.get("dev"));
+        assertEquals("小硕-粤语-测试", body.get("targetAgentName"));
+    }
+
+    @Test
+    @DisplayName("内部回调失败时语言与绑定均不预写")
+    void callbackFailureDoesNotPersistLanguage() {
+        DeviceService deviceService = mock(DeviceService.class);
+        DeviceAttributeService attributeService = mock(DeviceAttributeService.class);
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        SysParamsService sysParamsService = mock(SysParamsService.class);
+        when(deviceService.getDeviceByMacAddress(DEVICE_ID)).thenReturn(ownedDevice());
+        when(deviceService.validateLanguageTargetAgent(DEVICE_ID, "zh-CN-yue", true))
+                .thenReturn("小硕-粤语-测试");
+        when(sysParamsService.getValue(Constant.SERVER_INTERNAL_API, false)).thenReturn("http://127.0.0.1:8004");
+        when(sysParamsService.getValue(Constant.SERVER_SECRET, false)).thenReturn("secret");
+        when(restTemplate.postForEntity(anyString(), any(HttpEntity.class), eq(Void.class)))
+                .thenThrow(new IllegalStateException("server unavailable"));
+        DeviceEventReportDTO dto = new DeviceEventReportDTO();
+        dto.setDeviceId(DEVICE_ID);
+        dto.setEvent("language_change");
+        dto.setPayload(Map.of("language", "zh-CN-yue", "dev", true));
+        DeviceController controller = new DeviceController(
+                deviceService,
+                mock(DeviceAddressBookService.class),
+                attributeService,
+                mock(RedisUtils.class),
+                sysParamsService,
+                restTemplate);
+
+        Result<Void> result = controller.reportDeviceEvent(dto);
+
+        assertEquals(500, result.getCode());
+        assertEquals("下发设备语言切换命令失败: server unavailable", result.getMsg());
+        verify(attributeService, never()).updateLanguage(any(), any());
+    }
+
+    @Test
+    @DisplayName("dev 非布尔值时拒绝且不写语言")
+    void rejectsNonBooleanDev() {
+        DeviceService deviceService = mock(DeviceService.class);
+        DeviceAttributeService attributeService = mock(DeviceAttributeService.class);
+        when(deviceService.getDeviceByMacAddress(DEVICE_ID)).thenReturn(ownedDevice());
+        DeviceEventReportDTO dto = new DeviceEventReportDTO();
+        dto.setDeviceId(DEVICE_ID);
+        dto.setEvent("language_change");
+        dto.setPayload(Map.of("language", "zh-CN-yue", "dev", "true"));
+        DeviceController controller = new DeviceController(
+                deviceService,
+                mock(DeviceAddressBookService.class),
+                attributeService,
+                mock(RedisUtils.class),
+                mock(SysParamsService.class),
+                mock(RestTemplate.class));
+
+        Result<Void> result = controller.reportDeviceEvent(dto);
+
+        assertEquals(500, result.getCode());
+        verify(attributeService, never()).updateLanguage(DEVICE_ID, "zh-CN-yue");
     }
 
     private DeviceController controller(DeviceService deviceService) {

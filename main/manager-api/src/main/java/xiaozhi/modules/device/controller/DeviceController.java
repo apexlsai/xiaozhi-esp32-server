@@ -1,6 +1,7 @@
 package xiaozhi.modules.device.controller;
 
 import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
 
 import org.apache.commons.lang3.StringUtils;
@@ -111,16 +112,27 @@ public class DeviceController {
 
         // 处理语言变更事件
         if ("language_change".equals(dto.getEvent())) {
-            Object language = dto.getPayload() == null ? null : dto.getPayload().get("language");
-            if (language != null) {
-                String languageValue = language.toString();
-                deviceService.validateLanguageTargetAgent(deviceId, languageValue);
-                deviceAttributeService.updateLanguage(deviceId, languageValue);
-                try {
-                    notifyLanguageChange(deviceId, languageValue);
-                } catch (Exception e) {
-                    return new Result<Void>().error("语言已保存，但下发设备语言切换命令失败: " + e.getMessage());
-                }
+            Map<String, Object> eventPayload = dto.getPayload();
+            Object language = eventPayload == null ? null : eventPayload.get("language");
+            if (language == null) {
+                return new Result<Void>().error("language 不能为空");
+            }
+            Object devValue = eventPayload.get("dev");
+            if (eventPayload.containsKey("dev") && !(devValue instanceof Boolean)) {
+                return new Result<Void>().error("dev 必须是布尔值");
+            }
+            String languageValue = language.toString();
+            boolean dev = Boolean.TRUE.equals(devValue);
+            String targetAgentName = deviceService.validateLanguageTargetAgent(deviceId, languageValue, dev);
+            try {
+                notifyLanguageChange(
+                        deviceId,
+                        languageValue,
+                        dev,
+                        targetAgentName,
+                        eventPayload.get("request_id"));
+            } catch (Exception e) {
+                return new Result<Void>().error("下发设备语言切换命令失败: " + e.getMessage());
             }
         }
         // 处理蓝牙信标变更事件
@@ -134,7 +146,12 @@ public class DeviceController {
         return new Result<Void>();
     }
 
-    private void notifyLanguageChange(String deviceId, String language) {
+    private void notifyLanguageChange(
+            String deviceId,
+            String language,
+            boolean dev,
+            String targetAgentName,
+            Object requestId) {
         String internalApi = sysParamsService.getValue(Constant.SERVER_INTERNAL_API, false);
         if (StringUtils.isBlank(internalApi) || "null".equalsIgnoreCase(internalApi)) {
             throw new IllegalStateException("未配置 server.internal_api");
@@ -147,9 +164,16 @@ public class DeviceController {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(secret);
         headers.setContentType(MediaType.APPLICATION_JSON);
-        Map<String, String> payload = Map.of("deviceId", deviceId, "language", language);
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("deviceId", deviceId);
+        payload.put("language", language);
+        payload.put("dev", dev);
+        payload.put("targetAgentName", targetAgentName);
+        if (requestId != null) {
+            payload.put("requestId", requestId);
+        }
         restTemplate.postForEntity(
-                StringUtils.removeEnd(internalApi, "/") + "/internal/device/language-change",
+                StringUtils.removeEnd(internalApi, "/") + "/internal/device/language-change-v2",
                 new HttpEntity<>(payload, headers),
                 Void.class);
     }
