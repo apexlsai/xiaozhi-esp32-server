@@ -49,8 +49,9 @@ class VLLMProvider(VLLMProviderBase):
             raise ValueError("VLLM base_url 或 model_name 未配置")
         self.api_url = _resolve_chat_completions_url(self.base_url)
 
-    def response(self, question, base64_image):
-        prompt = f"{question}(请使用中文回复)"
+    def response(self, question, base64_image, image_mime="image/jpeg", **kwargs):
+        language = kwargs.get("language")
+        prompt = question if language else f"{question}(请使用中文回复)"
         payload = {
             "model": self.model_name,
             "messages": [
@@ -61,7 +62,7 @@ class VLLMProvider(VLLMProviderBase):
                         {
                             "type": "image_url",
                             "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}"
+                                "url": f"data:{image_mime};base64,{base64_image}"
                             },
                         },
                     ],
@@ -72,6 +73,10 @@ class VLLMProvider(VLLMProviderBase):
             "top_p": self.top_p,
             "stream": False,
         }
+        for key in ("device_id", "language", "last_beacon_id"):
+            value = kwargs.get(key)
+            if value:
+                payload[key] = value
         try:
             with httpx.Client(timeout=120.0, trust_env=False) as client:
                 response = client.post(

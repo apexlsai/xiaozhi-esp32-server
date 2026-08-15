@@ -1,14 +1,21 @@
-import json
+import asyncio
+import base64
 import copy
+import json
+from typing import Optional, Tuple
+
 from aiohttp import web
+
+from config.config_loader import get_private_config_from_api
 from config.logger import setup_logging
 from core.api.base_handler import BaseHandler
-from core.utils.util import get_vision_url, is_valid_image_file
-from core.utils.vllm import create_instance
-from config.config_loader import get_private_config_from_api
+from core.utils.language import (
+    LANGUAGE_AGENT_SUFFIXES,
+    resolve_language_code_from_agent_name,
+)
 from core.utils.auth import AuthToken
-import base64
-from typing import Tuple, Optional
+from core.utils.util import get_image_mime_type, get_vision_url
+from core.utils.vllm import create_instance
 from plugins_func.register import Action
 
 TAG = __name__
@@ -95,8 +102,8 @@ class VisionHandler(BaseHandler):
                     f"图片大小超过限制，最大允许{MAX_FILE_SIZE/1024/1024}MB"
                 )
 
-            # 检查文件格式
-            if not is_valid_image_file(image_data):
+            image_mime = get_image_mime_type(image_data)
+            if image_mime is None:
                 raise ValueError(
                     "不支持的文件格式，请上传有效的图片文件（支持JPEG、PNG、GIF、BMP、TIFF、WEBP格式）"
                 )
@@ -131,7 +138,23 @@ class VisionHandler(BaseHandler):
                 vllm_type, current_config["VLLM"][select_vllm_module]
             )
 
-            result = vllm.response(question, image_base64)
+            device_attributes = current_config.get("device_attributes") or {}
+            language = resolve_language_code_from_agent_name(
+                device_attributes.get("agent_name")
+            )
+            attribute_language = device_attributes.get("language")
+            if language is None and attribute_language in LANGUAGE_AGENT_SUFFIXES:
+                language = attribute_language
+
+            result = await asyncio.to_thread(
+                vllm.response,
+                question,
+                image_base64,
+                image_mime=image_mime,
+                device_id=device_id,
+                language=language,
+                last_beacon_id=device_attributes.get("last_beacon_id"),
+            )
 
             return_json = {
                 "success": True,
