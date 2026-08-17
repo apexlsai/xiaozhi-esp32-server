@@ -234,6 +234,8 @@ Museum Guide Agent 接入使用智控台现有的 OpenAI VLLM，无需新增 Pro
 
 `server.vision_explain` 始终填写本 xiaozhi-server 的 `/mcp/vision/explain`，不能填写 Museum Agent 地址。小智会把图片、问题、`device_id`、规范语言码和最近 Beacon ID 转发给 `museum-guide-vision`，Museum Agent 返回最终可播报文本。
 
+KSZ 保留上游原版视觉协议：MCP `initialize` 继续下发 `vision.url` 与 `vision.token`，当前官方固件通过 `file` 字段上传，服务端返回 `success`、`action` 与 `response`。KSZ 同时兼容旧客户端的 `image` 字段并透传 Museum Guide 上下文，不要求固件实现额外的 `tool_choice`、Token 刷新通知或新的响应结构。
+
 生产环境必须使用内网或 HTTPS 连接 Museum Agent。不要通过公网明文 HTTP 传输游客图片和 Bearer Token；曾出现在命令、日志或聊天记录中的密钥应立即轮换。
 
 ### 配置 FunASR

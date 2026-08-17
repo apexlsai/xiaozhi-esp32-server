@@ -8,6 +8,7 @@
 
 ### 变更
 
+- 视觉链路保持上游 MCP `vision.url/token`、multipart `file` 与 `action/response` 契约；KSZ 增强仅以加法方式兼容旧客户端 `image` 和 Museum Guide Agent 上下文，不引入固件专用协议。
 - MCP Vision 的 multipart 图片字段同时兼容官方固件使用的 `file` 与既有客户端使用的 `image`。
 - MCP Vision 支持 Museum Guide Agent 的 `museum-guide-vision` OpenAI 入口：透传设备、语言和 Beacon 上下文，保留真实图片 MIME，并在线程中执行同步 VLLM 请求以避免阻塞事件循环；README 补充智控台手工配置与传输安全要求。
 - 语言切换改用独立布尔参数 `dev` 选择 `<基名>-<语言后缀>-测试` 智能体；`language` 始终保持原规范码，并与智能体换绑在同一事务持久化；新增 v2 内部回调防止滚动升级时旧 server 忽略 `dev`，并增加迁移清理旧 `-test` 及可能被截断的历史值。

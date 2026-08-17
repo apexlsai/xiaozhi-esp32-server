@@ -14,6 +14,8 @@ from aiohttp.test_utils import TestClient, TestServer
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.api.vision_handler import VisionHandler
+from core.providers.tools.device_mcp.mcp_handler import send_mcp_initialize_message
+from core.utils.auth import AuthToken
 
 
 class VisionHandlerTests(unittest.TestCase):
@@ -190,8 +192,88 @@ class VisionHandlerTests(unittest.TestCase):
                 await client.close()
 
             self.assertEqual(response.status, 200)
-            self.assertTrue(body["success"])
-            self.assertEqual(body["response"], "这是一张图片")
+            self.assertEqual(
+                body,
+                {
+                    "success": True,
+                    "action": "RESPONSE",
+                    "response": "这是一张图片",
+                },
+            )
+
+        asyncio.run(run())
+
+    def test_legacy_image_field_keeps_action_response_contract(self):
+        async def run():
+            app = web.Application()
+            app.router.add_post("/mcp/vision/explain", self.handler.handle_post)
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            form = FormData()
+            form.add_field("question", "请描述图片")
+            form.add_field(
+                "image",
+                b"\xff\xd8\xffimage",
+                filename="image.jpg",
+                content_type="image/jpeg",
+            )
+            vllm = MagicMock()
+            vllm.response.return_value = "原版视觉结果"
+            try:
+                with patch(
+                    "core.api.vision_handler.create_instance", return_value=vllm
+                ):
+                    response = await client.post(
+                        "/mcp/vision/explain",
+                        data=form,
+                        headers={
+                            "Client-Id": "web_test_client",
+                            "Device-Id": "test-device",
+                        },
+                    )
+                    body = await response.json()
+            finally:
+                await client.close()
+
+            self.assertEqual(response.status, 200)
+            self.assertEqual(
+                body,
+                {
+                    "success": True,
+                    "action": "RESPONSE",
+                    "response": "原版视觉结果",
+                },
+            )
+
+        asyncio.run(run())
+
+    def test_original_mcp_initialize_keeps_url_token_contract(self):
+        async def run():
+            websocket = SimpleNamespace(send=AsyncMock())
+            conn = SimpleNamespace(
+                config={
+                    "server": {
+                        "auth_key": "unit-test-auth-key",
+                        "vision_explain": "https://vision.example/mcp/vision/explain",
+                    }
+                },
+                headers={"device-id": "aa:bb:cc:dd:ee:ff"},
+                features={"mcp": True},
+                websocket=websocket,
+            )
+
+            await send_mcp_initialize_message(conn)
+
+            message = json.loads(websocket.send.await_args.args[0])
+            vision = message["payload"]["params"]["capabilities"]["vision"]
+            self.assertEqual(set(vision), {"url", "token"})
+            self.assertEqual(
+                vision["url"], "https://vision.example/mcp/vision/explain"
+            )
+            self.assertEqual(
+                AuthToken("unit-test-auth-key").verify_token(vision["token"]),
+                (True, "aa:bb:cc:dd:ee:ff"),
+            )
 
         asyncio.run(run())
 
