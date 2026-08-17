@@ -157,7 +157,7 @@ class VisionHandlerTests(unittest.TestCase):
 
         asyncio.run(run())
 
-    def test_multipart_http_upload_returns_chinese_result(self):
+    def test_firmware_multipart_file_upload_returns_chinese_result(self):
         async def run():
             app = web.Application()
             app.router.add_post("/mcp/vision/explain", self.handler.handle_post)
@@ -166,9 +166,9 @@ class VisionHandlerTests(unittest.TestCase):
             form = FormData()
             form.add_field("question", "请用中文描述这张图片")
             form.add_field(
-                "image",
+                "file",
                 b"\xff\xd8\xffimage",
-                filename="image.jpg",
+                filename="camera.jpg",
                 content_type="image/jpeg",
             )
             vllm = MagicMock()

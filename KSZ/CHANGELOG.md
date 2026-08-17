@@ -8,6 +8,7 @@
 
 ### 变更
 
+- MCP Vision 的 multipart 图片字段同时兼容官方固件使用的 `file` 与既有客户端使用的 `image`。
 - MCP Vision 支持 Museum Guide Agent 的 `museum-guide-vision` OpenAI 入口：透传设备、语言和 Beacon 上下文，保留真实图片 MIME，并在线程中执行同步 VLLM 请求以避免阻塞事件循环；README 补充智控台手工配置与传输安全要求。
 - 语言切换改用独立布尔参数 `dev` 选择 `<基名>-<语言后缀>-测试` 智能体；`language` 始终保持原规范码，并与智能体换绑在同一事务持久化；新增 v2 内部回调防止滚动升级时旧 server 忽略 `dev`，并增加迁移清理旧 `-test` 及可能被截断的历史值。
 - README：补充 KSZ Host 下 `data/.config.yaml` 完整模板、`server.vision_explain` 与 `sys_params` 同步 SQL、配置职责表、视觉健康检查及 VLLM 启用步骤；明确上游视觉文档端口 `8003` 不适用于 KSZ。

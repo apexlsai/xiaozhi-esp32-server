@@ -88,7 +88,7 @@ class VisionHandler(BaseHandler):
                 if field.name == "question":
                     raw = await field.read(decode=False)
                     question = raw.decode("utf-8").strip()
-                elif field.name == "image":
+                elif field.name in ("file", "image"):
                     image_data = await field.read(decode=False)
 
             if not question:
