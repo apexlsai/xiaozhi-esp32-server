@@ -36,9 +36,18 @@ class DeviceMCPExecutor(ToolExecutor):
             import json
 
             args_str = json.dumps(arguments) if arguments else "{}"
+            configured_timeout = int(conn.config.get("tool_call_timeout", 30))
+            actual_name = conn.mcp_client.name_mapping.get(tool_name, tool_name)
+            timeout = (
+                max(configured_timeout, 50)
+                if actual_name == "self.camera.take_photo"
+                else configured_timeout
+            )
 
             # 调用设备端MCP工具
-            result = await call_mcp_tool(conn, conn.mcp_client, tool_name, args_str)
+            result = await call_mcp_tool(
+                conn, conn.mcp_client, tool_name, args_str, timeout=timeout
+            )
 
             resultJson = None
             if isinstance(result, str):

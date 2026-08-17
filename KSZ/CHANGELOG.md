@@ -6,6 +6,11 @@
 
 ## [Unreleased]
 
+### 新增
+
+- PHOTO 请求支持结构化 `tool_choice=self.camera.take_photo`，后端校验后直接构造设备摄像头 MCP 调用，工具结果再进入正常 LLM/TTS 链路。
+- MCP 初始化下发规范视觉字段、短期 JWT 过期时间和图片大小限制；设备请求刷新时在当前 WebSocket 会话内下发新 Token。
+
 ### 变更
 
 - MCP Vision 的 multipart 图片字段同时兼容官方固件使用的 `file` 与既有客户端使用的 `image`。
@@ -15,6 +20,11 @@
 - 修复 MCP Vision POST 中文 `question` 触发 ASCII 编码错误，以及 aiohttp JSON 响应错误设置 `charset` 后返回 `None` 和 HTTP 500；VLLM 请求改用 httpx 直连并返回可读错误信息。
 - VLLM `base_url` 自动规范化：缺 `/v1` 时补全，避免 404。
 - VLLM：API Key 仍为占位符时在初始化阶段 fail-fast，避免 httpx 组装 Authorization 头时出现 `'ascii' codec can't encode` 误导性报错。
+
+### 修复
+
+- 视觉接口按 multipart 字段名解析 `question`、可选 `language` 和 `file`，不再依赖字段顺序；成功响应增加 `answer`，并为认证、图片过大和服务异常返回对应 HTTP 状态码。
+- MCP、WebSocket 和 OTA 日志不再输出视觉 JWT 或完整 Authorization 请求头。
 
 ## [0.1.2]
 

@@ -46,7 +46,7 @@ class VisionHandlerTests(unittest.TestCase):
         response = asyncio.run(self.handler.handle_post(request))
 
         self.assertIsNotNone(response)
-        self.assertEqual(response.status, 200)
+        self.assertEqual(response.status, 400)
         self.assertEqual(response.content_type, "application/json")
         self.assertEqual(response.charset, "utf-8")
         self.assertEqual(json.loads(response.text)["message"], "缺少问题字段")

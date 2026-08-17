@@ -10,7 +10,7 @@ from typing import Dict, List, Tuple
 from aiohttp import web
 
 from core.auth import AuthManager
-from core.utils.util import get_local_ip, get_vision_url
+from core.utils.util import filter_sensitive_info, get_local_ip, get_vision_url
 from core.api.base_handler import BaseHandler
 
 TAG = __name__
@@ -152,7 +152,8 @@ class OTAHandler(BaseHandler):
         try:
             data = await request.text()
             self.logger.bind(tag=TAG).debug(f"OTA请求方法: {request.method}")
-            self.logger.bind(tag=TAG).debug(f"OTA请求头: {request.headers}")
+            safe_headers = filter_sensitive_info(dict(request.headers))
+            self.logger.bind(tag=TAG).debug(f"OTA请求头: {safe_headers}")
             self.logger.bind(tag=TAG).debug(f"OTA请求数据: {data}")
 
             device_id = request.headers.get("device-id", "")

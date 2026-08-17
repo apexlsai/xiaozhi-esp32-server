@@ -9,15 +9,45 @@ if TYPE_CHECKING:
 from core.utils.dialogue import Message
 from core.providers.asr.dto.dto import InterfaceType
 from core.handle.receiveAudioHandle import startToChat
+from core.handle.intentHandler import speak_txt
 from core.handle.reportHandle import enqueue_asr_report
 from core.handle.sendAudioHandle import send_stt_message, send_tts_message
 from core.handle.textMessageHandler import TextMessageHandler
 from core.handle.textMessageType import TextMessageType
-from core.utils.util import remove_punctuation_and_length
+from core.utils.util import remove_punctuation_and_length, sanitize_tool_name
 from core.providers.tts.dto.dto import ContentType, TTSMessageDTO, SentenceType
 
 
 TAG = __name__
+PHOTO_TOOL_NAME = "self.camera.take_photo"
+PHOTO_TOOL_READY_TIMEOUT_SECONDS = 5
+
+
+async def _handle_photo_tool_choice(conn: "ConnectionHandler", text: str) -> None:
+    tool_name = sanitize_tool_name(PHOTO_TOOL_NAME)
+    deadline = asyncio.get_running_loop().time() + PHOTO_TOOL_READY_TIMEOUT_SECONDS
+
+    while asyncio.get_running_loop().time() < deadline:
+        mcp_client = getattr(conn, "mcp_client", None)
+        func_handler = getattr(conn, "func_handler", None)
+        if (
+            mcp_client is not None
+            and func_handler is not None
+            and await mcp_client.is_ready()
+            and func_handler.has_tool(tool_name)
+        ):
+            await startToChat(conn, text, tool_choice=tool_name)
+            return
+        await asyncio.sleep(0.05)
+
+    await send_stt_message(conn, text)
+    conn.client_abort = False
+    conn.sentence_id = uuid.uuid4().hex
+    if getattr(conn, "tts", None) is not None:
+        speak_txt(conn, "设备摄像头工具尚未就绪，请稍后再试。")
+    else:
+        conn.logger.bind(tag=TAG).warning("PHOTO请求失败：设备摄像头工具尚未就绪")
+
 
 class ListenTextMessageHandler(TextMessageHandler):
     """Listen消息处理器"""
@@ -61,6 +91,17 @@ class ListenTextMessageHandler(TextMessageHandler):
                 filtered_len, filtered_text = remove_punctuation_and_length(
                     original_text
                 )
+
+                tool_choice = msg_json.get("tool_choice")
+                if tool_choice == PHOTO_TOOL_NAME:
+                    conn.just_woken_up = True
+                    enqueue_asr_report(conn, original_text, [])
+                    asyncio.create_task(_handle_photo_tool_choice(conn, original_text))
+                    return
+                if tool_choice is not None:
+                    conn.logger.bind(tag=TAG).warning(
+                        f"忽略不支持的客户端工具选择: {tool_choice}"
+                    )
 
                 # 检查是否是设备呼叫指令 [device_call]
                 if original_text.startswith("[device_call]"):

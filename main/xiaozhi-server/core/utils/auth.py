@@ -2,7 +2,6 @@ import jwt
 import time
 import json
 import os
-from datetime import datetime, timedelta, timezone
 from typing import Tuple, Optional
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding
@@ -76,17 +75,17 @@ class AuthToken:
         plaintext = decryptor.update(ciphertext) + decryptor.finalize()
         return json.loads(plaintext.decode())
 
-    def generate_token(self, device_id: str) -> str:
+    def generate_token(self, device_id: str, expires_at: int = None) -> str:
         """
         生成JWT token
         :param device_id: 设备ID
         :return: JWT token字符串
         """
-        # 设置过期时间为1小时后
-        expire_time = datetime.now(timezone.utc) + timedelta(hours=1)
+        if expires_at is None:
+            expires_at = int(time.time()) + 3600
 
         # 创建原始payload
-        payload = {"device_id": device_id, "exp": expire_time.timestamp()}
+        payload = {"device_id": device_id, "exp": expires_at}
 
         # 加密整个payload
         encrypted_payload = self._encrypt_payload(payload)
@@ -121,6 +120,5 @@ class AuthToken:
             return False, None
         except json.JSONDecodeError:
             return False, None
-        except Exception as e:  # 捕获其他可能的错误
-            print(f"Token verification failed: {str(e)}")
+        except Exception:  # 不记录令牌或底层解密错误，避免认证信息进入日志
             return False, None

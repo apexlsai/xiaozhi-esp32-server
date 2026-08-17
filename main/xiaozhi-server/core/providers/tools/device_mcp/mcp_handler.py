@@ -3,6 +3,7 @@
 import json
 import asyncio
 import re
+import time
 from concurrent.futures import Future
 from core.utils.util import get_vision_url, sanitize_tool_name
 from core.utils.auth import AuthToken
@@ -14,6 +15,8 @@ if TYPE_CHECKING:
 
 TAG = __name__
 logger = setup_logging()
+VISION_TOKEN_TTL_SECONDS = 3600
+VISION_MAX_IMAGE_SIZE = 5 * 1024 * 1024
 
 
 class MCPClient:
@@ -110,7 +113,10 @@ async def send_mcp_message(conn: "ConnectionHandler", payload: dict):
 
     try:
         await conn.websocket.send(message)
-        logger.bind(tag=TAG).debug(f"成功发送MCP消息: {message}")
+        logger.bind(tag=TAG).debug(
+            f"成功发送MCP消息: method={payload.get('method', 'response')} "
+            f"id={payload.get('id', 'notification')}"
+        )
     except Exception as e:
         logger.bind(tag=TAG).error(f"发送MCP消息失败: {e}")
 
@@ -221,7 +227,17 @@ async def handle_mcp_message(
     # Handle method calls (requests from the client)
     elif "method" in payload:
         method = payload["method"]
-        logger.bind(tag=TAG).info(f"收到MCP客户端请求: {method}")
+        if method == "notifications/vision/refresh":
+            params = payload.get("params", {})
+            reason = (
+                params.get("reason", "unspecified")
+                if isinstance(params, dict)
+                else "invalid"
+            )
+            logger.bind(tag=TAG).info(f"收到视觉配置刷新请求: reason={reason}")
+            await send_vision_configuration_message(conn)
+        else:
+            logger.bind(tag=TAG).info(f"收到MCP客户端请求: {method}")
 
     elif "error" in payload:
         error_data = payload["error"]
@@ -235,19 +251,38 @@ async def handle_mcp_message(
             )
 
 
-async def send_mcp_initialize_message(conn: "ConnectionHandler"):
-    """发送MCP初始化消息"""
-
+def build_vision_configuration(conn: "ConnectionHandler") -> dict:
     vision_url = get_vision_url(conn.config)
+    device_id = conn.headers.get("device-id")
+    if not vision_url or vision_url == "null" or not device_id:
+        return {"enabled": False}
 
-    # 密钥生成token
+    expires_at = int(time.time()) + VISION_TOKEN_TTL_SECONDS
     auth = AuthToken(conn.config["server"]["auth_key"])
-    token = auth.generate_token(conn.headers.get("device-id"))
+    token = auth.generate_token(device_id, expires_at=expires_at)
 
-    vision = {
+    return {
+        "enabled": True,
+        "endpoint": vision_url,
+        "access_token": token,
+        "expires_at": expires_at,
+        "max_image_size": VISION_MAX_IMAGE_SIZE,
         "url": vision_url,
         "token": token,
     }
+
+
+async def send_vision_configuration_message(conn: "ConnectionHandler"):
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "notifications/vision/configuration",
+        "params": {"vision": build_vision_configuration(conn)},
+    }
+    await send_mcp_message(conn, payload)
+
+
+async def send_mcp_initialize_message(conn: "ConnectionHandler"):
+    """发送MCP初始化消息"""
 
     payload = {
         "jsonrpc": "2.0",
@@ -258,7 +293,7 @@ async def send_mcp_initialize_message(conn: "ConnectionHandler"):
             "capabilities": {
                 "roots": {"listChanged": True},
                 "sampling": {},
-                "vision": vision,
+                "vision": build_vision_configuration(conn),
             },
             "clientInfo": {
                 "name": "XiaozhiClient",
@@ -383,9 +418,15 @@ async def call_mcp_tool(
 
         if isinstance(raw_result, dict):
             if raw_result.get("isError") is True:
-                error_msg = raw_result.get(
-                    "error", "工具调用返回错误，但未提供具体错误信息"
-                )
+                error_msg = raw_result.get("error")
+                if not error_msg:
+                    content = raw_result.get("content")
+                    if isinstance(content, list) and content:
+                        first = content[0]
+                        if isinstance(first, dict):
+                            error_msg = first.get("text")
+                if not error_msg:
+                    error_msg = "工具调用返回错误，但未提供具体错误信息"
                 raise RuntimeError(f"工具调用错误: {error_msg}")
 
             content = raw_result.get("content")

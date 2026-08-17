@@ -170,7 +170,11 @@ class UnifiedToolHandler:
 
             # 发送工具调用显示消息到设备
             try:
-                await send_display_message(self.conn, f"% {function_name}")
+                display_name = function_name
+                mcp_client = getattr(self.conn, "mcp_client", None)
+                if mcp_client is not None:
+                    display_name = mcp_client.name_mapping.get(function_name, function_name)
+                await send_display_message(self.conn, f"% {display_name}")
             except Exception as e:
                 self.logger.warning(f"发送工具调用显示消息失败: {e}")
 

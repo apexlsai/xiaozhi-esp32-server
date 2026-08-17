@@ -642,6 +642,23 @@ curl --request GET \
 
 `peer_address` 的端口会在设备重连后变化，应优先使用 `device_id`。`/dev/ws` 不鉴权，仅可在受控内网使用；若服务暴露到公网，任何连接者都可向在线设备发起语音播报。
 
+### PHOTO 视觉链路
+
+支持摄像头的固件在 PHOTO 请求中发送：
+
+```json
+{
+  "type": "listen",
+  "state": "detect",
+  "text": "请描述并识别图片内容。",
+  "tool_choice": "self.camera.take_photo"
+}
+```
+
+后端只接受上述摄像头工具作为客户端显式选择，将其转换为内部工具名后直接构造设备 MCP 调用；视觉结果再交给正常 LLM/TTS 链路生成最终回答。设备通过独立 HTTP multipart 请求把 JPEG 发送到动态下发的 `server.vision_explain`，图片字段为 `file`；WebSocket 只传 MCP 调用、结果和正常对话/TTS。
+
+MCP `initialize` 会下发 `endpoint`、服务端签发的短期 `access_token`、`expires_at` 和 `max_image_size`。Token 只在设备内存中缓存；设备在过期前或收到 HTTP 401/403 后发送 `notifications/vision/refresh`，后端在同一连接中更新配置。日志不得输出 Token 或完整 Authorization 头。
+
 ## MCP 配置
 
 外部 MCP 服务配置文件为 `data/.mcp_server_settings.json`；示例见 `../main/xiaozhi-server/mcp_server_settings.json`。支持 `stdio`、`sse`、`streamable-http` 三种传输方式。修改后重启 server：

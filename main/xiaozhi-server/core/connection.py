@@ -227,7 +227,7 @@ class ConnectionHandler:
             else:
                 self.client_ip = ws.remote_address[0]
             self.logger.bind(tag=TAG).info(
-                f"{self.client_ip} conn - Headers: {self.headers}"
+                f"{self.client_ip} conn - Headers: {filter_sensitive_info(self.headers)}"
             )
 
             self.device_id = self.headers.get("device-id", None)
@@ -1209,7 +1209,72 @@ class ConnectionHandler:
         except Exception as e:
             self.logger.bind(tag=TAG).warning(f"刷新设备扩展属性失败: {e}")
 
-    def chat(self, query, depth=0):
+    def chat_with_tool(self, query, tool_name, arguments):
+        self.logger.bind(tag=TAG).info(f"执行客户端显式工具选择: {tool_name}")
+        current_sentence_id = str(uuid.uuid4().hex)
+        self.sentence_id = current_sentence_id
+        self.dialogue.put(Message(role="user", content=query))
+        self.tts.tts_text_queue.put(
+            TTSMessageDTO(
+                sentence_id=current_sentence_id,
+                sentence_type=SentenceType.FIRST,
+                content_type=ContentType.ACTION,
+            )
+        )
+
+        tool_call_data = {
+            "id": str(uuid.uuid4().hex),
+            "name": tool_name,
+            "arguments": json.dumps(arguments, ensure_ascii=False),
+        }
+        enqueue_tool_report(self, tool_name, arguments)
+        configured_timeout = int(self.config.get("tool_call_timeout", 30))
+        actual_name = self.mcp_client.name_mapping.get(tool_name, tool_name)
+        timeout = (
+            max(configured_timeout, 50)
+            if actual_name == "self.camera.take_photo"
+            else configured_timeout
+        )
+
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                self.func_handler.handle_llm_function_call(self, tool_call_data),
+                self.loop,
+            )
+            result = future.result(timeout=timeout)
+            enqueue_tool_report(
+                self,
+                tool_name,
+                arguments,
+                str(result.result) if result.result else None,
+                report_tool_call=False,
+            )
+        except Exception as error:
+            self.logger.bind(tag=TAG).error(f"显式工具调用失败: {tool_name}, 错误: {error}")
+            result = ActionResponse(
+                action=Action.ERROR,
+                result="设备拍照请求失败，请稍后再试。",
+            )
+            enqueue_tool_report(
+                self,
+                tool_name,
+                arguments,
+                str(error),
+                report_tool_call=False,
+            )
+
+        self._handle_function_result(
+            [(result, tool_call_data)], depth=0, allow_followup_tools=False
+        )
+        self.tts.tts_text_queue.put(
+            TTSMessageDTO(
+                sentence_id=current_sentence_id,
+                sentence_type=SentenceType.LAST,
+                content_type=ContentType.ACTION,
+            )
+        )
+
+    def chat(self, query, depth=0, allow_tools=True):
         # 保存当前任务的sentence_id到局部变量，避免被新任务覆盖
         current_sentence_id = None
 
@@ -1256,6 +1321,7 @@ class ConnectionHandler:
                 self.intent_type == "function_call"
                 and hasattr(self, "func_handler")
                 and not force_final_answer
+                and allow_tools
         ):
             functions = list(self.func_handler.get_functions())
             # 仅在第一层调用时注入 direct_answer 虚拟工具
@@ -1516,6 +1582,13 @@ class ConnectionHandler:
 
                 # 工具调用超时时间，可配置，默认30秒
                 tool_call_timeout = int(self.config.get("tool_call_timeout", 30))
+                if any(
+                    getattr(self, "mcp_client", None) is not None
+                    and self.mcp_client.name_mapping.get(item["name"], item["name"])
+                    == "self.camera.take_photo"
+                    for item in tool_calls_list
+                ):
+                    tool_call_timeout = max(tool_call_timeout, 50)
                 # 等待协程结束（实际等待时长为最慢的那个）
                 tool_results = []
 
@@ -1565,7 +1638,9 @@ class ConnectionHandler:
 
         return True
 
-    def _handle_function_result(self, tool_results, depth, streamed_text=""):
+    def _handle_function_result(
+        self, tool_results, depth, streamed_text="", allow_followup_tools=True
+    ):
         need_llm_tools = []
         record_tools = []
 
@@ -1671,7 +1746,11 @@ class ConnectionHandler:
                         )
                     )
 
-            self.chat(None, depth=depth + 1)
+            self.chat(
+                None,
+                depth=depth + 1,
+                allow_tools=allow_followup_tools,
+            )
 
     def _report_worker(self):
         """聊天记录上报工作线程"""
