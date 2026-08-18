@@ -1,14 +1,21 @@
-import json
+import asyncio
+import base64
 import copy
+import json
+from typing import Optional, Tuple
+
 from aiohttp import web
+
+from config.config_loader import get_private_config_from_api
 from config.logger import setup_logging
 from core.api.base_handler import BaseHandler
-from core.utils.util import get_vision_url, is_valid_image_file
-from core.utils.vllm import create_instance
-from config.config_loader import get_private_config_from_api
+from core.utils.language import (
+    LANGUAGE_AGENT_SUFFIXES,
+    resolve_language_code_from_agent_name,
+)
 from core.utils.auth import AuthToken
-import base64
-from typing import Tuple, Optional
+from core.utils.util import get_image_mime_type, get_vision_url
+from core.utils.vllm import create_instance
 from plugins_func.register import Action
 
 TAG = __name__
@@ -26,6 +33,16 @@ class VisionHandler(BaseHandler):
     def _create_error_response(self, message: str) -> dict:
         """创建统一的错误响应格式"""
         return {"success": False, "message": message}
+
+    def _json_response(self, payload: dict, status: int = 200) -> web.Response:
+        response = web.Response(
+            text=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            content_type="application/json",
+            charset="utf-8",
+            status=status,
+        )
+        self._add_cors_headers(response)
+        return response
 
     def _verify_auth_token(self, request) -> Tuple[bool, Optional[str]]:
         """验证认证token"""
@@ -46,19 +63,14 @@ class VisionHandler(BaseHandler):
 
     async def handle_post(self, request):
         """处理 MCP Vision POST 请求"""
-        response = None  # 初始化response变量
         try:
             # 验证token
             is_valid, token_device_id = self._verify_auth_token(request)
             if not is_valid:
-                response = web.Response(
-                    text=json.dumps(
-                        self._create_error_response("无效的认证token或token已过期")
-                    ),
-                    content_type="application/json",
+                return self._json_response(
+                    self._create_error_response("无效的认证token或token已过期"),
                     status=401,
                 )
-                return response
 
             # 获取请求头信息
             device_id = request.headers.get("Device-Id", "")
@@ -76,7 +88,7 @@ class VisionHandler(BaseHandler):
                 if field.name == "question":
                     raw = await field.read(decode=False)
                     question = raw.decode("utf-8").strip()
-                elif field.name == "image":
+                elif field.name in ("file", "image"):
                     image_data = await field.read(decode=False)
 
             if not question:
@@ -90,8 +102,8 @@ class VisionHandler(BaseHandler):
                     f"图片大小超过限制，最大允许{MAX_FILE_SIZE/1024/1024}MB"
                 )
 
-            # 检查文件格式
-            if not is_valid_image_file(image_data):
+            image_mime = get_image_mime_type(image_data)
+            if image_mime is None:
                 raise ValueError(
                     "不支持的文件格式，请上传有效的图片文件（支持JPEG、PNG、GIF、BMP、TIFF、WEBP格式）"
                 )
@@ -126,7 +138,23 @@ class VisionHandler(BaseHandler):
                 vllm_type, current_config["VLLM"][select_vllm_module]
             )
 
-            result = vllm.response(question, image_base64)
+            device_attributes = current_config.get("device_attributes") or {}
+            language = resolve_language_code_from_agent_name(
+                device_attributes.get("agent_name")
+            )
+            attribute_language = device_attributes.get("language")
+            if language is None and attribute_language in LANGUAGE_AGENT_SUFFIXES:
+                language = attribute_language
+
+            result = await asyncio.to_thread(
+                vllm.response,
+                question,
+                image_base64,
+                image_mime=image_mime,
+                device_id=device_id,
+                language=language,
+                last_beacon_id=device_attributes.get("last_beacon_id"),
+            )
 
             return_json = {
                 "success": True,
@@ -134,28 +162,13 @@ class VisionHandler(BaseHandler):
                 "response": result,
             }
 
-            response = web.Response(
-                text=json.dumps(return_json, ensure_ascii=False, separators=(",", ":")),
-                content_type="application/json; charset=utf-8",
-            )
+            return self._json_response(return_json)
         except ValueError as e:
             self.logger.bind(tag=TAG).error(f"MCP Vision POST请求异常: {e}")
-            return_json = self._create_error_response(str(e))
-            response = web.Response(
-                text=json.dumps(return_json, ensure_ascii=False, separators=(",", ":")),
-                content_type="application/json; charset=utf-8",
-            )
+            return self._json_response(self._create_error_response(str(e)))
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"MCP Vision POST请求异常: {e}")
-            return_json = self._create_error_response(str(e))
-            response = web.Response(
-                text=json.dumps(return_json, ensure_ascii=False, separators=(",", ":")),
-                content_type="application/json; charset=utf-8",
-            )
-        finally:
-            if response:
-                self._add_cors_headers(response)
-            return response
+            return self._json_response(self._create_error_response(str(e)))
 
     async def handle_get(self, request):
         """处理 MCP Vision GET 请求"""

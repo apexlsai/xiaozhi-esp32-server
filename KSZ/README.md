@@ -224,10 +224,19 @@ curl http://<HOST_IP>:8004/mcp/vision/explain
 
 地址与端口按上文「Server 与智控台连接」配好 `vision_explain` 并通过 `curl` 健康检查后再启用识图。
 
-1. 智控台【模型配置】→【视觉大语言模型】，为所用 VLLM（如 `VLLM_ChatGLMVLLM`）填写 API 密钥并保存。
-2. 在目标智能体【配置角色】中，将「视觉大语言模型(VLLM)」选为上述模型并保存。
-3. 清除 Redis 配置缓存并重启 server（见上文命令）。
-4. 设备固件 ≥ 1.6.6，唤醒后说「请打开摄像头，说你看到了什么」，并查看 server 日志是否有 VLLM 报错。
+Museum Guide Agent 接入使用智控台现有的 OpenAI VLLM，无需新增 Provider 或数据库迁移：
+
+1. 智控台【模型配置】→【视觉大语言模型】新增模型，接口类型选择 `OpenAI接口`。
+2. `base_url` 填写 `https://<MUSEUM_AGENT_HOST>/v1`，`model_name` 填写 `museum-guide-vision`，`api_key` 填写 Museum Agent 当前有效密钥。
+3. 在目标智能体【配置角色】中，将「视觉大语言模型(VLLM)」选为该模型并保存。
+4. 清除 Redis 配置缓存并重启 server（见上文命令）。
+5. 设备固件 ≥ 1.6.6，唤醒后说「请打开摄像头，说你看到了什么」，并查看 server 日志是否有 VLLM 报错。
+
+`server.vision_explain` 始终填写本 xiaozhi-server 的 `/mcp/vision/explain`，不能填写 Museum Agent 地址。小智会把图片、问题、`device_id`、规范语言码和最近 Beacon ID 转发给 `museum-guide-vision`，Museum Agent 返回最终可播报文本。
+
+KSZ 保留上游原版视觉协议：MCP `initialize` 继续下发 `vision.url` 与 `vision.token`，当前官方固件通过 `file` 字段上传，服务端返回 `success`、`action` 与 `response`。KSZ 同时兼容旧客户端的 `image` 字段并透传 Museum Guide 上下文，不要求固件实现额外的 `tool_choice`、Token 刷新通知或新的响应结构。
+
+生产环境必须使用内网或 HTTPS 连接 Museum Agent。不要通过公网明文 HTTP 传输游客图片和 Bearer Token；曾出现在命令、日志或聊天记录中的密钥应立即轮换。
 
 ### 配置 FunASR
 
