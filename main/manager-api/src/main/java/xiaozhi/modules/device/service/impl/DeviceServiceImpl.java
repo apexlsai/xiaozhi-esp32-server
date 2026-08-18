@@ -706,6 +706,23 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
+    public DeviceRebindVO rebindDeviceLanguage(String deviceId, String language, boolean dev) {
+        String targetAgentName = validateLanguageTargetAgent(deviceId, language, dev);
+        DeviceEntity device = getDeviceByMacAddress(deviceId);
+        AgentEntity currentAgent = agentDao.selectById(device.getAgentId());
+
+        DeviceRebindDTO dto = new DeviceRebindDTO();
+        dto.setDeviceId(deviceId);
+        dto.setCurrentAgentName(currentAgent.getAgentName());
+        dto.setTargetAgentName(targetAgentName);
+        dto.setConfirm(true);
+        dto.setLanguage(language);
+        dto.setDev(dev);
+        return rebindDevice(dto);
+    }
+
+    @Override
     public String validateLanguageTargetAgent(String deviceId, String language, boolean dev) {
         if (!DeviceLanguageSpec.isSupported(language)) {
             throw new RenException(ErrorCode.DEVICE_ATTRIBUTE_LANGUAGE_INVALID);

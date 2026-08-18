@@ -514,6 +514,19 @@ Authorization: Bearer <server.secret>
 
 KSZ 不走“按 `device_language` 强制翻译”路线（`agent-base-prompt.txt` 的 `output_language_directive` 段已移除），回复语言完全由当前绑定智能体自身的 `base_prompt` 决定。因此**语言切换 = 切换到对应语言的智能体**，复用上面的换绑流程。
 
+设备希望首次 WebSocket 连接即使用目标智能体时，可把原有事件结构直接作为 OTA 请求体发送到 `POST /xiaozhi/ota/`。manager-api 会在生成 WebSocket 地址和 JWT 前完成换绑；此时尚未建立 WebSocket，因此无需先连接再断开：
+
+```json
+{
+  "deviceId": "{{DEVICE_ID}}",
+  "event": "language_change",
+  "payload": { "language": "zh-CN", "dev": true },
+  "timestamp": {{$timestamp}}
+}
+```
+
+`Device-Id` 请求头仍为设备身份的权威值；请求体携带 `deviceId` 时必须与该请求头一致。OTA 的普通固件字段可与上述字段并存。重复提交同一目标是幂等的。若目标智能体不存在、重名或参数错误，OTA 响应包含 `error` 且不返回 WebSocket 配置，设备应修正配置后重试。
+
 外部系统调用事件上报接口后，manager-api 先校验语言与目标智能体，再回调 xiaozhi-server 的 `/internal/device/language-change-v2`；server 调用 `/device/rebind`，在同一事务内完成智能体换绑及基础 `language` 持久化，随后断开设备连接。v2 端点用于在滚动升级时拒绝旧 server，避免 `dev` 被忽略后误绑生产智能体；旧内部端点仅保留用于兼容旧 manager-api，并会在新 server 内把历史 `*-test` 入参规范化为基础语言码。滚动发布须先升级 manager-api、再升级 xiaozhi-server：中间阶段 v2 回调会安全失败且不改库，待 server 升级后恢复：
 
 ```json

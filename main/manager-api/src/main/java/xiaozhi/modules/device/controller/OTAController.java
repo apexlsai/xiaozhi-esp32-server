@@ -1,6 +1,7 @@
 package xiaozhi.modules.device.controller;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.http.MediaType;
@@ -24,6 +25,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import xiaozhi.common.constant.Constant;
+import xiaozhi.common.exception.RenException;
 import xiaozhi.modules.device.dto.DeviceReportReqDTO;
 import xiaozhi.modules.device.dto.DeviceReportRespDTO;
 import xiaozhi.modules.device.entity.DeviceEntity;
@@ -56,7 +58,42 @@ public class OTAController {
         if (!macAddressValid) {
             return createResponse(DeviceReportRespDTO.createError("Invalid device ID"));
         }
+        DeviceReportRespDTO eventError = handlePreConnectEvent(deviceId, deviceReportReqDTO);
+        if (eventError != null) {
+            return createResponse(eventError);
+        }
         return createResponse(deviceService.checkDeviceActive(deviceId, clientId, deviceReportReqDTO));
+    }
+
+    private DeviceReportRespDTO handlePreConnectEvent(String deviceId, DeviceReportReqDTO request) {
+        if (request == null || StringUtils.isBlank(request.getEvent())) {
+            return null;
+        }
+        if (StringUtils.isNotBlank(request.getDeviceId()) && !deviceId.equalsIgnoreCase(request.getDeviceId())) {
+            return DeviceReportRespDTO.createError("deviceId 与 Device-Id 请求头不一致");
+        }
+        if (!"language_change".equals(request.getEvent())) {
+            return DeviceReportRespDTO.createError("不支持的连接前事件: " + request.getEvent());
+        }
+
+        Map<String, Object> payload = request.getPayload();
+        Object language = payload == null ? null : payload.get("language");
+        if (!(language instanceof String) || StringUtils.isBlank((String) language)) {
+            return DeviceReportRespDTO.createError("language 不能为空");
+        }
+        Object devValue = payload.get("dev");
+        if (payload.containsKey("dev") && !(devValue instanceof Boolean)) {
+            return DeviceReportRespDTO.createError("dev 必须是布尔值");
+        }
+
+        try {
+            deviceService.rebindDeviceLanguage(deviceId, (String) language, Boolean.TRUE.equals(devValue));
+            log.info("连接前语言智能体已选定: deviceId={}, language={}, dev={}",
+                    deviceId, language, Boolean.TRUE.equals(devValue));
+            return null;
+        } catch (RenException e) {
+            return DeviceReportRespDTO.createError(e.getMsg());
+        }
     }
 
     @Operation(summary = "设备快速检查激活状态")

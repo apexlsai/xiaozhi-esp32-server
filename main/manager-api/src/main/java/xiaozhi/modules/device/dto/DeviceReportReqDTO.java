@@ -7,6 +7,7 @@ import lombok.Setter;
 
 import java.io.Serializable;
 import java.util.List;
+import java.util.Map;
 
 @Setter
 @Getter
@@ -52,6 +53,18 @@ public class DeviceReportReqDTO implements Serializable {
 
     @Schema(description = "板子配置信息")
     private BoardInfo board;
+
+    @Schema(description = "设备ID；连接前事件中应与 Device-Id 请求头一致")
+    private String deviceId;
+
+    @Schema(description = "连接前事件类型")
+    private String event;
+
+    @Schema(description = "连接前事件参数")
+    private Map<String, Object> payload;
+
+    @Schema(description = "连接前事件时间戳")
+    private Long timestamp;
 
     // endregion
 
