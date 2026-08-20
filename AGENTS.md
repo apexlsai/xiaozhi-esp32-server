@@ -28,6 +28,8 @@
 
 本仓库是 [xiaozhi-esp32-server](https://github.com/xinnan-tech/xiaozhi-esp32-server) 的 KSZ Fork。凡是不同于上游的开发、部署、配置和文档，均以 [`KSZ/`](KSZ/) 为唯一基地；不要将 KSZ 专用内容混入上游通用文件。
 
+在本项目正式脱离上游前，非 KSZ 特有功能、通用重构和上游缺陷由上游团队维护；除非用户明确授权，本 Fork 不主动实现或改写，仅保留 KSZ 集成所需的最小兼容与防护。
+
 - `KSZ/README.md`：KSZ 本地构建、部署、配置和运维使用方法。
 - `KSZ/CHANGELOG.md`：基于 Keep a Changelog，按版本记录 KSZ 定制变更（自 `0.1.1` 起不标日期）；新增变更须追加到 `[Unreleased]` 或对应版本节。
 - `KSZ/compose.yml`：KSZ 本地构建部署的唯一 Compose 入口。

@@ -15,6 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.api.vision_handler import VisionHandler
 from core.providers.tools.device_mcp.mcp_handler import send_mcp_initialize_message
+from core.providers.tools.device_mcp.mcp_executor import DeviceMCPExecutor
+from plugins_func.register import Action
 from core.utils.auth import AuthToken
 
 
@@ -276,6 +278,20 @@ class VisionHandlerTests(unittest.TestCase):
             )
 
         asyncio.run(run())
+
+
+class ToolErrorContractTests(unittest.TestCase):
+    def test_device_mcp_error_is_structured_for_agent(self):
+        conn = SimpleNamespace(mcp_client=None)
+        result = asyncio.run(
+            DeviceMCPExecutor(conn).execute(conn, "self_get_device_status", {})
+        )
+
+        self.assertEqual(result.action, Action.REQLLM)
+        payload = json.loads(result.result)
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["tool"], "self_get_device_status")
+        self.assertIn("message", payload)
 
 
 if __name__ == "__main__":

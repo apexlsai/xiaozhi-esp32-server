@@ -1532,7 +1532,17 @@ class ConnectionHandler:
                         )
                         # 超时时返回错误响应，避免整个流程卡死
                         tool_results.append((
-                            ActionResponse(action=Action.ERROR, result="哎呀，网络遇到点问题，请稍后再试下！"),
+                            ActionResponse(
+                                action=Action.REQLLM,
+                                result=json.dumps(
+                                    {
+                                        "status": "error",
+                                        "tool": tool_call_data["name"],
+                                        "message": "设备或服务暂时不可用，请稍后重试",
+                                    },
+                                    ensure_ascii=False,
+                                ),
+                            ),
                             tool_call_data
                         ))
                         # 上报工具调用错误
