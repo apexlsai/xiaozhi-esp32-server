@@ -13,7 +13,7 @@ class SimpleHttpServer:
         self.config = config
         self.logger = setup_logging()
         self.ota_handler = OTAHandler(config)
-        self.vision_handler = VisionHandler(config)
+        self.vision_handler = VisionHandler(config, websocket_server)
         self.device_command_handler = DeviceCommandHandler(config, websocket_server)
 
     def _get_websocket_url(self, local_ip: str, port: int) -> str:

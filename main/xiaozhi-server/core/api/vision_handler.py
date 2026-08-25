@@ -2,6 +2,8 @@ import asyncio
 import base64
 import copy
 import json
+import time
+import uuid
 from typing import Optional, Tuple
 
 from aiohttp import web
@@ -9,6 +11,8 @@ from aiohttp import web
 from config.config_loader import get_private_config_from_api
 from config.logger import setup_logging
 from core.api.base_handler import BaseHandler
+from core.providers.tts.dto.dto import ContentType, SentenceType, TTSMessageDTO
+from core.utils.dialogue import Message
 from core.utils.language import (
     LANGUAGE_AGENT_SUFFIXES,
     resolve_language_code_from_agent_name,
@@ -25,10 +29,66 @@ MAX_FILE_SIZE = 5 * 1024 * 1024
 
 
 class VisionHandler(BaseHandler):
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, websocket_server=None):
         super().__init__(config)
-        # 初始化认证工具
+        self.websocket_server = websocket_server
         self.auth = AuthToken(config["server"]["auth_key"])
+
+    def _push_direct_tts(self, device_id: str, text: str) -> bool:
+        websocket_server = getattr(self, "websocket_server", None)
+        if websocket_server is None or not isinstance(text, str) or not text.strip():
+            return False
+
+        conn = websocket_server.find_device_connection({"device_id": device_id})
+        if conn is None:
+            self.logger.bind(tag=TAG).warning(
+                f"MCP Vision 无法推送TTS，设备不在线: {device_id}"
+            )
+            return False
+
+        mcp_client = getattr(conn, "mcp_client", None)
+        if getattr(mcp_client, "call_results", None):
+            self.logger.bind(tag=TAG).debug(
+                f"MCP Vision 检测到待处理工具调用，跳过直推TTS: {device_id}"
+            )
+            return False
+
+        if getattr(conn, "need_bind", False) or getattr(conn, "tts", None) is None:
+            self.logger.bind(tag=TAG).warning(
+                f"MCP Vision 无法推送TTS，设备语音链路未就绪: {device_id}"
+            )
+            return False
+
+        try:
+            content = text.strip()
+            sentence_id = uuid.uuid4().hex
+            conn.last_activity_time = time.time() * 1000
+            conn.sentence_id = sentence_id
+            conn.tts.store_tts_text(sentence_id, content)
+            conn.tts.tts_text_queue.put(
+                TTSMessageDTO(sentence_id, SentenceType.FIRST, ContentType.ACTION)
+            )
+            conn.tts.tts_one_sentence(
+                conn,
+                ContentType.TEXT,
+                content_detail=content,
+                sentence_id=sentence_id,
+            )
+            conn.tts.tts_text_queue.put(
+                TTSMessageDTO(sentence_id, SentenceType.LAST, ContentType.ACTION)
+            )
+            dialogue = getattr(conn, "dialogue", None)
+            if dialogue is not None:
+                dialogue.put(Message(role="assistant", content=content))
+            self.logger.bind(tag=TAG).info(
+                f"MCP Vision 直连结果已推送TTS: device_id={device_id}, chars={len(content)}"
+            )
+            return True
+        except Exception as e:
+            self.logger.bind(tag=TAG).error(
+                f"MCP Vision 推送TTS失败: device_id={device_id}, error={e}"
+            )
+            return False
 
     def _create_error_response(self, message: str) -> dict:
         """创建统一的错误响应格式"""
@@ -162,6 +222,7 @@ class VisionHandler(BaseHandler):
                 "response": result,
             }
 
+            self._push_direct_tts(device_id, result)
             return self._json_response(return_json)
         except ValueError as e:
             self.logger.bind(tag=TAG).error(f"MCP Vision POST请求异常: {e}")

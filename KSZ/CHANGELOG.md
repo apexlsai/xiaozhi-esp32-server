@@ -8,6 +8,7 @@
 
 ### 变更
 
+- MCP Vision 直连请求完成后按 `Device-Id` 将识别结果推送至在线设备 TTS；存在待处理设备 MCP 工具调用时跳过直推，避免同一结果重复播报。
 - 保持上游单 Agent `function_call` 与 MCP 链路，仅为 KSZ Agent 集成增加结构化工具错误降级，使设备未就绪、不支持、失败或超时时由 Agent 生成自然提示。
 - OTA 连接前支持复用既有 `deviceId/event/payload/timestamp` 结构提交 `language_change`；manager-api 在返回 WebSocket 配置前完成语言智能体换绑，使首次连接直接加载目标智能体，同时保留在线事件回调与 WebSocket 换绑链路。
 - 视觉链路保持上游 MCP `vision.url/token`、multipart `file` 与 `action/response` 契约；KSZ 增强仅以加法方式兼容旧客户端 `image` 和 Museum Guide Agent 上下文，不引入固件专用协议。

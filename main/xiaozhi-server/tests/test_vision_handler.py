@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.api.vision_handler import VisionHandler
 from core.providers.tools.device_mcp.mcp_handler import send_mcp_initialize_message
+from core.providers.tts.dto.dto import ContentType, SentenceType
 from core.providers.tools.device_mcp.mcp_executor import DeviceMCPExecutor
 from plugins_func.register import Action
 from core.utils.auth import AuthToken
@@ -79,6 +80,64 @@ class VisionHandlerTests(unittest.TestCase):
         _, _, kwargs = vllm.response.mock_calls[0]
         self.assertEqual(kwargs["image_mime"], "image/jpeg")
         self.assertEqual(kwargs["device_id"], "test-device")
+
+    def test_direct_vision_result_pushes_tts_to_online_device(self):
+        tts = SimpleNamespace(
+            store_tts_text=MagicMock(),
+            tts_text_queue=MagicMock(),
+            tts_one_sentence=MagicMock(),
+        )
+        dialogue = MagicMock()
+        conn = SimpleNamespace(
+            mcp_client=SimpleNamespace(call_results={}),
+            need_bind=False,
+            tts=tts,
+            dialogue=dialogue,
+        )
+        self.handler.websocket_server = SimpleNamespace(
+            find_device_connection=MagicMock(return_value=conn)
+        )
+
+        pushed = self.handler._push_direct_tts("test-device", "  这是一件展品。  ")
+
+        self.assertTrue(pushed)
+        tts.store_tts_text.assert_called_once()
+        sentence_id, text = tts.store_tts_text.call_args.args
+        self.assertEqual(text, "这是一件展品。")
+        queue_messages = [call.args[0] for call in tts.tts_text_queue.put.call_args_list]
+        self.assertEqual(
+            [message.sentence_type for message in queue_messages],
+            [SentenceType.FIRST, SentenceType.LAST],
+        )
+        tts.tts_one_sentence.assert_called_once_with(
+            conn,
+            ContentType.TEXT,
+            content_detail="这是一件展品。",
+            sentence_id=sentence_id,
+        )
+        dialogue.put.assert_called_once()
+
+    def test_mcp_vision_result_does_not_duplicate_tts(self):
+        tts = SimpleNamespace(
+            store_tts_text=MagicMock(),
+            tts_text_queue=MagicMock(),
+            tts_one_sentence=MagicMock(),
+        )
+        conn = SimpleNamespace(
+            mcp_client=SimpleNamespace(call_results={3: object()}),
+            need_bind=False,
+            tts=tts,
+            dialogue=MagicMock(),
+        )
+        self.handler.websocket_server = SimpleNamespace(
+            find_device_connection=MagicMock(return_value=conn)
+        )
+
+        pushed = self.handler._push_direct_tts("test-device", "这是一件展品。")
+
+        self.assertFalse(pushed)
+        tts.store_tts_text.assert_not_called()
+        tts.tts_one_sentence.assert_not_called()
 
     def test_png_and_webp_preserve_image_mime(self):
         images = {
