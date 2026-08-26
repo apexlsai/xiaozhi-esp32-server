@@ -84,6 +84,8 @@ async def get_config_from_api_async(config):
     # 如果服务器没有prompt_template，则从本地配置读取
     if not config_data.get("prompt_template"):
         config_data["prompt_template"] = config.get("prompt_template")
+    if config.get("tool_feedback") is not None:
+        config_data["tool_feedback"] = config["tool_feedback"]
     return config_data
 
 

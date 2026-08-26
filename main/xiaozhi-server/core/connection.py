@@ -46,6 +46,7 @@ from core.utils.voiceprint_provider import VoiceprintProvider
 from core.utils.util import get_system_error_response
 from core.utils.beacon_location import fetch_beacon_location
 from core.utils import textUtils
+from core.utils.tool_feedback import ToolFeedbackScheduler
 
 
 TAG = __name__
@@ -135,6 +136,7 @@ class ConnectionHandler:
         self.vad = None
         self.asr = None
         self.tts = None
+        self.tool_feedback = ToolFeedbackScheduler(self)
         self._asr = _asr
         self._vad = _vad
         self.llm = _llm
@@ -1512,14 +1514,23 @@ class ConnectionHandler:
                         ),
                         self.loop,
                     )
-                    futures_with_data.append((future, tool_call_data, tool_input))
+                    feedback_key = self.tool_feedback.schedule(
+                        tool_call_data["name"],
+                        tool_call_data["id"],
+                        current_sentence_id,
+                    )
+                    futures_with_data.append(
+                        (future, tool_call_data, tool_input, feedback_key)
+                    )
 
                 # 工具调用超时时间，可配置，默认30秒
                 tool_call_timeout = int(self.config.get("tool_call_timeout", 30))
                 # 等待协程结束（实际等待时长为最慢的那个）
                 tool_results = []
 
-                for future, tool_call_data, tool_input in futures_with_data:
+                for (
+                    future, tool_call_data, tool_input, feedback_key
+                ) in futures_with_data:
                     try:
                         result = future.result(timeout=tool_call_timeout)
                         tool_results.append((result, tool_call_data))
@@ -1547,6 +1558,8 @@ class ConnectionHandler:
                         ))
                         # 上报工具调用错误
                         enqueue_tool_report(self, tool_call_data['name'], tool_input, str(e), report_tool_call=False)
+                    finally:
+                        self.tool_feedback.cancel(feedback_key)
 
                 # 统一处理工具调用结果
                 if tool_results:
@@ -1724,6 +1737,7 @@ class ConnectionHandler:
     async def close(self, ws=None):
         """资源清理方法"""
         try:
+            self.tool_feedback.cancel_all()
             # 清理 VAD 连接资源
             if (
                     hasattr(self, "vad")

@@ -8,6 +8,7 @@
 
 ### 变更
 
+- 设备 MCP 拍照工具执行超过 500ms 时由 Xiaozhi 服务端播放临时提示“我看看。”；快速完成、异常、中断或连接关闭时取消，且不写入 Agent 对话历史。
 - MCP Vision 直连请求完成后按 `Device-Id` 将识别结果推送至在线设备 TTS；存在待处理设备 MCP 工具调用时跳过直推，避免同一结果重复播报。
 - 保持上游单 Agent `function_call` 与 MCP 链路，仅为 KSZ Agent 集成增加结构化工具错误降级，使设备未就绪、不支持、失败或超时时由 Agent 生成自然提示。
 - OTA 连接前支持复用既有 `deviceId/event/payload/timestamp` 结构提交 `language_change`；manager-api 在返回 WebSocket 配置前完成语言智能体换绑，使首次连接直接加载目标智能体，同时保留在线事件回调与 WebSocket 换绑链路。

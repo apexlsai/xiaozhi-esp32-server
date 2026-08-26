@@ -171,8 +171,16 @@ manager-api:
   url: http://127.0.0.1:8002/xiaozhi
   secret: <从 sys_params 的 server.secret 获取>
 
+tool_feedback:
+  enabled: true
+  delay_ms: 500
+  tools:
+    self_camera_take_photo: "我看看。"
+
 prompt_template: agent-base-prompt.txt
 ```
+
+`tool_feedback` 在设备 MCP 工具执行超过设定时间时播放临时提示；工具快速完成、失败、超时、会话中断或连接关闭时取消尚未播放的提示。提示不经过 Agent，也不写入对话历史。
 
 配置职责（避免与上游 bridge 默认混淆）：
 
