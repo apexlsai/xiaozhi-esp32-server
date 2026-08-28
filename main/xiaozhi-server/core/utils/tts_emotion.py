@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from typing import Optional
 
@@ -72,15 +73,39 @@ def compose_style_prompt(
     base_style: str,
     emotion_context: Optional[TTSEmotionContext],
     enabled: bool,
+    emotion_styles=None,
 ) -> str:
     style_parts = []
-    if base_style.strip():
-        style_parts.append(base_style.strip())
+    base_style = str(base_style or "").strip()
+    if base_style:
+        style_parts.append(base_style)
     if enabled and emotion_context is not None:
+        custom_styles = normalize_emotion_styles(emotion_styles)
+        emotion_style = (
+            custom_styles.get(emotion_context.emoji)
+            or custom_styles.get(emotion_context.voice_profile)
+            or emotion_context.style_prompt
+        )
         style_parts.append(
-            f"当前片段的表达方式：{emotion_context.style_prompt}"
+            f"当前片段的表达方式：{emotion_style.strip()}"
         )
     return " ".join(style_parts)
+
+
+def normalize_emotion_styles(value) -> dict[str, str]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError):
+            return {}
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): str(description).strip()
+        for key, description in value.items()
+        if description is not None and str(description).strip()
+    }
+
 
 def strip_emotion_markers(text: str) -> str:
     parser = EmotionStreamParser(enabled=False)

@@ -3,7 +3,7 @@ import base64
 import requests
 from core.utils.util import check_model_key
 from core.providers.tts.base import TTSProviderBase
-from core.utils.tts_emotion import compose_style_prompt
+from core.utils.tts_emotion import compose_style_prompt, normalize_emotion_styles
 from config.logger import setup_logging
 
 TAG = __name__
@@ -24,6 +24,9 @@ class TTSProvider(TTSProviderBase):
         self.emotion_style_enabled = str(
             config.get("emotion_style_enabled", False)
         ).lower() in ("true", "1", "yes")
+        self.emotion_styles = normalize_emotion_styles(
+            config.get("emotion_styles", {})
+        )
         self.supports_emotion_style = self.emotion_style_enabled
         self.output_file = config.get("output_dir", "tmp/")
         model_key_msg = check_model_key("TTS", self.api_key)
@@ -40,7 +43,14 @@ class TTSProvider(TTSProviderBase):
             self.style,
             emotion_context,
             self.emotion_style_enabled,
+            self.emotion_styles,
         )
+        if self.emotion_style_enabled and emotion_context is not None:
+            logger.bind(tag=TAG).info(
+                "[MIMO-TTS] "
+                f"emoji={emotion_context.emoji} "
+                f"profile={emotion_context.voice_profile} style={style_prompt!r}"
+            )
         if style_prompt:
             messages.append({"role": "user", "content": style_prompt})
         messages.append({"role": "assistant", "content": text})

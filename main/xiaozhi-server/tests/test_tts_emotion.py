@@ -8,6 +8,7 @@ from core.utils.tts_emotion import (
     EmotionStreamParser,
     build_emotion_context,
     compose_style_prompt,
+    normalize_emotion_styles,
 )
 
 
@@ -60,6 +61,43 @@ class EmotionStylePromptTests(unittest.TestCase):
         )
 
         self.assertEqual(style, "声音专业、清晰。")
+
+    def test_custom_profile_style_overrides_builtin_description(self):
+        style = compose_style_prompt(
+            "年轻女生声线。",
+            build_emotion_context("😆"),
+            True,
+            {"joy": "声音轻快，带明显笑意。"},
+        )
+
+        self.assertEqual(
+            style,
+            "年轻女生声线。 当前片段的表达方式：声音轻快，带明显笑意。",
+        )
+
+    def test_emoji_style_takes_priority_over_profile_style(self):
+        style = compose_style_prompt(
+            "",
+            build_emotion_context("😆"),
+            True,
+            {
+                "joy": "通用开心语气。",
+                "😆": "笑意更明显，节奏更活泼。",
+            },
+        )
+
+        self.assertEqual(
+            style,
+            "当前片段的表达方式：笑意更明显，节奏更活泼。",
+        )
+
+    def test_json_string_emotion_styles_are_supported(self):
+        styles = normalize_emotion_styles(
+            '{"sad":"声音温和低沉。","😆":"声音轻快。"}'
+        )
+
+        self.assertEqual(styles["sad"], "声音温和低沉。")
+        self.assertEqual(styles["😆"], "声音轻快。")
 
 
 if __name__ == "__main__":

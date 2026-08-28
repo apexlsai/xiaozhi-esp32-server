@@ -637,7 +637,7 @@ curl --request GET \
 
 普通短回答仍只使用一个句首 Emoji；较长回答允许在新情绪句段开头使用最多三个白名单 Emoji。服务端会移除朗读文本中的 Emoji，并在对应音频分句开始前向设备发送表情消息。双流式或不支持情绪上下文的 TTS 保持原合成参数，表情消息采用兼容回退路径。
 
-MiMo 可把固定导览风格与内置情绪描述组合为 user message，无需额外调用 LLM：
+MiMo 可把页面下发的基础风格与情绪描述组合为 user message，无需额外调用 LLM：
 
 ```yaml
 TTS:
@@ -645,9 +645,24 @@ TTS:
     type: mimo
     style: "声音干练、清晰、专业，具有博物馆资深导览员的自信与从容。"
     emotion_style_enabled: true
+    emotion_styles:
+      joy: "声音轻快，带明显笑意，节奏活泼。"
+      sad: "声音温和低沉，语速稍缓，避免夸张哭腔。"
+      "😆": "笑意更明显，节奏更活泼。"
 ```
 
-代码中的 `emotion_style_enabled` 默认值为关闭；上例已显式开启。只有声明支持描述词的 Provider 才会消费动态情绪上下文，其他 TTS 会忽略该能力并继续使用原接口。
+`emotion_styles` 支持两级覆盖：具体 Emoji 优先于情绪类别，未配置时回退内置描述。可用类别为 `neutral`、`warm`、`joy`、`sad`、`sleepy`、`angry`、`surprise`、`thinking`、`confident`。
+
+以 `😆` 片段为例，MiMo 最终收到：
+
+```json
+[
+  {"role":"user","content":"声音干练、清晰、专业，具有博物馆资深导览员的自信与从容。 当前片段的表达方式：笑意更明显，节奏更活泼。"},
+  {"role":"assistant","content":"真的假的啦，这件事也太好笑了。"}
+]
+```
+
+代码中的 `emotion_style_enabled` 默认值为关闭；管理后台迁移后的 MiMo 默认模型会显式开启。只有声明支持描述词的 Provider 才会消费动态情绪上下文，其他 TTS 会忽略该能力并继续使用原接口。
 
 ### 定向语音开发 WebSocket
 

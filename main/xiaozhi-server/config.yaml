@@ -1102,9 +1102,14 @@ TTS:
     voice: mimo_default
     format: wav
     # 风格/语调描述（可选），作为 user message 传入，留空则只发 assistant 文本
-    # 根据回复中的分段 Emoji 追加内置情绪描述；仅 MiMo 消费，其他 TTS 不受影响
-    emotion_style_enabled: true
     # style: "Bright, bouncy, slightly sing-song tone"
+    # 根据回复中的分段 Emoji 追加情绪描述；仅 MiMo 消费，其他 TTS 不受影响
+    emotion_style_enabled: true
+    # 支持情绪类别或具体 Emoji 作为键；未配置的键回退到内置描述
+    # emotion_styles:
+    #   joy: "声音轻快，带明显笑意，节奏活泼。"
+    #   sad: "声音温和低沉，语速稍缓。"
+    #   "😆": "笑意更明显，节奏更活泼。"
     output_dir: tmp/
   CustomTTS:
     # 自定义的TTS接口服务，请求参数可自定义，可接入众多TTS服务
