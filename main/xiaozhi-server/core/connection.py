@@ -38,7 +38,12 @@ from plugins_func.loadplugins import auto_import_modules
 from plugins_func.register import Action, ActionResponse, all_function_registry, module_func_map
 from core.auth import AuthenticationError
 from config.config_loader import get_private_config_from_api
-from core.providers.tts.dto.dto import ContentType, TTSMessageDTO, SentenceType
+from core.providers.tts.dto.dto import (
+    ContentType,
+    InterfaceType as TTSInterfaceType,
+    SentenceType,
+    TTSMessageDTO,
+)
 from config.logger import setup_logging, build_module_string, create_connection_logger
 from config.manage_api_client import DeviceNotFoundException, DeviceBindException, generate_and_save_chat_title
 from core.utils.prompt_manager import PromptManager
@@ -47,6 +52,10 @@ from core.utils.util import get_system_error_response
 from core.utils.beacon_location import fetch_beacon_location
 from core.utils import textUtils
 from core.utils.tool_feedback import ToolFeedbackScheduler
+from core.utils.tts_emotion import (
+    EmotionStreamParser,
+    strip_emotion_markers,
+)
 
 
 TAG = __name__
@@ -1211,6 +1220,48 @@ class ConnectionHandler:
         except Exception as e:
             self.logger.bind(tag=TAG).warning(f"刷新设备扩展属性失败: {e}")
 
+    def _queue_emotional_tts_text(
+        self,
+        parser: EmotionStreamParser,
+        text: str,
+        sentence_id: str,
+    ) -> str:
+        cleaned_parts = []
+        synchronized_emotion = (
+            getattr(self.tts, "interface_type", None) == TTSInterfaceType.NON_STREAM
+        )
+        for event in parser.feed(text):
+            if event.context is not None:
+                if synchronized_emotion:
+                    self.tts.tts_text_queue.put(
+                        TTSMessageDTO(
+                            sentence_id=sentence_id,
+                            sentence_type=SentenceType.MIDDLE,
+                            content_type=ContentType.EMOTION,
+                            emotion_context=event.context,
+                        )
+                    )
+                elif (self.features or {}).get("emoji", True):
+                    asyncio.run_coroutine_threadsafe(
+                        textUtils.send_emotion(
+                            self,
+                            event.context.emoji,
+                            event.context.emotion,
+                        ),
+                        self.loop,
+                    )
+            if event.text:
+                cleaned_parts.append(event.text)
+                self.tts.tts_text_queue.put(
+                    TTSMessageDTO(
+                        sentence_id=sentence_id,
+                        sentence_type=SentenceType.MIDDLE,
+                        content_type=ContentType.TEXT,
+                        content_detail=event.text,
+                    )
+                )
+        return "".join(cleaned_parts)
+
     def chat(self, query, depth=0):
         # 保存当前任务的sentence_id到局部变量，避免被新任务覆盖
         current_sentence_id = None
@@ -1234,6 +1285,9 @@ class ConnectionHandler:
             # 递归调用时，使用当前的sentence_id
             current_sentence_id = self.sentence_id
 
+        emotion_parser = EmotionStreamParser(
+            enabled=(self.features or {}).get("emoji", True)
+        )
         # 设置最大递归深度，避免无限循环，可根据实际需求调整
         MAX_DEPTH = 5
         force_final_answer = False  # 标记是否强制最终回答
@@ -1324,7 +1378,6 @@ class ConnectionHandler:
         # 支持多个并行工具调用 - 使用列表存储
         tool_calls_list = []  # 格式: [{"id": "", "name": "", "arguments": ""}]
         content_arguments = ""
-        emotion_flag = True
         try:
             for response in llm_responses:
                 if self.client_abort:
@@ -1360,37 +1413,23 @@ class ConnectionHandler:
                                     new_part = self._clean_response_garbage(new_part)
                                     if new_part:
                                         tc["_da_sent"] = safe_end
-                                        self.tts.tts_text_queue.put(
-                                            TTSMessageDTO(
-                                                sentence_id=current_sentence_id,
-                                                sentence_type=SentenceType.MIDDLE,
-                                                content_type=ContentType.TEXT,
-                                                content_detail=new_part,
-                                            )
+                                        self._queue_emotional_tts_text(
+                                            emotion_parser,
+                                            new_part,
+                                            current_sentence_id,
                                         )
                 else:
                     content = response
 
-                # 在llm回复中获取情绪表情，一轮对话只在开头获取一次
-                if emotion_flag and content is not None and content.strip():
-                    if (self.features or {}).get("emoji", True):
-                        asyncio.run_coroutine_threadsafe(
-                            textUtils.get_emotion(self, content),
-                            self.loop,
-                        )
-                    emotion_flag = False
-
                 if content is not None and len(content) > 0:
                     if not tool_call_flag:
-                        response_message.append(content)
-                        self.tts.tts_text_queue.put(
-                            TTSMessageDTO(
-                                sentence_id=current_sentence_id,
-                                sentence_type=SentenceType.MIDDLE,
-                                content_type=ContentType.TEXT,
-                                content_detail=content,
-                            )
+                        cleaned_content = self._queue_emotional_tts_text(
+                            emotion_parser,
+                            content,
+                            current_sentence_id,
                         )
+                        if cleaned_content:
+                            response_message.append(cleaned_content)
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"LLM stream processing error: {e}")
             self.tts.tts_text_queue.put(
@@ -1458,16 +1497,14 @@ class ConnectionHandler:
                             if remaining:
                                 remaining = self._clean_response_garbage(remaining)
                                 if remaining:
-                                    self.tts.tts_text_queue.put(
-                                        TTSMessageDTO(
-                                            sentence_id=current_sentence_id,
-                                            sentence_type=SentenceType.MIDDLE,
-                                            content_type=ContentType.TEXT,
-                                            content_detail=remaining,
-                                        )
+                                    self._queue_emotional_tts_text(
+                                        emotion_parser,
+                                        remaining,
+                                        current_sentence_id,
                                     )
                             # 写入对话历史
                             da_response = self._clean_response_garbage(da_response)
+                            da_response = strip_emotion_markers(da_response)
                             self.tts.store_tts_text(current_sentence_id, da_response)
                             self.dialogue.put(Message(role="assistant", content=da_response))
 

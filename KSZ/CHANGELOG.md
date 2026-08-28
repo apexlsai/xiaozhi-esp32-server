@@ -7,6 +7,7 @@
 ## [Unreleased]
 
 ### 变更
+- `main/xiaozhi-server/agent-base-prompt.txt` 将单一开头 Emoji 扩展为最多三个句段情绪标记；服务端按 TTS 分句同步设备表情，并为声明支持描述词的 Provider 传递可选情绪上下文，MiMo 可通过 `emotion_style_enabled` 组合固定导览风格与内置情绪描述。
 
 - 设备 MCP 拍照工具执行超过 500ms 时由 Xiaozhi 服务端播放临时提示“我看看。”；快速完成、异常、中断或连接关闭时取消，且不写入 Agent 对话历史。
 - MCP Vision 直连请求完成后按 `Device-Id` 将识别结果推送至在线设备 TTS；存在待处理设备 MCP 工具调用时跳过直推，避免同一结果重复播报。

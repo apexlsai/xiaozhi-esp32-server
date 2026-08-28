@@ -633,6 +633,22 @@ curl --request GET \
   --header 'accept: application/json'
 ```
 
+### 多段表情与 MiMo 动态语气
+
+普通短回答仍只使用一个句首 Emoji；较长回答允许在新情绪句段开头使用最多三个白名单 Emoji。服务端会移除朗读文本中的 Emoji，并在对应音频分句开始前向设备发送表情消息。双流式或不支持情绪上下文的 TTS 保持原合成参数，表情消息采用兼容回退路径。
+
+MiMo 可把固定导览风格与内置情绪描述组合为 user message，无需额外调用 LLM：
+
+```yaml
+TTS:
+  MimoTTS:
+    type: mimo
+    style: "声音干练、清晰、专业，具有博物馆资深导览员的自信与从容。"
+    emotion_style_enabled: true
+```
+
+代码中的 `emotion_style_enabled` 默认值为关闭；上例已显式开启。只有声明支持描述词的 Provider 才会消费动态情绪上下文，其他 TTS 会忽略该能力并继续使用原接口。
+
 ### 定向语音开发 WebSocket
 
 开发控制端连接 `ws://<SERVER_HOST>:8000/dev/ws` 后，可查询在线设备，并向指定真实设备注入文本；目标设备会沿用原有 LLM、TTS 和 Opus 音频下发流程。

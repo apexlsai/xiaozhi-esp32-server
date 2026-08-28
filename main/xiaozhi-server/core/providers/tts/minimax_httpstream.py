@@ -11,7 +11,7 @@ from core.utils import textUtils
 from config.logger import setup_logging
 from core.utils.util import parse_string_to_list
 from core.providers.tts.base import TTSProviderBase
-from core.providers.tts.dto.dto import SentenceType, ContentType
+from core.providers.tts.dto.dto import ContentType, InterfaceType, SentenceType
 from core.utils.tts import MarkdownCleaner, convert_percentage_to_range
 
 
@@ -22,6 +22,7 @@ logger = setup_logging()
 class TTSProvider(TTSProviderBase):
     def __init__(self, config, delete_audio_file):
         super().__init__(config, delete_audio_file)
+        self.interface_type = InterfaceType.SINGLE_STREAM
         self.group_id = config.get("group_id")
         self.api_key = config.get("api_key")
         self.model = config.get("model")

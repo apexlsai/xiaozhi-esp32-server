@@ -3,6 +3,7 @@ import base64
 import requests
 from core.utils.util import check_model_key
 from core.providers.tts.base import TTSProviderBase
+from core.utils.tts_emotion import compose_style_prompt
 from config.logger import setup_logging
 
 TAG = __name__
@@ -20,19 +21,28 @@ class TTSProvider(TTSProviderBase):
         self.voice = config.get("voice", "mimo_default")
         self.audio_file_type = config.get("format", "wav")
         self.style = config.get("style", "")
+        self.emotion_style_enabled = str(
+            config.get("emotion_style_enabled", False)
+        ).lower() in ("true", "1", "yes")
+        self.supports_emotion_style = self.emotion_style_enabled
         self.output_file = config.get("output_dir", "tmp/")
         model_key_msg = check_model_key("TTS", self.api_key)
         if model_key_msg:
             logger.bind(tag=TAG).error(model_key_msg)
 
-    async def text_to_speak(self, text, output_file):
+    async def text_to_speak(self, text, output_file, emotion_context=None):
         headers = {
             "api-key": self.api_key,
             "Content-Type": "application/json",
         }
         messages = []
-        if self.style:
-            messages.append({"role": "user", "content": self.style})
+        style_prompt = compose_style_prompt(
+            self.style,
+            emotion_context,
+            self.emotion_style_enabled,
+        )
+        if style_prompt:
+            messages.append({"role": "user", "content": style_prompt})
         messages.append({"role": "assistant", "content": text})
         data = {
             "model": self.model,

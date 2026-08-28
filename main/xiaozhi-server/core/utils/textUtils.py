@@ -81,15 +81,8 @@ def is_punctuation_or_emoji(char):
     return is_emoji(char)
 
 
-async def get_emotion(conn: "ConnectionHandler", text):
-    """获取文本内的情绪消息"""
-    emoji = "🙂"
-    emotion = "happy"
-    for char in text:
-        if char in EMOJI_MAP:
-            emoji = char
-            emotion = EMOJI_MAP[char]
-            break
+async def send_emotion(conn: "ConnectionHandler", emoji: str, emotion: str):
+    """发送指定的设备情绪消息"""
     try:
         await conn.websocket.send(
             json.dumps(
@@ -104,6 +97,18 @@ async def get_emotion(conn: "ConnectionHandler", text):
     except Exception as e:
         conn.logger.bind(tag=TAG).warning(f"发送情绪表情失败，错误:{e}")
     return
+
+
+async def get_emotion(conn: "ConnectionHandler", text):
+    """获取并发送文本内的首个情绪消息"""
+    emoji = "🙂"
+    emotion = "happy"
+    for char in text:
+        if char in EMOJI_MAP:
+            emoji = char
+            emotion = EMOJI_MAP[char]
+            break
+    await send_emotion(conn, emoji, emotion)
 
 
 def is_emoji(char):

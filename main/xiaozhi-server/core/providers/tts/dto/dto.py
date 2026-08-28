@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Union, Optional
+from typing import Any, Union, Optional
 
 
 class SentenceType(Enum):
@@ -14,6 +14,7 @@ class ContentType(Enum):
     TEXT = "TEXT"  # 文本内容
     FILE = "FILE"  # 文件内容
     ACTION = "ACTION"  # 动作内容
+    EMOTION = "EMOTION"  # 情绪控制上下文
 
 
 class InterfaceType(Enum):
@@ -35,9 +36,11 @@ class TTSMessageDTO:
         content_detail: Optional[str] = None,
         # 如果内容类型为文件，则需要传入文件路径
         content_file: Optional[str] = None,
+        emotion_context: Optional[Any] = None,
     ):
         self.sentence_id = sentence_id
         self.sentence_type = sentence_type
         self.content_type = content_type
         self.content_detail = content_detail
         self.content_file = content_file
+        self.emotion_context = emotion_context

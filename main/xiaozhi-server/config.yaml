@@ -1102,6 +1102,8 @@ TTS:
     voice: mimo_default
     format: wav
     # 风格/语调描述（可选），作为 user message 传入，留空则只发 assistant 文本
+    # 根据回复中的分段 Emoji 追加内置情绪描述；仅 MiMo 消费，其他 TTS 不受影响
+    emotion_style_enabled: true
     # style: "Bright, bouncy, slightly sing-song tone"
     output_dir: tmp/
   CustomTTS:
