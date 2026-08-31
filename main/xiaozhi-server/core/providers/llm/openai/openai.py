@@ -18,11 +18,28 @@ THINKING_DISABLED_DOMAINS = {
     "volces.com": {"thinking": {"type": "disabled"}},
 }
 
+THINKING_CONFIGURED_MODEL_PREFIXES = ("museum-guide-",)
+
+
+def _as_bool(value, default=False):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off", ""}:
+            return False
+    if value is None:
+        return default
+    return bool(value)
+
 
 class LLMProvider(LLMProviderBase):
     def __init__(self, config):
         self.model_name = config.get("model_name")
         self.api_key = config.get("api_key")
+        self.enable_thinking = _as_bool(config.get("enable_thinking"), False)
         if "base_url" in config:
             self.base_url = config.get("base_url")
         else:
@@ -79,15 +96,26 @@ class LLMProvider(LLMProviderBase):
                 msg["content"] = ""
         return dialogue
 
-    def _apply_thinking_disabled(self, request_params: dict):
-        """根据域名自动禁用思考模式"""
+    def _apply_thinking_preference(self, request_params: dict):
+        """按模型配置关闭已知兼容服务的思考模式"""
+        if self.enable_thinking:
+            return
+
         parsed_url = urlparse(self.base_url)
         domain = parsed_url.netloc
         for disabled_domain, params in THINKING_DISABLED_DOMAINS.items():
             if disabled_domain in domain:
                 request_params.setdefault("extra_body", {}).update(params)
                 logger.bind(tag=TAG).info(f"为域名 {domain} 禁用思考模式，参数: {params}")
-                break
+                return
+
+        model_name = (self.model_name or "").lower()
+        if model_name.startswith(THINKING_CONFIGURED_MODEL_PREFIXES):
+            params = {"enable_thinking": False}
+            request_params.setdefault("extra_body", {}).update(params)
+            logger.bind(tag=TAG).info(
+                f"为模型 {self.model_name} 禁用思考模式，参数: {params}"
+            )
 
     def _apply_extra_body(self, request_params: dict, kwargs: dict):
         """合并调用方传入的 extra_body（如 device_id/language/last_beacon_id）"""
@@ -117,8 +145,8 @@ class LLMProvider(LLMProviderBase):
             if value is not None:
                 request_params[key] = value
 
-        # 禁用思考模式
-        self._apply_thinking_disabled(request_params)
+        # 应用思考模式配置
+        self._apply_thinking_preference(request_params)
         # 合并设备上下文 extra_body
         self._apply_extra_body(request_params, kwargs)
 
@@ -166,8 +194,8 @@ class LLMProvider(LLMProviderBase):
             if value is not None:
                 request_params[key] = value
 
-        # 禁用思考模式
-        self._apply_thinking_disabled(request_params)
+        # 应用思考模式配置
+        self._apply_thinking_preference(request_params)
         # 合并设备上下文 extra_body
         self._apply_extra_body(request_params, kwargs)
 

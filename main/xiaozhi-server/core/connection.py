@@ -719,6 +719,11 @@ class ConnectionHandler:
         负样本（直接回答示例）放在动态 system 之后、紧挨真实用户消息，
         确保模型在处理用户消息前最后看到的是"不调工具"的行为模式。
         """
+        enabled = self.config.get("tool_call_fewshot_enabled", False)
+        if isinstance(enabled, str):
+            enabled = enabled.strip().lower() in {"1", "true", "yes", "on"}
+        if not enabled:
+            return
         if self.intent_type != "function_call":
             return
         if not hasattr(self, "func_handler") or self.func_handler is None:

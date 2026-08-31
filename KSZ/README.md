@@ -281,12 +281,23 @@ docker compose exec xiaozhi-esp32-server-db \
     \"type\":\"openai\",
     \"api_key\":\"<API_KEY>\",
     \"base_url\":\"http://<LLM_HOST>:15000/v1/\",
-    \"model_name\":\"<MODEL_NAME>\"
+    \"model_name\":\"<MODEL_NAME>\",
+    \"enable_thinking\":false
   }'
   WHERE id IN ('LLM_ChatGLMLLM', 'SLM_ChatGLMLLM');"
 docker compose exec xiaozhi-esp32-server-redis redis-cli FLUSHALL
 docker compose restart xiaozhi-esp32-server
 ```
+
+智控台 OpenAI 模型配置提供“允许思考模式”开关，默认关闭。关闭时，Museum Guide Agent 请求会携带顶层 `enable_thinking: false`；阿里、DeepSeek、智谱、Moonshot 和火山等已知兼容服务使用各自的禁用参数；未知 OpenAI 兼容服务不附加厂商字段，避免 HTTP 400。打开开关仅取消 Xiaozhi 的禁用参数，由模型服务采用自身默认行为。
+
+Xiaozhi 默认不再向真实会话注入“讲故事/拜拜”工具调用示例。只有兼容极小旧模型时，才在 `KSZ/data/.config.yaml` 中显式开启：
+
+```yaml
+tool_call_fewshot_enabled: true
+```
+
+`direct_answer` 虚拟工具仍然保留，用于降低支持函数调用的小模型误触发真实工具的概率。
 
 测试模型网关连通性：
 
