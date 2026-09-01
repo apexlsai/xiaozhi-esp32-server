@@ -202,7 +202,7 @@ class TTSProvider(TTSProviderBase):
                     self.api_url,
                     headers=self.header,
                     data=json.dumps(payload),
-                    timeout=10,
+                    timeout=self.tts_timeout,
                 ) as resp:
 
                     if resp.status != 200:
@@ -325,7 +325,10 @@ class TTSProvider(TTSProviderBase):
 
         try:
             with requests.post(
-                self.api_url, data=json.dumps(payload), headers=headers, timeout=5
+                self.api_url,
+                data=json.dumps(payload),
+                headers=headers,
+                timeout=self.tts_timeout,
             ) as response:
                 if response.status_code != 200:
                     logger.bind(tag=TAG).error(

@@ -38,7 +38,7 @@ class AccessToken:
         return encoded_text.replace("+", "%20").replace("*", "%2A").replace("%7E", "~")
 
     @staticmethod
-    def create_token(access_key_id, access_key_secret):
+    def create_token(access_key_id, access_key_secret, timeout):
         parameters = {
             "AccessKeyId": access_key_id,
             "Action": "CreateToken",
@@ -75,7 +75,7 @@ class AccessToken:
 
         import requests
 
-        response = requests.get(full_url)
+        response = requests.get(full_url, timeout=timeout)
         if response.ok:
             root_obj = response.json()
             key = "Token"
@@ -152,7 +152,7 @@ class TTSProvider(TTSProviderBase):
         """刷新Token并记录过期时间"""
         if self.access_key_id and self.access_key_secret:
             self.token, expire_time_str = AccessToken.create_token(
-                self.access_key_id, self.access_key_secret
+                self.access_key_id, self.access_key_secret, self.tts_timeout
             )
             if not expire_time_str:
                 raise ValueError("无法获取有效的Token过期时间")

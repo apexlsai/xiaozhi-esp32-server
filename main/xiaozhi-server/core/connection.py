@@ -859,9 +859,14 @@ class ConnectionHandler:
                 self.headers.get("client-id", self.headers.get("device-id")),
             )
             private_config["delete_audio"] = bool(self.config.get("delete_audio", True))
+            private_config["tts_timeout"] = self.config.get("tts_timeout", 15)
             # 仅有 delete_audio 说明接口实际未返回任何模块配置（多为 manager-api 异常被吞后回空），
             # 此时若仍报“成功”会掩盖真实问题，改为醒目告警。
-            meaningful_keys = [k for k in private_config.keys() if k != "delete_audio"]
+            meaningful_keys = [
+                k
+                for k in private_config.keys()
+                if k not in {"delete_audio", "tts_timeout"}
+            ]
             if not meaningful_keys:
                 self.logger.bind(tag=TAG).error(
                     f"{time.time() - begin_time:.3f} 秒，差异化配置为空(仅 delete_audio)："
