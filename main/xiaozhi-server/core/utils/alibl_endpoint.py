@@ -5,6 +5,15 @@ from urllib.parse import urlsplit
 DEFAULT_WS_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/inference/"
 INFERENCE_PATH = "/api-ws/v1/inference"
 HOSTNAME_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$")
+HAPPY_EYEBALLS_DELAY = 0.25
+
+
+def build_ws_connect_options(open_timeout):
+    return {
+        "open_timeout": open_timeout,
+        "happy_eyeballs_delay": HAPPY_EYEBALLS_DELAY,
+        "interleave": 1,
+    }
 
 
 def resolve_ws_url(value):
