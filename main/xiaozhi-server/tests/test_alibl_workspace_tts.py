@@ -5,10 +5,24 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core.utils.alibl_endpoint import DEFAULT_WS_URL, resolve_ws_url
+from core.utils.alibl_endpoint import (
+    DEFAULT_WS_URL,
+    build_ws_connect_options,
+    resolve_ws_url,
+)
 
 
 class AliBLWorkspaceEndpointTests(unittest.TestCase):
+    def test_connection_uses_happy_eyeballs(self):
+        self.assertEqual(
+            build_ws_connect_options(15),
+            {
+                "open_timeout": 15,
+                "happy_eyeballs_delay": 0.25,
+                "interleave": 1,
+            },
+        )
+
     def test_default_endpoint_remains_backward_compatible(self):
         self.assertEqual(resolve_ws_url(None), DEFAULT_WS_URL)
 

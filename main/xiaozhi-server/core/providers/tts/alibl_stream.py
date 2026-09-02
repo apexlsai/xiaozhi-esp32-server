@@ -11,7 +11,7 @@ from asyncio import Task
 from typing import Callable, Any
 from config.logger import setup_logging
 from core.utils.tts import MarkdownCleaner
-from core.utils.alibl_endpoint import resolve_ws_url
+from core.utils.alibl_endpoint import build_ws_connect_options, resolve_ws_url
 from core.providers.tts.base import TTSProviderBase
 from core.providers.tts.dto.dto import SentenceType, ContentType, InterfaceType
 
@@ -38,6 +38,7 @@ class TTSProvider(TTSProviderBase):
 
         # WebSocket配置
         self.ws_url = resolve_ws_url(config.get("ws_url"))
+        self.ws_connect_options = build_ws_connect_options(self.tts_timeout)
         self.ws = None
         self._monitor_task = None
         self.activate_session = False
@@ -90,6 +91,7 @@ class TTSProvider(TTSProviderBase):
                 ping_interval=30,
                 ping_timeout=10,
                 close_timeout=10,
+                **self.ws_connect_options,
             )
 
             logger.bind(tag=TAG).debug("WebSocket连接建立成功")
@@ -445,6 +447,7 @@ class TTSProvider(TTSProviderBase):
                     ping_timeout=10,
                     close_timeout=10,
                     max_size=10 * 1024 * 1024,
+                    **self.ws_connect_options,
                 )
 
                 try:
