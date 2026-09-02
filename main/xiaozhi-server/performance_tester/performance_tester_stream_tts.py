@@ -11,6 +11,7 @@ import asyncio
 from urllib.parse import urlparse, urlencode
 from tabulate import tabulate
 from config.settings import load_config
+from core.utils.alibl_endpoint import resolve_ws_url as resolve_alibl_ws_url
 
 description = "流式TTS语音合成首词耗时测试"
 class StreamTTSPerformanceTester:
@@ -109,7 +110,7 @@ class StreamTTSPerformanceTester:
                 format_type = tts_config.get("format", "pcm")
                 sample_rate = int(tts_config.get("sample_rate", "24000"))
 
-                ws_url = "wss://dashscope.aliyuncs.com/api-ws/v1/inference/"
+                ws_url = resolve_alibl_ws_url(tts_config.get("ws_url"))
                 headers = {
                     "Authorization": f"Bearer {api_key}",
                     "X-DashScope-DataInspection": "enable",

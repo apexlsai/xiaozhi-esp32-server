@@ -11,6 +11,7 @@ from asyncio import Task
 from typing import Callable, Any
 from config.logger import setup_logging
 from core.utils.tts import MarkdownCleaner
+from core.utils.alibl_endpoint import resolve_ws_url
 from core.providers.tts.base import TTSProviderBase
 from core.providers.tts.dto.dto import SentenceType, ContentType, InterfaceType
 
@@ -36,7 +37,7 @@ class TTSProvider(TTSProviderBase):
         self.report_on_last = True
 
         # WebSocket配置
-        self.ws_url = "wss://dashscope.aliyuncs.com/api-ws/v1/inference/"
+        self.ws_url = resolve_ws_url(config.get("ws_url"))
         self.ws = None
         self._monitor_task = None
         self.activate_session = False

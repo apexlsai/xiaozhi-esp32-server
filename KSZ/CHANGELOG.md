@@ -7,6 +7,7 @@
 ## [Unreleased]
 
 ### 变更
+- 阿里百炼流式 TTS 新增可配置 `ws_url`，兼容含 Workspace ID 的北京与新加坡 MaaS WebSocket 地址；旧 DashScope 地址继续作为默认值，智控台同步提供该字段并限制 API Key 仅发送至阿里云官方 WSS 推理端点。
 - 默认关闭 `function_call` 的“讲故事/拜拜”测试 few-shot 注入，避免其进入真实请求历史；保留 `direct_answer` 虚拟工具，并提供 `tool_call_fewshot_enabled` 兼容开关。OpenAI 模型新增“允许思考模式”配置，默认关闭；Museum Guide Agent 显式接收 `enable_thinking: false`，已知厂商使用对应参数，未知兼容服务不附加厂商字段。
 - `main/xiaozhi-server/agent-base-prompt.txt` 将单一开头 Emoji 扩展为最多三个句段情绪标记；服务端按 TTS 分句同步设备表情，并为声明支持描述词的 Provider 传递可选情绪上下文，MiMo 可通过 `emotion_style_enabled` 启用分段语气，并通过管理页面的 `emotion_styles` 参数覆盖情绪类别或具体 Emoji 的描述。
 

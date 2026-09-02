@@ -675,6 +675,17 @@ TTS:
 
 代码中的 `emotion_style_enabled` 默认值为关闭；管理后台迁移后的 MiMo 默认模型会显式开启。只有声明支持描述词的 Provider 才会消费动态情绪上下文，其他 TTS 会忽略该能力并继续使用原接口。
 
+### 阿里百炼 Workspace TTS
+
+智控台【模型配置】→【语音合成】→【阿里百炼（流式）】提供 `ws_url`。旧公有地址无需修改；业务空间按地域填写完整地址，其中 `<WorkspaceId>` 替换为真实业务空间 ID：
+
+```text
+wss://<WorkspaceId>.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference
+wss://<WorkspaceId>.ap-southeast-1.maas.aliyuncs.com/api-ws/v1/inference
+```
+
+该配置不读取 `.env`。保存后清除 Redis 配置缓存并重启 server。为避免 API Key 泄露，Provider 仅接受阿里云官方域名、`wss` 协议和 `/api-ws/v1/inference` 路径。
+
 ### 定向语音开发 WebSocket
 
 开发控制端连接 `ws://<SERVER_HOST>:8000/dev/ws` 后，可查询在线设备，并向指定真实设备注入文本；目标设备会沿用原有 LLM、TTS 和 Opus 音频下发流程。
