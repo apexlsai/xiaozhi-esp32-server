@@ -7,6 +7,7 @@
 ## [Unreleased]
 
 ### 变更
+- 阿里百炼流式 TTS 使用服务端 `sentence-begin.original_text` 逐句下发字幕，使屏幕文字与对应音频同步；旧事件格式保留一次性整段字幕回退。
 - 阿里百炼流式 TTS 的 WebSocket 建连启用 Happy Eyeballs；IPv6 不可达时快速并行回退 IPv4，并统一使用 `tts_timeout` 控制握手超时。
 - 阿里百炼流式 TTS 新增可配置 `ws_url`，兼容含 Workspace ID 的北京与新加坡 MaaS WebSocket 地址；旧 DashScope 地址继续作为默认值，智控台同步提供该字段并限制 API Key 仅发送至阿里云官方 WSS 推理端点。
 - 默认关闭 `function_call` 的“讲故事/拜拜”测试 few-shot 注入，避免其进入真实请求历史；保留 `direct_answer` 虚拟工具，并提供 `tool_call_fewshot_enabled` 兼容开关。OpenAI 模型新增“允许思考模式”配置，默认关闭；Museum Guide Agent 显式接收 `enable_thinking: false`，已知厂商使用对应参数，未知兼容服务不附加厂商字段。
