@@ -18,7 +18,35 @@ AUDIO_FRAME_DURATION = 60
 PRE_BUFFER_COUNT = 5
 
 
-async def sendAudioMessage(conn: "ConnectionHandler", sentenceType, audios, text, sentence_id=None):
+async def _send_sentence_start(
+    conn,
+    text,
+    sentence_id=None,
+    emotion_context=None,
+):
+    emotion_marker = (sentence_id, emotion_context)
+    if (
+        emotion_context is not None
+        and (conn.features or {}).get("emoji", True)
+        and getattr(conn, "last_tts_emotion_marker", None) != emotion_marker
+    ):
+        await textUtils.send_emotion(
+            conn,
+            emotion_context.emoji,
+            emotion_context.emotion,
+        )
+        conn.last_tts_emotion_marker = emotion_marker
+    await send_tts_message(conn, "sentence_start", text)
+
+
+async def sendAudioMessage(
+    conn: "ConnectionHandler",
+    sentenceType,
+    audios,
+    text,
+    sentence_id=None,
+    emotion_context=None,
+):
     # 跳过旧句子残留音频
     if sentence_id is not None and sentence_id != conn.sentence_id:
         return
@@ -36,11 +64,21 @@ async def sendAudioMessage(conn: "ConnectionHandler", sentenceType, audios, text
             == conn.sentence_id
         ):
             conn.audio_rate_controller.add_message(
-                lambda: send_tts_message(conn, "sentence_start", text)
+                lambda: _send_sentence_start(
+                    conn,
+                    text,
+                    sentence_id,
+                    emotion_context,
+                )
             )
         else:
             # 新句子或流控器未初始化，立即发送
-            await send_tts_message(conn, "sentence_start", text)
+            await _send_sentence_start(
+                conn,
+                text,
+                sentence_id,
+                emotion_context,
+            )
 
     await sendAudio(conn, audios)
     # 发送句子开始消息

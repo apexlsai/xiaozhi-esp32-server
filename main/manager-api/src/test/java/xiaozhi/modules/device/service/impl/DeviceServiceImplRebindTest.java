@@ -103,7 +103,78 @@ class DeviceServiceImplRebindTest {
         assertTrue(result.getConfirmed());
         assertTrue(result.getReconnectRequired());
         verify(deviceAttributeService).updateAgentName(MAC, "导游B");
+        verify(deviceAttributeService, never()).updateLanguage(any(), any());
         verify(redisUtils).delete(anyList());
+    }
+
+    @Test
+    @DisplayName("语言换绑在同一事务中写入基础语言码")
+    void languageRebindPersistsBaseLanguage() {
+        DeviceEntity device = device(OLD_AGENT_ID);
+        AgentEntity current = agent(OLD_AGENT_ID, "小硕-汉语");
+        AgentEntity target = agent(NEW_AGENT_ID, "小硕-粤语-测试");
+        DeviceEntity refreshed = device(NEW_AGENT_ID);
+        DeviceAttributeEntity attribute = new DeviceAttributeEntity();
+        attribute.setDeviceId(MAC);
+        attribute.setAgentName("小硕-粤语-测试");
+        attribute.setLanguage("zh-CN-yue");
+
+        when(deviceDao.selectOne(any(QueryWrapper.class))).thenReturn(device);
+        when(agentDao.selectById(OLD_AGENT_ID)).thenReturn(current);
+        when(agentDao.selectList(any(QueryWrapper.class))).thenReturn(List.of(target));
+        when(deviceDao.update(isNull(), any(UpdateWrapper.class))).thenReturn(1);
+        when(deviceDao.selectById(MAC)).thenReturn(refreshed);
+        when(agentDao.selectById(NEW_AGENT_ID)).thenReturn(target);
+        when(deviceAttributeService.getByDeviceId(MAC)).thenReturn(attribute);
+
+        DeviceRebindDTO dto = request("小硕-汉语", "小硕-粤语-测试", true);
+        dto.setLanguage("zh-CN-yue");
+        dto.setDev(true);
+        DeviceRebindVO result = service.rebindDevice(dto);
+
+        assertEquals("小硕-粤语-测试", result.getAgentName());
+        verify(deviceAttributeService).updateAgentName(MAC, "小硕-粤语-测试");
+        verify(deviceAttributeService).updateLanguage(MAC, "zh-CN-yue");
+    }
+
+    @Test
+    @DisplayName("目标智能体未变化时仍写入并确认基础语言码")
+    void sameAgentLanguageChangePersistsBaseLanguage() {
+        when(deviceDao.selectOne(any(QueryWrapper.class))).thenReturn(device(OLD_AGENT_ID));
+        when(agentDao.selectById(OLD_AGENT_ID)).thenReturn(agent(OLD_AGENT_ID, "小硕-粤语-测试"));
+        DeviceAttributeEntity attribute = new DeviceAttributeEntity();
+        attribute.setAgentName("小硕-粤语-测试");
+        attribute.setLanguage("zh-CN-yue");
+        when(deviceAttributeService.getByDeviceId(MAC)).thenReturn(attribute);
+
+        DeviceRebindDTO dto = request("小硕-粤语-测试", "小硕-粤语-测试", true);
+        dto.setLanguage("zh-CN-yue");
+        dto.setDev(true);
+        DeviceRebindVO result = service.rebindDevice(dto);
+
+        assertEquals("小硕-粤语-测试", result.getAgentName());
+        verify(deviceAttributeService).updateLanguage(MAC, "zh-CN-yue");
+        verify(deviceAttributeService).updateAgentName(MAC, "小硕-粤语-测试");
+        verify(deviceDao, never()).update(any(), any());
+    }
+
+    @Test
+    @DisplayName("language/dev 与目标名称不匹配时拒绝且不写入")
+    void rejectsLanguageTargetMismatch() {
+        when(deviceDao.selectOne(any(QueryWrapper.class))).thenReturn(device(OLD_AGENT_ID));
+        when(agentDao.selectById(OLD_AGENT_ID)).thenReturn(agent(OLD_AGENT_ID, "小硕-汉语"));
+        DeviceRebindDTO dto = request("小硕-汉语", "小硕-粤语", true);
+        dto.setLanguage("zh-CN-yue");
+        dto.setDev(true);
+
+        try (MockedStatic<MessageUtils> messageUtils = mockMessageUtils()) {
+            RenException ex = assertThrows(RenException.class, () -> service.rebindDevice(dto));
+            assertEquals(ErrorCode.DEVICE_REBIND_LANGUAGE_TARGET_MISMATCH, ex.getCode());
+        }
+
+        verify(deviceDao, never()).update(any(), any());
+        verify(deviceAttributeService, never()).updateAgentName(any(), any());
+        verify(deviceAttributeService, never()).updateLanguage(any(), any());
     }
 
     @Test
@@ -207,6 +278,35 @@ class DeviceServiceImplRebindTest {
         }
 
         verify(agentDao).selectList(any(QueryWrapper.class));
+    }
+
+    @Test
+    @DisplayName("测试语言预校验定位同用户测试智能体")
+    void validatesTestLanguageTargetAgent() {
+        when(deviceDao.selectOne(any(QueryWrapper.class))).thenReturn(device(OLD_AGENT_ID));
+        when(agentDao.selectById(OLD_AGENT_ID)).thenReturn(agent(OLD_AGENT_ID, "小硕-汉语"));
+        when(agentDao.selectList(any(QueryWrapper.class)))
+                .thenReturn(List.of(agent(NEW_AGENT_ID, "小硕-粤语-测试")));
+
+        assertEquals("小硕-粤语-测试", service.validateLanguageTargetAgent(MAC, "zh-CN-yue", true));
+    }
+
+    @Test
+    @DisplayName("测试语言目标智能体不存在时返回所需名称")
+    void rejectsMissingTestLanguageTargetAgent() {
+        when(deviceDao.selectOne(any(QueryWrapper.class))).thenReturn(device(OLD_AGENT_ID));
+        when(agentDao.selectById(OLD_AGENT_ID)).thenReturn(agent(OLD_AGENT_ID, "小硕-汉语"));
+        when(agentDao.selectList(any(QueryWrapper.class))).thenReturn(Collections.emptyList());
+
+        try (MockedStatic<MessageUtils> messageUtils = mockStatic(MessageUtils.class)) {
+            messageUtils.when(() -> MessageUtils.getMessage(
+                    ErrorCode.DEVICE_REBIND_TARGET_AGENT_NOT_FOUND, "小硕-粤语-测试"))
+                    .thenReturn("需要名为小硕-粤语-测试的智能体");
+            RenException ex = assertThrows(RenException.class,
+                    () -> service.validateLanguageTargetAgent(MAC, "zh-CN-yue", true));
+            assertEquals(ErrorCode.DEVICE_REBIND_TARGET_AGENT_NOT_FOUND, ex.getCode());
+            assertEquals("需要名为小硕-粤语-测试的智能体", ex.getMsg());
+        }
     }
 
     private MockedStatic<MessageUtils> mockMessageUtils() {

@@ -1,5 +1,6 @@
 """设备端MCP工具执行器"""
 
+import json
 from typing import Dict, Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -15,26 +16,32 @@ class DeviceMCPExecutor(ToolExecutor):
     def __init__(self, conn):
         self.conn = conn
 
+    @staticmethod
+    def _error_result(tool_name: str, message: str) -> ActionResponse:
+        return ActionResponse(
+            action=Action.REQLLM,
+            result=json.dumps(
+                {"status": "error", "tool": tool_name, "message": message},
+                ensure_ascii=False,
+            ),
+        )
+
     async def execute(
         self, conn: "ConnectionHandler", tool_name: str, arguments: Dict[str, Any]
     ) -> ActionResponse:
         """执行设备端MCP工具"""
         if not hasattr(conn, "mcp_client") or not conn.mcp_client:
-            return ActionResponse(
-                action=Action.ERROR,
-                response="设备端MCP客户端未初始化",
+            return self._error_result(
+                tool_name, "设备能力尚未初始化，请稍后重试"
             )
 
         if not await conn.mcp_client.is_ready():
-            return ActionResponse(
-                action=Action.ERROR,
-                response="设备端MCP客户端未准备就绪",
+            return self._error_result(
+                tool_name, "设备能力尚未准备就绪，请稍后重试"
             )
 
         try:
             # 转换参数为JSON字符串
-            import json
-
             args_str = json.dumps(arguments) if arguments else "{}"
 
             # 调用设备端MCP工具
@@ -60,10 +67,12 @@ class DeviceMCPExecutor(ToolExecutor):
 
             return ActionResponse(action=Action.REQLLM, result=str(result))
 
-        except ValueError as e:
-            return ActionResponse(action=Action.NOTFOUND, response=str(e))
-        except Exception as e:
-            return ActionResponse(action=Action.ERROR, response=str(e))
+        except ValueError:
+            return self._error_result(tool_name, "当前设备不支持这个操作")
+        except TimeoutError:
+            return self._error_result(tool_name, "设备响应超时，请稍后重试")
+        except Exception:
+            return self._error_result(tool_name, "设备操作失败，请稍后重试")
 
     def get_tools(self) -> Dict[str, ToolDefinition]:
         """获取所有设备端MCP工具"""

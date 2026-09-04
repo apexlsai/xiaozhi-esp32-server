@@ -1,6 +1,5 @@
 package xiaozhi.modules.device.service.impl;
 
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -25,6 +24,7 @@ import xiaozhi.modules.device.dao.DeviceDao;
 import xiaozhi.modules.device.entity.DeviceAttributeEntity;
 import xiaozhi.modules.device.entity.DeviceEntity;
 import xiaozhi.modules.device.service.DeviceAttributeService;
+import xiaozhi.modules.device.support.DeviceLanguageSpec;
 
 @Service
 @AllArgsConstructor
@@ -34,17 +34,6 @@ public class DeviceAttributeServiceImpl extends BaseServiceImpl<DeviceAttributeD
     private final DeviceAttributeDao deviceAttributeDao;
     private final DeviceDao deviceDao;
     private final AgentDao agentDao;
-
-    private static final List<String> SUPPORTED_LANGUAGES = Arrays.asList(
-            "zh-CN",
-            "en",
-            "ja",
-            "ko",
-            "zh-CN-yue",
-            "zh-CN-sichuan",
-            "zh-CN-shanghai",
-            "zh-CN-minnan",
-            "zh-CN-shanxi");
 
     @Override
     public DeviceAttributeEntity getByDeviceId(String deviceId) {
@@ -81,7 +70,7 @@ public class DeviceAttributeServiceImpl extends BaseServiceImpl<DeviceAttributeD
         if (StringUtils.isBlank(deviceId)) {
             return;
         }
-        if (StringUtils.isNotBlank(language) && !SUPPORTED_LANGUAGES.contains(language)) {
+        if (StringUtils.isNotBlank(language) && !DeviceLanguageSpec.isSupported(language)) {
             throw new RenException(ErrorCode.DEVICE_ATTRIBUTE_LANGUAGE_INVALID);
         }
         DeviceAttributeEntity entity = getByDeviceId(deviceId);

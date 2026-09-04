@@ -130,7 +130,9 @@ class TTSProvider(TTSProviderBase):
         )  # 16-bit = 2 bytes
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(self.api_url, json=payload, timeout=10) as resp:
+                async with session.post(
+                    self.api_url, json=payload, timeout=self.tts_timeout
+                ) as resp:
 
                     if resp.status != 200:
                         logger.bind(tag=TAG).error(
@@ -212,7 +214,9 @@ class TTSProvider(TTSProviderBase):
         payload = {"text": text, "character": self.voice}
 
         try:
-            with requests.post(self.api_url, json=payload, timeout=5) as response:
+            with requests.post(
+                self.api_url, json=payload, timeout=self.tts_timeout
+            ) as response:
                 if response.status_code != 200:
                     logger.bind(tag=TAG).error(
                         f"TTS请求失败: {response.status_code}, {response.text}"

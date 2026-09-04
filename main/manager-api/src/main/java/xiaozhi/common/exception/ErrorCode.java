@@ -178,6 +178,7 @@ public interface ErrorCode {
     int DEVICE_REBIND_TARGET_AGENT_AMBIGUOUS = 10254; // 同用户下目标智能体名称重复
     int DEVICE_REBIND_CONFLICT = 10255; // 换绑冲突，设备绑定已变化
     int DEVICE_REBIND_CONFIRM_FAILED = 10256; // 换绑回读确认失败
+    int DEVICE_REBIND_LANGUAGE_TARGET_MISMATCH = 10257; // language/dev 与目标智能体不匹配
 
     int DOWNLOAD_LINK_EXPIRED = 10136; // 下载链接已过期或无效
     int DOWNLOAD_LINK_INVALID = 10137; // 下载链接无效

@@ -28,4 +28,10 @@ public class DeviceRebindDTO implements Serializable {
     @NotNull(message = "confirm不能为空")
     @AssertTrue(message = "必须确认换绑")
     private Boolean confirm;
+
+    @Schema(description = "语言切换时同步保存的规范语言码")
+    private String language;
+
+    @Schema(description = "语言切换时是否选择测试智能体")
+    private Boolean dev;
 }

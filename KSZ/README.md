@@ -39,20 +39,13 @@ docker compose up -d --build
 
 ## 依赖服务端口
 
-Host 网络模式下，web 容器通过宿主机端口连接 MySQL 和 Redis。使用 `KSZ/.env` 配置这两个依赖端口；首次部署默认配置为 MySQL `3307`、Redis `6379`。如需重新生成配置：
+Bridge 网络模式下，MySQL、Redis 仅在 Compose 内网暴露，不占用宿主机自定义端口。信标位置服务在宿主机运行时，server 容器经 `host.docker.internal` 访问，可在 `KSZ/.env` 中配置 `BEACON_LOCATION_API`：
 
 ```bash
 cp .env.example .env
 ```
 
-修改 `MYSQL_PORT` 或 `REDIS_PORT` 后，需重新创建整套服务，使 MySQL、Redis 和 web 使用同一组端口：
-
-```bash
-docker compose down
-docker compose up -d --build
-```
-
-`8000`、`8002`、`8004` 分别是 server WebSocket、智控台、server HTTP 端口，保持固定，不在 `.env` 中配置。Docker web 镜像内 Java 另占用宿主机 `8003`（由 Nginx `8002` 反代）。
+`8000`、`8002`、`8003` 分别是 server WebSocket、智控台、server HTTP 端口，与上游全模块 Docker 一致。
 
 ## 常用操作
 
@@ -150,7 +143,8 @@ docker compose logs -f xiaozhi-esp32-server | grep "发送给LLM的请求"
 - `pull access denied for xiaozhi-esp32-server`：确认命令在 `KSZ/` 执行，并使用 `docker compose up -d --build`；本地镜像必须由 `build` 段生成。
 - server 报缺少 `TTS` 或设备无法识别语音：重建 web，清 Redis 的 `server:config`，再重启 server。
 - 数据库已迁移但 web 报 `Unknown column 'attr_key'`：web 镜像与数据库结构不一致，按“更新代码后的部署”重建 web。
-- 容器启动失败或端口无法监听：检查 `8000`、`8002`、`8003`、`${MYSQL_PORT}`、`${REDIS_PORT}` 是否已被宿主机进程占用。
+- 容器启动失败或端口无法监听：检查 `8000`、`8002`、`8003`、`8004`、`${MYSQL_PORT}`、`${REDIS_PORT}` 是否已被宿主机进程占用。
+- `curl :8004/mcp/vision/explain` 报「MCP Vision 接口运行不正常」：`data/.config.yaml` 缺 `server.vision_explain` 或仍为上游默认 `8003`；见下文「Server 与智控台连接」。
 
 版本变更、迁移背景与已知问题见 [CHANGELOG.md](CHANGELOG.md)（Keep a Changelog，自 `0.1.1` 起按版本记录）。
 
@@ -158,20 +152,50 @@ docker compose logs -f xiaozhi-esp32-server | grep "发送给LLM的请求"
 
 ### Server 与智控台连接
 
-`data/.config.yaml` 中的 `manager-api.url` 必须指向智控台 API；`secret` 与数据库 `sys_params` 表的 `server.secret` 保持一致。Host 网络模式下可使用宿主机地址或 `127.0.0.1`：
+全模块部署时，`data/.config.yaml` 只需保留连接智控台与 Host 网络端口相关项；模型密钥等在智控台【模型配置】维护。`secret` 与 `sys_params` 表中的 `server.secret` 保持一致。
+
+Host 网络下 **不要沿用上游默认 `http_port: 8003`**：Java manager-api 已占用宿主机 `8003`，xiaozhi-server HTTP（视觉、内部回调）须用 **`8004`**。
+
+推荐 `data/.config.yaml` 模板（将 `<HOST_IP>` 换为设备可达的局域网 IP 或公网 IP/域名）：
 
 ```yaml
+server:
+  ip: 0.0.0.0
+  port: 8000
+  http_port: 8004
+  # 必填：GET /mcp/vision/explain 健康检查及设备下发均依赖此项
+  # 内网可先留占位符，启动时自动探测本机 IP + http_port
+  vision_explain: http://<HOST_IP>:8004/mcp/vision/explain
+
 manager-api:
   url: http://127.0.0.1:8002/xiaozhi
   secret: <从 sys_params 的 server.secret 获取>
-server:
-  port: 8000
-  http_port: 8004
+
+tool_feedback:
+  enabled: true
+  delay_ms: 500
+  tools:
+    self_camera_take_photo: "我看看。"
+
+prompt_template: agent-base-prompt.txt
 ```
 
-> Host 网络下 web 容器 Java 固定监听 `8003`，因此 `server.http_port` 必须用 `8004`；`sys_params.server.internal_api` 同步为 `http://127.0.0.1:8004`。
+`tool_feedback` 在设备 MCP 工具执行超过设定时间时播放临时提示；工具快速完成、失败、超时、会话中断或连接关闭时取消尚未播放的提示。提示不经过 Agent，也不写入对话历史。
 
-服务对外地址在 `sys_params` 中维护。将 `<HOST_IP>` 替换为实际 IP 或域名：
+配置职责（避免与上游 bridge 默认混淆）：
+
+| 配置项 | 写入位置 | KSZ 端口 / 地址 |
+|--------|----------|-----------------|
+| 连接智控台 | `.config.yaml` → `manager-api` | `http://127.0.0.1:8002/xiaozhi` |
+| WebSocket（设备） | `sys_params.server.websocket` | `ws://<HOST_IP>:8000/xiaozhi/v1/` |
+| OTA（设备） | `sys_params.server.ota` | `http://<HOST_IP>:8002/xiaozhi/ota/` |
+| 视觉 HTTP | `.config.yaml` + `sys_params.server.vision_explain` | `http://<HOST_IP>:8004/mcp/vision/explain` |
+| 内部回调 | `sys_params.server.internal_api` | `http://127.0.0.1:8004`（勿填 `8003`） |
+| manager-api Java | 无需配置 | 宿主机 `8003`，由 `8002` 反代 |
+
+> 全模块模式下，`.config.yaml` 的 `server` 段会覆盖 API 返回值。若未写 `vision_explain`，即使智控台已填 `server.vision_explain`，GET 检查仍会报「运行不正常」。
+
+设备与对外地址写入 `sys_params`：
 
 ```bash
 docker compose exec xiaozhi-esp32-server-db \
@@ -179,10 +203,48 @@ docker compose exec xiaozhi-esp32-server-db \
   UPDATE sys_params SET param_value='ws://<HOST_IP>:8000/xiaozhi/v1/'
   WHERE param_code='server.websocket';
   UPDATE sys_params SET param_value='http://<HOST_IP>:8002/xiaozhi/ota/'
-  WHERE param_code='server.ota';"
+  WHERE param_code='server.ota';
+  UPDATE sys_params SET param_value='8004'
+  WHERE param_code='server.http_port';
+  UPDATE sys_params SET param_value='http://127.0.0.1:8004'
+  WHERE param_code='server.internal_api';
+  UPDATE sys_params SET param_value='http://<HOST_IP>:8004/mcp/vision/explain'
+  WHERE param_code='server.vision_explain';"
 ```
 
-修改后清除配置缓存并重启 server。
+修改后清除配置缓存并重启 server：
+
+```bash
+docker compose exec xiaozhi-esp32-server-redis redis-cli DEL server:config
+docker compose restart xiaozhi-esp32-server
+```
+
+验证视觉接口（公网部署须放行安全组/防火墙 **8004**）：
+
+```bash
+curl http://<HOST_IP>:8004/mcp/vision/explain
+# 正常：MCP Vision 接口运行正常，视觉解释接口地址是：http://...
+```
+
+视觉模型密钥与智能体绑定见下文「视觉模型（VLLM）」；上游 [`mcp-vision-integration.md`](../docs/mcp-vision-integration.md) 中的 **`8003` 端口不适用 KSZ Host 部署**，一律改为 **`8004`**。
+
+### 视觉模型（VLLM）
+
+地址与端口按上文「Server 与智控台连接」配好 `vision_explain` 并通过 `curl` 健康检查后再启用识图。
+
+Museum Guide Agent 接入使用智控台现有的 OpenAI VLLM，无需新增 Provider 或数据库迁移：
+
+1. 智控台【模型配置】→【视觉大语言模型】新增模型，接口类型选择 `OpenAI接口`。
+2. `base_url` 填写 `https://<MUSEUM_AGENT_HOST>/v1`，`model_name` 填写 `museum-guide-vision`，`api_key` 填写 Museum Agent 当前有效密钥。
+3. 在目标智能体【配置角色】中，将「视觉大语言模型(VLLM)」选为该模型并保存。
+4. 清除 Redis 配置缓存并重启 server（见上文命令）。
+5. 设备固件 ≥ 1.6.6，唤醒后说「请打开摄像头，说你看到了什么」，并查看 server 日志是否有 VLLM 报错。
+
+`server.vision_explain` 始终填写本 xiaozhi-server 的 `/mcp/vision/explain`，不能填写 Museum Agent 地址。小智会把图片、问题、`device_id`、规范语言码和最近 Beacon ID 转发给 `museum-guide-vision`，Museum Agent 返回最终可播报文本。
+
+KSZ 保留上游原版视觉协议：MCP `initialize` 继续下发 `vision.url` 与 `vision.token`，当前官方固件通过 `file` 字段上传，服务端返回 `success`、`action` 与 `response`。KSZ 同时兼容旧客户端的 `image` 字段并透传 Museum Guide 上下文，不要求固件实现额外的 `tool_choice`、Token 刷新通知或新的响应结构。
+
+生产环境必须使用内网或 HTTPS 连接 Museum Agent。不要通过公网明文 HTTP 传输游客图片和 Bearer Token；曾出现在命令、日志或聊天记录中的密钥应立即轮换。
 
 ### 配置 FunASR
 
@@ -219,12 +281,23 @@ docker compose exec xiaozhi-esp32-server-db \
     \"type\":\"openai\",
     \"api_key\":\"<API_KEY>\",
     \"base_url\":\"http://<LLM_HOST>:15000/v1/\",
-    \"model_name\":\"<MODEL_NAME>\"
+    \"model_name\":\"<MODEL_NAME>\",
+    \"enable_thinking\":false
   }'
   WHERE id IN ('LLM_ChatGLMLLM', 'SLM_ChatGLMLLM');"
 docker compose exec xiaozhi-esp32-server-redis redis-cli FLUSHALL
 docker compose restart xiaozhi-esp32-server
 ```
+
+智控台 OpenAI 模型配置提供“允许思考模式”开关，默认关闭。关闭时，Museum Guide Agent 请求会携带顶层 `enable_thinking: false`；阿里、DeepSeek、智谱、Moonshot 和火山等已知兼容服务使用各自的禁用参数；未知 OpenAI 兼容服务不附加厂商字段，避免 HTTP 400。打开开关仅取消 Xiaozhi 的禁用参数，由模型服务采用自身默认行为。
+
+Xiaozhi 默认不再向真实会话注入“讲故事/拜拜”工具调用示例。只有兼容极小旧模型时，才在 `KSZ/data/.config.yaml` 中显式开启：
+
+```yaml
+tool_call_fewshot_enabled: true
+```
+
+`direct_answer` 虚拟工具仍然保留，用于降低支持函数调用的小模型误触发真实工具的概率。
 
 测试模型网关连通性：
 
@@ -266,6 +339,7 @@ docker compose exec xiaozhi-esp32-server-db \
 
 - `202607101600.sql`：列模式重建（`language`、`last_beacon_id`）
 - `202607311534.sql`：新增 `agent_name` 并按 `ai_device.agent_id` 回填
+- `202608131200.sql`：将旧 `*-test` 及 `VARCHAR(16)` 截断值清理为基础规范语言码
 
 正常部署由 manager-api 启动时自动执行。若旧库仍为 key-value 结构且需手动迁移，先备份再执行：
 
@@ -454,33 +528,49 @@ Authorization: Bearer <server.secret>
 
 规则：
 
+- `language` 始终使用表中的规范码，不允许追加 `-test`；测试智能体由同级布尔参数 `dev` 选择。
+- `dev=true` 切换到 `<基名>-<语言后缀>-测试`，缺省或 `false` 切换到生产智能体。例如 `language=zh-CN-yue, dev=true` 对应 `小硕-粤语-测试`。
 - 语种：`zh-CN` / `en` / `ja` / `ko`（语言小写或 `zh`，地区大写；与 BCP 47 常见写法一致）。
 - 汉语方言：`zh-CN-{pinyin_of_region}`，地区拼音全小写、无声调，如 `zh-CN-sichuan`。
 - 粤语固定为 `zh-CN-yue`（不写 `zh-HK` / `yue`）。
 - 智能体命名必须为 `<基名>-<后缀>`，例如 `小硕-汉语`、`小硕-英语`、`小硕-粤语`、`小硕-日语`、`小硕-韩语`；换绑按后缀推导，同一基名下各语言智能体并存。
 
 服务会根据当前智能体的任一已知语言后缀和目标语言码推导目标智能体，例如 `小硕-粤语` + `ja` → `小硕-日语`。
+生产与测试智能体可双向切换，例如 `小硕-粤语-测试` + `language=en, dev=true` → `小硕-英语-测试`，`小硕-粤语-测试` + `language=en, dev=false` → `小硕-英语`。
 
 ### 语言切换（智能体切换路线）
 
 KSZ 不走“按 `device_language` 强制翻译”路线（`agent-base-prompt.txt` 的 `output_language_directive` 段已移除），回复语言完全由当前绑定智能体自身的 `base_prompt` 决定。因此**语言切换 = 切换到对应语言的智能体**，复用上面的换绑流程。
 
-外部系统调用事件上报接口后，manager-api 先持久化 `language`，再回调 xiaozhi-server 内部接口；**server 在线时直接换绑并断开重连**，不再依赖设备回传命令：
+设备希望首次 WebSocket 连接即使用目标智能体时，可把原有事件结构直接作为 OTA 请求体发送到 `POST /xiaozhi/ota/`。manager-api 会在生成 WebSocket 地址和 JWT 前完成换绑；此时尚未建立 WebSocket，因此无需先连接再断开：
 
 ```json
 {
   "deviceId": "{{DEVICE_ID}}",
   "event": "language_change",
-  "payload": { "language": "zh-CN-yue" },
+  "payload": { "language": "zh-CN", "dev": true },
+  "timestamp": {{$timestamp}}
+}
+```
+
+`Device-Id` 请求头仍为设备身份的权威值；请求体携带 `deviceId` 时必须与该请求头一致。OTA 的普通固件字段可与上述字段并存。重复提交同一目标是幂等的。若目标智能体不存在、重名或参数错误，OTA 响应包含 `error` 且不返回 WebSocket 配置，设备应修正配置后重试。
+
+外部系统调用事件上报接口后，manager-api 先校验语言与目标智能体，再回调 xiaozhi-server 的 `/internal/device/language-change-v2`；server 调用 `/device/rebind`，在同一事务内完成智能体换绑及基础 `language` 持久化，随后断开设备连接。v2 端点用于在滚动升级时拒绝旧 server，避免 `dev` 被忽略后误绑生产智能体；旧内部端点仅保留用于兼容旧 manager-api，并会在新 server 内把历史 `*-test` 入参规范化为基础语言码。滚动发布须先升级 manager-api、再升级 xiaozhi-server：中间阶段 v2 回调会安全失败且不改库，待 server 升级后恢复：
+
+```json
+{
+  "deviceId": "{{DEVICE_ID}}",
+  "event": "language_change",
+  "payload": { "language": "zh-CN-yue", "dev": true },
   "timestamp": {{$timestamp}}
 }
 ```
 
 HTTP 层恒为 `200`，业务成败看 JSON 的 `code`（`0` 成功，非 `0` 失败）。这是 manager-api 的 `Result` 约定，不是传输异常。`code=0` 表示语言已保存且换绑已在 server 侧执行（设备须在线）。
 
-`server.internal_api`（参数字典）**必须**指向 xiaozhi-server 内部 HTTP，Host 网络 Docker 部署下为 `http://127.0.0.1:8004`（不要填 `8003`，那是 manager-api Java）；回调使用 `server.secret` 的 Bearer 鉴权。未配置时会出现：语言属性已写入，但 `code=500`，msg 含「下发设备语言切换命令失败」/ `未配置 server.internal_api`。
+`server.internal_api`（参数字典）**必须**指向 xiaozhi-server 内部 HTTP，Host 网络 Docker 部署下为 `http://127.0.0.1:8004`（不要填 `8003`，那是 manager-api Java）；回调使用 `server.secret` 的 Bearer 鉴权。未配置或换绑失败时返回非零业务码，语言属性与设备绑定均保持原值。
 
-设备也可直接通过 WebSocket 上报 `device_event` / `language_change`，效果相同。`target_agent_name` 缺省时，server 使用命名规则推导：
+设备也可直接通过 WebSocket 上报 `device_event` / `language_change`，效果相同。目标智能体始终由 `language` 与 `dev` 推导，设备传入的 `target_agent_name` 不会覆盖该规则：
 
 ```json
 {
@@ -489,15 +579,17 @@ HTTP 层恒为 `200`，业务成败看 JSON 的 `code`（`0` 成功，非 `0` �
   "request_id": "lang-001",
   "payload": {
     "language": "zh-CN-yue",
+    "dev": true,
     "current_agent_name": "小硕-英语"
   }
 }
 ```
 
 - 当前智能体名后缀须在「语言码约定」表中，否则无法推导目标智能体（例如 `小硕-英语` + `zh-CN-yue` → `小硕-粤语`）。
-- `language` 持久化到设备属性；重连后及后续对话会继续作为 `extra_body.language` 发送给下游 LLM。
+- `language` 持久化到设备属性；无论 `dev` 取值如何，数据库与下游 `extra_body.language` 都只使用原规范码，不写入 `-test`。
 - 成功后 server 调用 `POST /xiaozhi/device/rebind` 换绑并主动断开，设备重连即加载新语言智能体。
 - 失败（无法推导目标、智能体不存在/重名、设备离线、未配置 `server.internal_api`、未启用 manager-api 等）时业务 `code≠0` 或 WS `success=false`。
+- manager-api 会在回调前校验同用户下的目标智能体。若上报 `language=zh-CN-yue, dev=true` 但 `小硕-粤语-测试` 不存在，返回 `code=10253`、`msg=需要名为小硕-粤语-测试的智能体`，语言属性和设备绑定保持不变。
 
 `PUT /xiaozhi/device/attribute/{deviceId}/language` 仍可用，但仅写入 `language` 属性，**不会切换智能体也不会触发翻译**；切换语言请用上面的 `language_change` 事件或直接调用 `/device/rebind`。
 
@@ -552,6 +644,48 @@ curl --request GET \
   --header 'accept: application/json'
 ```
 
+### 多段表情与 MiMo 动态语气
+
+普通短回答仍只使用一个句首 Emoji；较长回答允许在新情绪句段开头使用最多三个白名单 Emoji。服务端会移除朗读文本中的 Emoji，并在对应音频分句开始前向设备发送表情消息。双流式或不支持情绪上下文的 TTS 保持原合成参数，表情消息采用兼容回退路径。
+
+MiMo 可把页面下发的基础风格与情绪描述组合为 user message，无需额外调用 LLM：
+
+```yaml
+TTS:
+  MimoTTS:
+    type: mimo
+    style: "声音干练、清晰、专业，具有博物馆资深导览员的自信与从容。"
+    emotion_style_enabled: true
+    emotion_styles:
+      joy: "声音轻快，带明显笑意，节奏活泼。"
+      sad: "声音温和低沉，语速稍缓，避免夸张哭腔。"
+      "😆": "笑意更明显，节奏更活泼。"
+```
+
+`emotion_styles` 支持两级覆盖：具体 Emoji 优先于情绪类别，未配置时回退内置描述。可用类别为 `neutral`、`warm`、`joy`、`sad`、`sleepy`、`angry`、`surprise`、`thinking`、`confident`。
+
+以 `😆` 片段为例，MiMo 最终收到：
+
+```json
+[
+  {"role":"user","content":"声音干练、清晰、专业，具有博物馆资深导览员的自信与从容。 当前片段的表达方式：笑意更明显，节奏更活泼。"},
+  {"role":"assistant","content":"真的假的啦，这件事也太好笑了。"}
+]
+```
+
+代码中的 `emotion_style_enabled` 默认值为关闭；管理后台迁移后的 MiMo 默认模型会显式开启。只有声明支持描述词的 Provider 才会消费动态情绪上下文，其他 TTS 会忽略该能力并继续使用原接口。
+
+### 阿里百炼 Workspace TTS
+
+智控台【模型配置】→【语音合成】→【阿里百炼（流式）】提供 `ws_url`。旧公有地址无需修改；业务空间按地域填写完整地址，其中 `<WorkspaceId>` 替换为真实业务空间 ID：
+
+```text
+wss://<WorkspaceId>.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference
+wss://<WorkspaceId>.ap-southeast-1.maas.aliyuncs.com/api-ws/v1/inference
+```
+
+该配置不读取 `.env`。保存后清除 Redis 配置缓存并重启 server。为避免 API Key 泄露，Provider 仅接受阿里云官方域名、`wss` 协议和 `/api-ws/v1/inference` 路径。
+
 ### 定向语音开发 WebSocket
 
 开发控制端连接 `ws://<SERVER_HOST>:8000/dev/ws` 后，可查询在线设备，并向指定真实设备注入文本；目标设备会沿用原有 LLM、TTS 和 Opus 音频下发流程。
@@ -596,5 +730,5 @@ docker compose restart xiaozhi-esp32-server
 
 - [MCP 接入点部署](../docs/mcp-endpoint-enable.md)
 - [MCP 接入点使用](../docs/mcp-endpoint-integration.md)
-- [视觉模型 MCP 集成](../docs/mcp-vision-integration.md)
+- [视觉模型 MCP 集成](../docs/mcp-vision-integration.md)（KSZ Host 部署请将文档中 **8003** 改为 **8004**）
 - [通过 MCP 获取设备信息](../docs/mcp-get-device-info.md)

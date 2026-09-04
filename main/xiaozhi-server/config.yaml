@@ -60,9 +60,15 @@ delete_audio: true
 # 没有语音输入多久后断开连接(秒)，默认2分钟，即120秒
 close_connection_no_voice_time: 120
 # TTS请求超时时间(秒)
-tts_timeout: 10
+tts_timeout: 15
 # 工具调用超时时间(秒)
 tool_call_timeout: 30
+# 慢工具等待期间的临时语音反馈，不写入对话历史
+tool_feedback:
+  enabled: true
+  delay_ms: 500
+  tools:
+    self_camera_take_photo: "我看看。"
 # 开启唤醒词加速
 enable_wakeup_words_response_cache: true
 # 开场是否回复唤醒词
@@ -246,7 +252,7 @@ selected_module:
   # 不想开通意图识别，就设置成：nointent
   # 意图识别可使用intent_llm。优点：通用性强，缺点：增加串行前置意图识别模块，会增加处理时间，支持控制音量大小等iot操作
   # 意图识别可使用function_call，缺点：需要所选择的LLM支持function_call，优点：按需调用工具、速度快，理论上能全部操作所有iot指令
-  # 默认免费的ChatGLMLLM就已经支持function_call，但是如果像追求稳定建议把LLM设置成：DoubaoLLM，使用的具体model_name是：doubao-1-5-pro-32k-250115
+  # 默认免费的ChatGLMLLM就已经支持function_call，但是如果像追求稳定建议把LLM设置成：DoubaoLLM，使用的具体model_name是：doubao-seed-2-0-lite-260215
   Intent: function_call
 
 # 意图识别，是用于理解用户意图的模块，例如：播放音乐
@@ -638,12 +644,12 @@ LLM:
   DoubaoLLM:
     # 定义LLM API类型
     type: openai
-    # 先开通服务，打开以下网址，开通的服务搜索Doubao-1.5-pro，开通它
+    # 先开通服务，打开以下网址，开通的服务搜索Doubao-Seed-2.0-Lite，开通它
     # 开通地址：https://console.volcengine.com/ark/region:ark+cn-beijing/openManagement?LLM=%7B%7D&OpenTokenDrawer=false
     # 免费额度500000token
     # 开通后，进入这里获取密钥：https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D
     base_url: https://ark.cn-beijing.volces.com/api/v3
-    model_name: doubao-1-5-pro-32k-250115
+    model_name: doubao-seed-2-0-lite-260215
     api_key: 你的doubao web key
   DeepSeekLLM:
     # 定义LLM API类型
@@ -1097,6 +1103,13 @@ TTS:
     format: wav
     # 风格/语调描述（可选），作为 user message 传入，留空则只发 assistant 文本
     # style: "Bright, bouncy, slightly sing-song tone"
+    # 根据回复中的分段 Emoji 追加情绪描述；仅 MiMo 消费，其他 TTS 不受影响
+    emotion_style_enabled: true
+    # 支持情绪类别或具体 Emoji 作为键；未配置的键回退到内置描述
+    # emotion_styles:
+    #   joy: "声音轻快，带明显笑意，节奏活泼。"
+    #   sad: "声音温和低沉，语速稍缓。"
+    #   "😆": "笑意更明显，节奏更活泼。"
     output_dir: tmp/
   CustomTTS:
     # 自定义的TTS接口服务，请求参数可自定义，可接入众多TTS服务
@@ -1151,6 +1164,8 @@ TTS:
     # cosyvoice-v3和部分音色需要申请开通
     type: alibl_stream
     api_key: 你的api_key
+    # 默认兼容旧地址；业务空间请替换为 wss://<WorkspaceId>.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference
+    ws_url: wss://dashscope.aliyuncs.com/api-ws/v1/inference/
     model: "cosyvoice-v2"
     voice: "longcheng_v2"
     output_dir: tmp/

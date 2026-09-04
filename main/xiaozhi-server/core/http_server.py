@@ -13,7 +13,7 @@ class SimpleHttpServer:
         self.config = config
         self.logger = setup_logging()
         self.ota_handler = OTAHandler(config)
-        self.vision_handler = VisionHandler(config)
+        self.vision_handler = VisionHandler(config, websocket_server)
         self.device_command_handler = DeviceCommandHandler(config, websocket_server)
 
     def _get_websocket_url(self, local_ip: str, port: int) -> str:
@@ -69,6 +69,10 @@ class SimpleHttpServer:
                     [
                         web.post(
                             "/internal/device/language-change",
+                            self.device_command_handler.handle_legacy_language_change,
+                        ),
+                        web.post(
+                            "/internal/device/language-change-v2",
                             self.device_command_handler.handle_language_change,
                         ),
                         web.get("/mcp/vision/explain", self.vision_handler.handle_get),

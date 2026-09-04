@@ -6,6 +6,26 @@
 
 ## [Unreleased]
 
+### 变更
+- 阿里百炼流式 TTS 使用服务端 `sentence-begin.original_text` 逐句下发字幕，使屏幕文字与对应音频同步；旧事件格式保留一次性整段字幕回退。
+- 阿里百炼流式 TTS 的 WebSocket 建连启用 Happy Eyeballs；IPv6 不可达时快速并行回退 IPv4，并统一使用 `tts_timeout` 控制握手超时。
+- 阿里百炼流式 TTS 新增可配置 `ws_url`，兼容含 Workspace ID 的北京与新加坡 MaaS WebSocket 地址；旧 DashScope 地址继续作为默认值，智控台同步提供该字段并限制 API Key 仅发送至阿里云官方 WSS 推理端点。
+- 默认关闭 `function_call` 的“讲故事/拜拜”测试 few-shot 注入，避免其进入真实请求历史；保留 `direct_answer` 虚拟工具，并提供 `tool_call_fewshot_enabled` 兼容开关。OpenAI 模型新增“允许思考模式”配置，默认关闭；Museum Guide Agent 显式接收 `enable_thinking: false`，已知厂商使用对应参数，未知兼容服务不附加厂商字段。
+- `main/xiaozhi-server/agent-base-prompt.txt` 将单一开头 Emoji 扩展为最多三个句段情绪标记；服务端按 TTS 分句同步设备表情，并为声明支持描述词的 Provider 传递可选情绪上下文，MiMo 可通过 `emotion_style_enabled` 启用分段语气，并通过管理页面的 `emotion_styles` 参数覆盖情绪类别或具体 Emoji 的描述。
+
+- 设备 MCP 拍照工具执行超过 500ms 时由 Xiaozhi 服务端播放临时提示“我看看。”；快速完成、异常、中断或连接关闭时取消，且不写入 Agent 对话历史。
+- MCP Vision 直连请求完成后按 `Device-Id` 将识别结果推送至在线设备 TTS；存在待处理设备 MCP 工具调用时跳过直推，避免同一结果重复播报。
+- 保持上游单 Agent `function_call` 与 MCP 链路，仅为 KSZ Agent 集成增加结构化工具错误降级，使设备未就绪、不支持、失败或超时时由 Agent 生成自然提示。
+- OTA 连接前支持复用既有 `deviceId/event/payload/timestamp` 结构提交 `language_change`；manager-api 在返回 WebSocket 配置前完成语言智能体换绑，使首次连接直接加载目标智能体，同时保留在线事件回调与 WebSocket 换绑链路。
+- 视觉链路保持上游 MCP `vision.url/token`、multipart `file` 与 `action/response` 契约；KSZ 增强仅以加法方式兼容旧客户端 `image` 和 Museum Guide Agent 上下文，不引入固件专用协议。
+- MCP Vision 的 multipart 图片字段同时兼容官方固件使用的 `file` 与既有客户端使用的 `image`。
+- MCP Vision 支持 Museum Guide Agent 的 `museum-guide-vision` OpenAI 入口：透传设备、语言和 Beacon 上下文，保留真实图片 MIME，并在线程中执行同步 VLLM 请求以避免阻塞事件循环；README 补充智控台手工配置与传输安全要求。
+- 语言切换改用独立布尔参数 `dev` 选择 `<基名>-<语言后缀>-测试` 智能体；`language` 始终保持原规范码，并与智能体换绑在同一事务持久化；新增 v2 内部回调防止滚动升级时旧 server 忽略 `dev`，并增加迁移清理旧 `-test` 及可能被截断的历史值。
+- README：补充 KSZ Host 下 `data/.config.yaml` 完整模板、`server.vision_explain` 与 `sys_params` 同步 SQL、配置职责表、视觉健康检查及 VLLM 启用步骤；明确上游视觉文档端口 `8003` 不适用于 KSZ。
+- 修复 MCP Vision POST 中文 `question` 触发 ASCII 编码错误，以及 aiohttp JSON 响应错误设置 `charset` 后返回 `None` 和 HTTP 500；VLLM 请求改用 httpx 直连并返回可读错误信息。
+- VLLM `base_url` 自动规范化：缺 `/v1` 时补全，避免 404。
+- VLLM：API Key 仍为占位符时在初始化阶段 fail-fast，避免 httpx 组装 Authorization 头时出现 `'ascii' codec can't encode` 误导性报错。
+
 ## [0.1.2]
 
 ### 新增

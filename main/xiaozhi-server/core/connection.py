@@ -38,7 +38,12 @@ from plugins_func.loadplugins import auto_import_modules
 from plugins_func.register import Action, ActionResponse, all_function_registry, module_func_map
 from core.auth import AuthenticationError
 from config.config_loader import get_private_config_from_api
-from core.providers.tts.dto.dto import ContentType, TTSMessageDTO, SentenceType
+from core.providers.tts.dto.dto import (
+    ContentType,
+    InterfaceType as TTSInterfaceType,
+    SentenceType,
+    TTSMessageDTO,
+)
 from config.logger import setup_logging, build_module_string, create_connection_logger
 from config.manage_api_client import DeviceNotFoundException, DeviceBindException, generate_and_save_chat_title
 from core.utils.prompt_manager import PromptManager
@@ -46,6 +51,11 @@ from core.utils.voiceprint_provider import VoiceprintProvider
 from core.utils.util import get_system_error_response
 from core.utils.beacon_location import fetch_beacon_location
 from core.utils import textUtils
+from core.utils.tool_feedback import ToolFeedbackScheduler
+from core.utils.tts_emotion import (
+    EmotionStreamParser,
+    strip_emotion_markers,
+)
 
 
 TAG = __name__
@@ -135,6 +145,7 @@ class ConnectionHandler:
         self.vad = None
         self.asr = None
         self.tts = None
+        self.tool_feedback = ToolFeedbackScheduler(self)
         self._asr = _asr
         self._vad = _vad
         self.llm = _llm
@@ -708,6 +719,11 @@ class ConnectionHandler:
         负样本（直接回答示例）放在动态 system 之后、紧挨真实用户消息，
         确保模型在处理用户消息前最后看到的是"不调工具"的行为模式。
         """
+        enabled = self.config.get("tool_call_fewshot_enabled", False)
+        if isinstance(enabled, str):
+            enabled = enabled.strip().lower() in {"1", "true", "yes", "on"}
+        if not enabled:
+            return
         if self.intent_type != "function_call":
             return
         if not hasattr(self, "func_handler") or self.func_handler is None:
@@ -843,9 +859,14 @@ class ConnectionHandler:
                 self.headers.get("client-id", self.headers.get("device-id")),
             )
             private_config["delete_audio"] = bool(self.config.get("delete_audio", True))
+            private_config["tts_timeout"] = self.config.get("tts_timeout", 15)
             # 仅有 delete_audio 说明接口实际未返回任何模块配置（多为 manager-api 异常被吞后回空），
             # 此时若仍报“成功”会掩盖真实问题，改为醒目告警。
-            meaningful_keys = [k for k in private_config.keys() if k != "delete_audio"]
+            meaningful_keys = [
+                k
+                for k in private_config.keys()
+                if k not in {"delete_audio", "tts_timeout"}
+            ]
             if not meaningful_keys:
                 self.logger.bind(tag=TAG).error(
                     f"{time.time() - begin_time:.3f} 秒，差异化配置为空(仅 delete_audio)："
@@ -1209,6 +1230,48 @@ class ConnectionHandler:
         except Exception as e:
             self.logger.bind(tag=TAG).warning(f"刷新设备扩展属性失败: {e}")
 
+    def _queue_emotional_tts_text(
+        self,
+        parser: EmotionStreamParser,
+        text: str,
+        sentence_id: str,
+    ) -> str:
+        cleaned_parts = []
+        synchronized_emotion = (
+            getattr(self.tts, "interface_type", None) == TTSInterfaceType.NON_STREAM
+        )
+        for event in parser.feed(text):
+            if event.context is not None:
+                if synchronized_emotion:
+                    self.tts.tts_text_queue.put(
+                        TTSMessageDTO(
+                            sentence_id=sentence_id,
+                            sentence_type=SentenceType.MIDDLE,
+                            content_type=ContentType.EMOTION,
+                            emotion_context=event.context,
+                        )
+                    )
+                elif (self.features or {}).get("emoji", True):
+                    asyncio.run_coroutine_threadsafe(
+                        textUtils.send_emotion(
+                            self,
+                            event.context.emoji,
+                            event.context.emotion,
+                        ),
+                        self.loop,
+                    )
+            if event.text:
+                cleaned_parts.append(event.text)
+                self.tts.tts_text_queue.put(
+                    TTSMessageDTO(
+                        sentence_id=sentence_id,
+                        sentence_type=SentenceType.MIDDLE,
+                        content_type=ContentType.TEXT,
+                        content_detail=event.text,
+                    )
+                )
+        return "".join(cleaned_parts)
+
     def chat(self, query, depth=0):
         # 保存当前任务的sentence_id到局部变量，避免被新任务覆盖
         current_sentence_id = None
@@ -1232,6 +1295,9 @@ class ConnectionHandler:
             # 递归调用时，使用当前的sentence_id
             current_sentence_id = self.sentence_id
 
+        emotion_parser = EmotionStreamParser(
+            enabled=(self.features or {}).get("emoji", True)
+        )
         # 设置最大递归深度，避免无限循环，可根据实际需求调整
         MAX_DEPTH = 5
         force_final_answer = False  # 标记是否强制最终回答
@@ -1322,7 +1388,6 @@ class ConnectionHandler:
         # 支持多个并行工具调用 - 使用列表存储
         tool_calls_list = []  # 格式: [{"id": "", "name": "", "arguments": ""}]
         content_arguments = ""
-        emotion_flag = True
         try:
             for response in llm_responses:
                 if self.client_abort:
@@ -1358,37 +1423,23 @@ class ConnectionHandler:
                                     new_part = self._clean_response_garbage(new_part)
                                     if new_part:
                                         tc["_da_sent"] = safe_end
-                                        self.tts.tts_text_queue.put(
-                                            TTSMessageDTO(
-                                                sentence_id=current_sentence_id,
-                                                sentence_type=SentenceType.MIDDLE,
-                                                content_type=ContentType.TEXT,
-                                                content_detail=new_part,
-                                            )
+                                        self._queue_emotional_tts_text(
+                                            emotion_parser,
+                                            new_part,
+                                            current_sentence_id,
                                         )
                 else:
                     content = response
 
-                # 在llm回复中获取情绪表情，一轮对话只在开头获取一次
-                if emotion_flag and content is not None and content.strip():
-                    if (self.features or {}).get("emoji", True):
-                        asyncio.run_coroutine_threadsafe(
-                            textUtils.get_emotion(self, content),
-                            self.loop,
-                        )
-                    emotion_flag = False
-
                 if content is not None and len(content) > 0:
                     if not tool_call_flag:
-                        response_message.append(content)
-                        self.tts.tts_text_queue.put(
-                            TTSMessageDTO(
-                                sentence_id=current_sentence_id,
-                                sentence_type=SentenceType.MIDDLE,
-                                content_type=ContentType.TEXT,
-                                content_detail=content,
-                            )
+                        cleaned_content = self._queue_emotional_tts_text(
+                            emotion_parser,
+                            content,
+                            current_sentence_id,
                         )
+                        if cleaned_content:
+                            response_message.append(cleaned_content)
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"LLM stream processing error: {e}")
             self.tts.tts_text_queue.put(
@@ -1456,16 +1507,14 @@ class ConnectionHandler:
                             if remaining:
                                 remaining = self._clean_response_garbage(remaining)
                                 if remaining:
-                                    self.tts.tts_text_queue.put(
-                                        TTSMessageDTO(
-                                            sentence_id=current_sentence_id,
-                                            sentence_type=SentenceType.MIDDLE,
-                                            content_type=ContentType.TEXT,
-                                            content_detail=remaining,
-                                        )
+                                    self._queue_emotional_tts_text(
+                                        emotion_parser,
+                                        remaining,
+                                        current_sentence_id,
                                     )
                             # 写入对话历史
                             da_response = self._clean_response_garbage(da_response)
+                            da_response = strip_emotion_markers(da_response)
                             self.tts.store_tts_text(current_sentence_id, da_response)
                             self.dialogue.put(Message(role="assistant", content=da_response))
 
@@ -1512,14 +1561,23 @@ class ConnectionHandler:
                         ),
                         self.loop,
                     )
-                    futures_with_data.append((future, tool_call_data, tool_input))
+                    feedback_key = self.tool_feedback.schedule(
+                        tool_call_data["name"],
+                        tool_call_data["id"],
+                        current_sentence_id,
+                    )
+                    futures_with_data.append(
+                        (future, tool_call_data, tool_input, feedback_key)
+                    )
 
                 # 工具调用超时时间，可配置，默认30秒
                 tool_call_timeout = int(self.config.get("tool_call_timeout", 30))
                 # 等待协程结束（实际等待时长为最慢的那个）
                 tool_results = []
 
-                for future, tool_call_data, tool_input in futures_with_data:
+                for (
+                    future, tool_call_data, tool_input, feedback_key
+                ) in futures_with_data:
                     try:
                         result = future.result(timeout=tool_call_timeout)
                         tool_results.append((result, tool_call_data))
@@ -1532,11 +1590,23 @@ class ConnectionHandler:
                         )
                         # 超时时返回错误响应，避免整个流程卡死
                         tool_results.append((
-                            ActionResponse(action=Action.ERROR, result="哎呀，网络遇到点问题，请稍后再试下！"),
+                            ActionResponse(
+                                action=Action.REQLLM,
+                                result=json.dumps(
+                                    {
+                                        "status": "error",
+                                        "tool": tool_call_data["name"],
+                                        "message": "设备或服务暂时不可用，请稍后重试",
+                                    },
+                                    ensure_ascii=False,
+                                ),
+                            ),
                             tool_call_data
                         ))
                         # 上报工具调用错误
                         enqueue_tool_report(self, tool_call_data['name'], tool_input, str(e), report_tool_call=False)
+                    finally:
+                        self.tool_feedback.cancel(feedback_key)
 
                 # 统一处理工具调用结果
                 if tool_results:
@@ -1714,6 +1784,7 @@ class ConnectionHandler:
     async def close(self, ws=None):
         """资源清理方法"""
         try:
+            self.tool_feedback.cancel_all()
             # 清理 VAD 连接资源
             if (
                     hasattr(self, "vad")

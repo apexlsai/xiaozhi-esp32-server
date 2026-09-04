@@ -537,34 +537,29 @@ def get_vision_url(config: dict) -> str:
     return vision_explain
 
 
+def get_image_mime_type(file_data: bytes):
+    if file_data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if file_data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if file_data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if file_data.startswith(b"BM"):
+        return "image/bmp"
+    if file_data.startswith((b"II*\x00", b"MM\x00*")):
+        return "image/tiff"
+    if (
+        len(file_data) >= 12
+        and file_data.startswith(b"RIFF")
+        and file_data[8:12] == b"WEBP"
+    ):
+        return "image/webp"
+    return None
+
+
 def is_valid_image_file(file_data: bytes) -> bool:
-    """
-    检查文件数据是否为有效的图片格式
-
-    Args:
-        file_data: 文件的二进制数据
-
-    Returns:
-        bool: 如果是有效的图片格式返回True，否则返回False
-    """
-    # 常见图片格式的魔数（文件头）
-    image_signatures = {
-        b"\xff\xd8\xff": "JPEG",
-        b"\x89PNG\r\n\x1a\n": "PNG",
-        b"GIF87a": "GIF",
-        b"GIF89a": "GIF",
-        b"BM": "BMP",
-        b"II*\x00": "TIFF",
-        b"MM\x00*": "TIFF",
-        b"RIFF": "WEBP",
-    }
-
-    # 检查文件头是否匹配任何已知的图片格式
-    for signature in image_signatures:
-        if file_data.startswith(signature):
-            return True
-
-    return False
+    """检查文件数据是否为支持的图片格式。"""
+    return get_image_mime_type(file_data) is not None
 
 
 def sanitize_tool_name(name: str) -> str:

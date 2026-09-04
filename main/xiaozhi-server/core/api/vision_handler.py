@@ -1,14 +1,25 @@
-import json
+import asyncio
+import base64
 import copy
+import json
+import time
+import uuid
+from typing import Optional, Tuple
+
 from aiohttp import web
+
+from config.config_loader import get_private_config_from_api
 from config.logger import setup_logging
 from core.api.base_handler import BaseHandler
-from core.utils.util import get_vision_url, is_valid_image_file
-from core.utils.vllm import create_instance
-from config.config_loader import get_private_config_from_api
+from core.providers.tts.dto.dto import ContentType, SentenceType, TTSMessageDTO
+from core.utils.dialogue import Message
+from core.utils.language import (
+    LANGUAGE_AGENT_SUFFIXES,
+    resolve_language_code_from_agent_name,
+)
 from core.utils.auth import AuthToken
-import base64
-from typing import Tuple, Optional
+from core.utils.util import get_image_mime_type, get_vision_url
+from core.utils.vllm import create_instance
 from plugins_func.register import Action
 
 TAG = __name__
@@ -18,14 +29,80 @@ MAX_FILE_SIZE = 5 * 1024 * 1024
 
 
 class VisionHandler(BaseHandler):
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, websocket_server=None):
         super().__init__(config)
-        # 初始化认证工具
+        self.websocket_server = websocket_server
         self.auth = AuthToken(config["server"]["auth_key"])
+
+    def _push_direct_tts(self, device_id: str, text: str) -> bool:
+        websocket_server = getattr(self, "websocket_server", None)
+        if websocket_server is None or not isinstance(text, str) or not text.strip():
+            return False
+
+        conn = websocket_server.find_device_connection({"device_id": device_id})
+        if conn is None:
+            self.logger.bind(tag=TAG).warning(
+                f"MCP Vision 无法推送TTS，设备不在线: {device_id}"
+            )
+            return False
+
+        mcp_client = getattr(conn, "mcp_client", None)
+        if getattr(mcp_client, "call_results", None):
+            self.logger.bind(tag=TAG).debug(
+                f"MCP Vision 检测到待处理工具调用，跳过直推TTS: {device_id}"
+            )
+            return False
+
+        if getattr(conn, "need_bind", False) or getattr(conn, "tts", None) is None:
+            self.logger.bind(tag=TAG).warning(
+                f"MCP Vision 无法推送TTS，设备语音链路未就绪: {device_id}"
+            )
+            return False
+
+        try:
+            content = text.strip()
+            sentence_id = uuid.uuid4().hex
+            conn.last_activity_time = time.time() * 1000
+            conn.sentence_id = sentence_id
+            conn.tts.store_tts_text(sentence_id, content)
+            conn.tts.tts_text_queue.put(
+                TTSMessageDTO(sentence_id, SentenceType.FIRST, ContentType.ACTION)
+            )
+            conn.tts.tts_one_sentence(
+                conn,
+                ContentType.TEXT,
+                content_detail=content,
+                sentence_id=sentence_id,
+            )
+            conn.tts.tts_text_queue.put(
+                TTSMessageDTO(sentence_id, SentenceType.LAST, ContentType.ACTION)
+            )
+            dialogue = getattr(conn, "dialogue", None)
+            if dialogue is not None:
+                dialogue.put(Message(role="assistant", content=content))
+            self.logger.bind(tag=TAG).info(
+                f"MCP Vision 直连结果已推送TTS: device_id={device_id}, chars={len(content)}"
+            )
+            return True
+        except Exception as e:
+            self.logger.bind(tag=TAG).error(
+                f"MCP Vision 推送TTS失败: device_id={device_id}, error={e}"
+            )
+            return False
 
     def _create_error_response(self, message: str) -> dict:
         """创建统一的错误响应格式"""
         return {"success": False, "message": message}
+
+    def _json_response(self, payload: dict, status: int = 200) -> web.Response:
+        response = web.Response(
+            text=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            content_type="application/json",
+            charset="utf-8",
+            status=status,
+        )
+        self._add_cors_headers(response)
+        return response
 
     def _verify_auth_token(self, request) -> Tuple[bool, Optional[str]]:
         """验证认证token"""
@@ -46,44 +123,38 @@ class VisionHandler(BaseHandler):
 
     async def handle_post(self, request):
         """处理 MCP Vision POST 请求"""
-        response = None  # 初始化response变量
         try:
             # 验证token
             is_valid, token_device_id = self._verify_auth_token(request)
             if not is_valid:
-                response = web.Response(
-                    text=json.dumps(
-                        self._create_error_response("无效的认证token或token已过期")
-                    ),
-                    content_type="application/json",
+                return self._json_response(
+                    self._create_error_response("无效的认证token或token已过期"),
                     status=401,
                 )
-                return response
 
             # 获取请求头信息
             device_id = request.headers.get("Device-Id", "")
             client_id = request.headers.get("Client-Id", "")
             if device_id != token_device_id:
                 raise ValueError("设备ID与token不匹配")
-            # 解析multipart/form-data请求
+
+            question = None
+            image_data = None
             reader = await request.multipart()
+            while True:
+                field = await reader.next()
+                if field is None:
+                    break
+                if field.name == "question":
+                    raw = await field.read(decode=False)
+                    question = raw.decode("utf-8").strip()
+                elif field.name in ("file", "image"):
+                    image_data = await field.read(decode=False)
 
-            # 读取question字段
-            question_field = await reader.next()
-            if question_field is None:
+            if not question:
                 raise ValueError("缺少问题字段")
-            question = await question_field.text()
-            self.logger.bind(tag=TAG).debug(f"Question: {question}")
-
-            # 读取图片文件
-            image_field = await reader.next()
-            if image_field is None:
-                raise ValueError("缺少图片文件")
-
-            # 读取图片数据
-            image_data = await image_field.read()
             if not image_data:
-                raise ValueError("图片数据为空")
+                raise ValueError("缺少图片文件")
 
             # 检查文件大小
             if len(image_data) > MAX_FILE_SIZE:
@@ -91,8 +162,8 @@ class VisionHandler(BaseHandler):
                     f"图片大小超过限制，最大允许{MAX_FILE_SIZE/1024/1024}MB"
                 )
 
-            # 检查文件格式
-            if not is_valid_image_file(image_data):
+            image_mime = get_image_mime_type(image_data)
+            if image_mime is None:
                 raise ValueError(
                     "不支持的文件格式，请上传有效的图片文件（支持JPEG、PNG、GIF、BMP、TIFF、WEBP格式）"
                 )
@@ -127,7 +198,23 @@ class VisionHandler(BaseHandler):
                 vllm_type, current_config["VLLM"][select_vllm_module]
             )
 
-            result = vllm.response(question, image_base64)
+            device_attributes = current_config.get("device_attributes") or {}
+            language = resolve_language_code_from_agent_name(
+                device_attributes.get("agent_name")
+            )
+            attribute_language = device_attributes.get("language")
+            if language is None and attribute_language in LANGUAGE_AGENT_SUFFIXES:
+                language = attribute_language
+
+            result = await asyncio.to_thread(
+                vllm.response,
+                question,
+                image_base64,
+                image_mime=image_mime,
+                device_id=device_id,
+                language=language,
+                last_beacon_id=device_attributes.get("last_beacon_id"),
+            )
 
             return_json = {
                 "success": True,
@@ -135,28 +222,14 @@ class VisionHandler(BaseHandler):
                 "response": result,
             }
 
-            response = web.Response(
-                text=json.dumps(return_json, separators=(",", ":")),
-                content_type="application/json",
-            )
+            self._push_direct_tts(device_id, result)
+            return self._json_response(return_json)
         except ValueError as e:
             self.logger.bind(tag=TAG).error(f"MCP Vision POST请求异常: {e}")
-            return_json = self._create_error_response(str(e))
-            response = web.Response(
-                text=json.dumps(return_json, separators=(",", ":")),
-                content_type="application/json",
-            )
+            return self._json_response(self._create_error_response(str(e)))
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"MCP Vision POST请求异常: {e}")
-            return_json = self._create_error_response("处理请求时发生错误")
-            response = web.Response(
-                text=json.dumps(return_json, separators=(",", ":")),
-                content_type="application/json",
-            )
-        finally:
-            if response:
-                self._add_cors_headers(response)
-            return response
+            return self._json_response(self._create_error_response(str(e)))
 
     async def handle_get(self, request):
         """处理 MCP Vision GET 请求"""

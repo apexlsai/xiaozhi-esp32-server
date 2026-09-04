@@ -66,6 +66,7 @@ import xiaozhi.modules.device.service.DeviceAddressBookService;
 import xiaozhi.modules.device.service.DeviceAttributeService;
 import xiaozhi.modules.device.service.DeviceService;
 import xiaozhi.modules.device.service.OtaService;
+import xiaozhi.modules.device.support.DeviceLanguageSpec;
 import xiaozhi.modules.device.vo.DeviceRebindVO;
 import xiaozhi.modules.device.vo.UserShowDeviceListVO;
 import xiaozhi.modules.agent.dao.AgentDao;
@@ -595,6 +596,12 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
                 || StringUtils.isBlank(dto.getTargetAgentName())) {
             throw new RenException(ErrorCode.NOT_NULL);
         }
+        if (StringUtils.isNotBlank(dto.getLanguage()) && !DeviceLanguageSpec.isSupported(dto.getLanguage())) {
+            throw new RenException(ErrorCode.DEVICE_ATTRIBUTE_LANGUAGE_INVALID);
+        }
+        if (StringUtils.isBlank(dto.getLanguage()) && dto.getDev() != null) {
+            throw new RenException("dev 仅可与 language 同时使用");
+        }
 
         DeviceEntity device = getDeviceByMacAddress(dto.getDeviceId());
         if (device == null) {
@@ -609,7 +616,29 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
             throw new RenException(ErrorCode.DEVICE_REBIND_CURRENT_AGENT_MISMATCH);
         }
 
-        if (dto.getCurrentAgentName().equals(dto.getTargetAgentName())) {
+        String targetAgentName = dto.getTargetAgentName();
+        if (StringUtils.isNotBlank(dto.getLanguage())) {
+            targetAgentName = DeviceLanguageSpec.resolveTargetAgentName(
+                    currentAgent.getAgentName(), dto.getLanguage(), Boolean.TRUE.equals(dto.getDev()));
+            if (targetAgentName == null) {
+                throw new RenException("无法从当前智能体名称推导目标语言智能体");
+            }
+            if (!targetAgentName.equals(dto.getTargetAgentName())) {
+                throw new RenException(ErrorCode.DEVICE_REBIND_LANGUAGE_TARGET_MISMATCH, targetAgentName);
+            }
+        }
+
+        if (dto.getCurrentAgentName().equals(targetAgentName)) {
+            if (StringUtils.isNotBlank(dto.getLanguage())) {
+                deviceAttributeService.updateAgentName(device.getMacAddress(), currentAgent.getAgentName());
+                deviceAttributeService.updateLanguage(device.getMacAddress(), dto.getLanguage());
+                DeviceAttributeEntity attribute = deviceAttributeService.getByDeviceId(device.getMacAddress());
+                if (attribute == null
+                        || !currentAgent.getAgentName().equals(attribute.getAgentName())
+                        || !dto.getLanguage().equals(attribute.getLanguage())) {
+                    throw new RenException(ErrorCode.DEVICE_REBIND_CONFIRM_FAILED);
+                }
+            }
             DeviceRebindVO same = new DeviceRebindVO();
             same.setDeviceId(device.getMacAddress());
             same.setPreviousAgentId(currentAgent.getId());
@@ -623,10 +652,10 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
 
         QueryWrapper<AgentEntity> targetWrapper = new QueryWrapper<>();
         targetWrapper.eq("user_id", device.getUserId());
-        targetWrapper.eq("agent_name", dto.getTargetAgentName());
+        targetWrapper.eq("agent_name", targetAgentName);
         List<AgentEntity> targetAgents = agentDao.selectList(targetWrapper);
         if (targetAgents == null || targetAgents.isEmpty()) {
-            throw new RenException(ErrorCode.DEVICE_REBIND_TARGET_AGENT_NOT_FOUND);
+            throw new RenException(ErrorCode.DEVICE_REBIND_TARGET_AGENT_NOT_FOUND, targetAgentName);
         }
         if (targetAgents.size() > 1) {
             throw new RenException(ErrorCode.DEVICE_REBIND_TARGET_AGENT_AMBIGUOUS);
@@ -645,6 +674,9 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
         }
 
         deviceAttributeService.updateAgentName(device.getMacAddress(), targetAgent.getAgentName());
+        if (StringUtils.isNotBlank(dto.getLanguage())) {
+            deviceAttributeService.updateLanguage(device.getMacAddress(), dto.getLanguage());
+        }
 
         DeviceEntity refreshed = selectById(device.getId());
         AgentEntity refreshedAgent = agentDao.selectById(targetAgent.getId());
@@ -652,7 +684,9 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
         if (refreshed == null || refreshedAgent == null || attribute == null
                 || !targetAgent.getId().equals(refreshed.getAgentId())
                 || !targetAgent.getAgentName().equals(refreshedAgent.getAgentName())
-                || !targetAgent.getAgentName().equals(attribute.getAgentName())) {
+                || !targetAgent.getAgentName().equals(attribute.getAgentName())
+                || (StringUtils.isNotBlank(dto.getLanguage())
+                        && !dto.getLanguage().equals(attribute.getLanguage()))) {
             throw new RenException(ErrorCode.DEVICE_REBIND_CONFIRM_FAILED);
         }
 
@@ -669,6 +703,56 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
         result.setConfirmed(true);
         result.setReconnectRequired(true);
         return result;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public DeviceRebindVO rebindDeviceLanguage(String deviceId, String language, boolean dev) {
+        String targetAgentName = validateLanguageTargetAgent(deviceId, language, dev);
+        DeviceEntity device = getDeviceByMacAddress(deviceId);
+        AgentEntity currentAgent = agentDao.selectById(device.getAgentId());
+
+        DeviceRebindDTO dto = new DeviceRebindDTO();
+        dto.setDeviceId(deviceId);
+        dto.setCurrentAgentName(currentAgent.getAgentName());
+        dto.setTargetAgentName(targetAgentName);
+        dto.setConfirm(true);
+        dto.setLanguage(language);
+        dto.setDev(dev);
+        return rebindDevice(dto);
+    }
+
+    @Override
+    public String validateLanguageTargetAgent(String deviceId, String language, boolean dev) {
+        if (!DeviceLanguageSpec.isSupported(language)) {
+            throw new RenException(ErrorCode.DEVICE_ATTRIBUTE_LANGUAGE_INVALID);
+        }
+
+        DeviceEntity device = getDeviceByMacAddress(deviceId);
+        if (device == null || StringUtils.isBlank(device.getAgentId())) {
+            throw new RenException(ErrorCode.DEVICE_NOT_EXIST);
+        }
+        AgentEntity currentAgent = agentDao.selectById(device.getAgentId());
+        if (currentAgent == null) {
+            throw new RenException(ErrorCode.DEVICE_REBIND_CURRENT_AGENT_MISMATCH);
+        }
+
+        String targetAgentName = DeviceLanguageSpec.resolveTargetAgentName(currentAgent.getAgentName(), language, dev);
+        if (targetAgentName == null) {
+            throw new RenException("无法从当前智能体名称推导目标语言智能体");
+        }
+
+        QueryWrapper<AgentEntity> targetWrapper = new QueryWrapper<>();
+        targetWrapper.eq("user_id", device.getUserId());
+        targetWrapper.eq("agent_name", targetAgentName);
+        List<AgentEntity> targetAgents = agentDao.selectList(targetWrapper);
+        if (targetAgents == null || targetAgents.isEmpty()) {
+            throw new RenException(ErrorCode.DEVICE_REBIND_TARGET_AGENT_NOT_FOUND, targetAgentName);
+        }
+        if (targetAgents.size() > 1) {
+            throw new RenException(ErrorCode.DEVICE_REBIND_TARGET_AGENT_AMBIGUOUS);
+        }
+        return targetAgentName;
     }
 
     @Override

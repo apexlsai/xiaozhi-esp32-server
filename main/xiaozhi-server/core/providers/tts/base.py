@@ -1,5 +1,6 @@
 import os
 import re
+import math
 import uuid
 import queue
 import asyncio
@@ -37,7 +38,9 @@ class TTSProviderBase(ABC):
         self.delete_audio_file = delete_audio_file
         self.audio_file_type = "wav"
         self.output_file = config.get("output_dir", "tmp/")
-        self.tts_timeout = int(config.get("tts_timeout", 15))
+        self.tts_timeout = float(config.get("tts_timeout", 15))
+        if not math.isfinite(self.tts_timeout) or self.tts_timeout <= 0:
+            raise ValueError("tts_timeout must be a positive finite number")
         self.tts_text_queue = queue.Queue()
         self.tts_audio_queue = queue.Queue()
         self.tts_audio_first_sentence = True
@@ -106,6 +109,7 @@ class TTSProviderBase(ABC):
         self.tts_stop_request = False
         self.processed_chars = 0
         self.is_first_sentence = True
+        self.current_emotion_context = None
 
     def generate_filename(self, extension=".wav"):
         return os.path.join(
@@ -120,7 +124,21 @@ class TTSProviderBase(ABC):
     def handle_audio_file(self, file_audio: bytes, text):
         self.before_stop_play_files.append((file_audio, text))
 
-    def to_tts_stream(self, text, opus_handler: Callable[[bytes], None] = None) -> None:
+    async def _text_to_speak_with_context(self, text, output_file, emotion_context):
+        if getattr(self, "supports_emotion_style", False):
+            return await self.text_to_speak(
+                text,
+                output_file,
+                emotion_context=emotion_context,
+            )
+        return await self.text_to_speak(text, output_file)
+
+    def to_tts_stream(
+        self,
+        text,
+        opus_handler: Callable[[bytes], None] = None,
+        emotion_context=None,
+    ) -> None:
         # 保留原始文本用于显示/上报
         original_text = text
         text = MarkdownCleaner.clean_markdown(text)
@@ -132,10 +150,22 @@ class TTSProviderBase(ABC):
             # 需要删除文件的直接转为音频数据
             while max_repeat_time > 0:
                 try:
-                    audio_bytes = asyncio.run(self.text_to_speak(text, None))
+                    audio_bytes = asyncio.run(
+                        self._text_to_speak_with_context(
+                            text, None, emotion_context
+                        )
+                    )
                     if audio_bytes:
                         # 使用原始文本用于显示/上报
-                        self.tts_audio_queue.put((SentenceType.FIRST, None, original_text, getattr(self, 'current_sentence_id', None)))
+                        self.tts_audio_queue.put(
+                            (
+                                SentenceType.FIRST,
+                                None,
+                                original_text,
+                                getattr(self, "current_sentence_id", None),
+                                emotion_context,
+                            )
+                        )
                         audio_bytes_to_data_stream(
                             audio_bytes,
                             file_type=self.audio_file_type,
@@ -166,7 +196,11 @@ class TTSProviderBase(ABC):
             try:
                 while not os.path.exists(tmp_file) and max_repeat_time > 0:
                     try:
-                        asyncio.run(self.text_to_speak(text, tmp_file))
+                        asyncio.run(
+                            self._text_to_speak_with_context(
+                                text, tmp_file, emotion_context
+                            )
+                        )
                     except Exception as e:
                         logger.bind(tag=TAG).warning(
                             f"语音生成失败{5 - max_repeat_time + 1}次: {original_text}，错误: {e}"
@@ -184,7 +218,15 @@ class TTSProviderBase(ABC):
                     logger.bind(tag=TAG).error(
                         f"语音生成失败: {original_text}，请检查网络或服务是否正常"
                     )
-                self.tts_audio_queue.put((SentenceType.FIRST, None, original_text, getattr(self, 'current_sentence_id', None)))
+                self.tts_audio_queue.put(
+                    (
+                        SentenceType.FIRST,
+                        None,
+                        original_text,
+                        getattr(self, "current_sentence_id", None),
+                        emotion_context,
+                    )
+                )
                 self._process_audio_file_stream(tmp_file, callback=opus_handler)
             except Exception as e:
                 logger.bind(tag=TAG).error(f"Failed to generate TTS file: {e}")
@@ -382,11 +424,19 @@ class TTSProviderBase(ABC):
                     self.tts_text_buff = []
                     self.is_first_sentence = True
                     self.tts_audio_first_sentence = True
+                    self.current_emotion_context = None
+                elif ContentType.EMOTION == message.content_type:
+                    self._process_remaining_text_stream(opus_handler=self.handle_opus)
+                    self.current_emotion_context = message.emotion_context
                 elif ContentType.TEXT == message.content_type:
                     self.tts_text_buff.append(message.content_detail)
                     segment_text = self._get_segment_text()
                     if segment_text:
-                        self.to_tts_stream(segment_text, opus_handler=self.handle_opus)
+                        self.to_tts_stream(
+                            segment_text,
+                            opus_handler=self.handle_opus,
+                            emotion_context=self.current_emotion_context,
+                        )
                 elif ContentType.FILE == message.content_type:
                     self._process_remaining_text_stream(opus_handler=self.handle_opus)
                     tts_file = message.content_file
@@ -414,10 +464,19 @@ class TTSProviderBase(ABC):
         enqueue_audio = []
         while not self.conn.stop_event.is_set():
             text = None
+            emotion_context = None
             try:
                 try:
                     item = self.tts_audio_queue.get(timeout=0.1)
-                    if len(item) == 4:
+                    if len(item) == 5:
+                        (
+                            sentence_type,
+                            audio_datas,
+                            text,
+                            sentence_id,
+                            emotion_context,
+                        ) = item
+                    elif len(item) == 4:
                         sentence_type, audio_datas, text, sentence_id = item
                     else:
                         sentence_type, audio_datas, text = item
@@ -436,9 +495,9 @@ class TTSProviderBase(ABC):
                 if sentence_type is not SentenceType.MIDDLE:
                     if self.report_on_last:
                         # 累积模式：适用于全程只有一个语音流的TTS（如seed-tts-2.0）
-                        # FIRST时只记录文本，音频持续累积，仅在LAST时统一上报
+                        # FIRST时累积文本，音频持续累积，仅在LAST时统一上报
                         if text:
-                            enqueue_text = text
+                            enqueue_text = f"{enqueue_text or ''}{text}"
                         if sentence_type == SentenceType.LAST:
                             enqueue_tts_report(self.conn, enqueue_text, enqueue_audio)
                             enqueue_audio = []
@@ -456,7 +515,14 @@ class TTSProviderBase(ABC):
 
                 # 发送音频
                 future = asyncio.run_coroutine_threadsafe(
-                    sendAudioMessage(self.conn, sentence_type, audio_datas, text, sentence_id),
+                    sendAudioMessage(
+                        self.conn,
+                        sentence_type,
+                        audio_datas,
+                        text,
+                        sentence_id,
+                        emotion_context,
+                    ),
                     self.conn.loop,
                 )
                 future.result()
@@ -562,7 +628,11 @@ class TTSProviderBase(ABC):
         if remaining_text:
             segment_text = textUtils.get_string_no_punctuation_or_emoji(remaining_text)
             if segment_text:
-                self.to_tts_stream(segment_text, opus_handler=opus_handler)
+                self.to_tts_stream(
+                    segment_text,
+                    opus_handler=opus_handler,
+                    emotion_context=self.current_emotion_context,
+                )
                 self.processed_chars += len(full_text)
                 return True
         return False
