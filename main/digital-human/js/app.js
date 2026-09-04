@@ -272,7 +272,9 @@ class App {
                         log('无法拍照：摄像头未就绪', 'warning');
                         resolve({
                             success: false,
-                            error: '摄像头未就绪，请确保已连接且摄像头已启动'
+                            action: 'RESPONSE',
+                            response: '摄像头尚未准备好，请稍后再试。',
+                            message: '摄像头尚未准备好，请稍后再试。'
                         });
                         return;
                     }
@@ -327,9 +329,19 @@ class App {
                             const analysisResult = await response.json();
                             log(`视觉分析完成: ${JSON.stringify(analysisResult).substring(0, 200)}...`, 'success');
 
+                            const analysisText = typeof analysisResult.response === 'string'
+                                ? analysisResult.response.trim()
+                                : '';
+                            const analysisSucceeded = analysisResult.success === true && analysisText.length > 0;
+                            const responseText = analysisSucceeded
+                                ? analysisText
+                                : '视觉服务暂时不可用，请稍后再试。';
+
                             resolve({
-                                success: true,
-                                message: question,
+                                success: Boolean(analysisSucceeded),
+                                action: 'RESPONSE',
+                                response: responseText,
+                                message: analysisSucceeded ? question : responseText,
                                 photo_data: photoData,
                                 photo_width: canvas.width,
                                 photo_height: canvas.height,
@@ -337,19 +349,30 @@ class App {
                             });
                         } else {
                             log('未配置视觉分析服务', 'warning');
+                            resolve({
+                                success: false,
+                                action: 'RESPONSE',
+                                response: '视觉分析服务尚未配置。',
+                                message: '视觉分析服务尚未配置。',
+                                photo_data: photoData,
+                                photo_width: canvas.width,
+                                photo_height: canvas.height
+                            });
                         }
                     } catch (error) {
                         log(`视觉分析失败: ${error.message}`, 'error');
                         resolve({
-                            success: true,
-                            message: question,
+                            success: false,
+                            action: 'RESPONSE',
+                            response: '视觉服务暂时不可用，请稍后再试。',
+                            message: '视觉服务暂时不可用，请稍后再试。',
                             photo_data: photoData,
                             photo_width: canvas.width,
                             photo_height: canvas.height,
                             vision_analysis: {
                                 success: false,
-                                error: error.message,
-                                fallback: '无法连接到视觉分析服务'
+                                action: 'RESPONSE',
+                                response: '视觉服务暂时不可用，请稍后再试。'
                             }
                         });
                     }

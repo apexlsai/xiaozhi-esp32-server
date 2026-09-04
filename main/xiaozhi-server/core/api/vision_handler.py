@@ -26,6 +26,11 @@ TAG = __name__
 
 # 设置最大文件大小为5MB
 MAX_FILE_SIZE = 5 * 1024 * 1024
+VISION_UNAVAILABLE_MESSAGE = "视觉服务暂时不可用，请稍后再试。"
+
+
+class VisionRequestError(ValueError):
+    pass
 
 
 class VisionHandler(BaseHandler):
@@ -92,7 +97,12 @@ class VisionHandler(BaseHandler):
 
     def _create_error_response(self, message: str) -> dict:
         """创建统一的错误响应格式"""
-        return {"success": False, "message": message}
+        return {
+            "success": False,
+            "action": Action.RESPONSE.name,
+            "response": message,
+            "message": message,
+        }
 
     def _json_response(self, payload: dict, status: int = 200) -> web.Response:
         response = web.Response(
@@ -136,7 +146,7 @@ class VisionHandler(BaseHandler):
             device_id = request.headers.get("Device-Id", "")
             client_id = request.headers.get("Client-Id", "")
             if device_id != token_device_id:
-                raise ValueError("设备ID与token不匹配")
+                raise VisionRequestError("设备ID与token不匹配")
 
             question = None
             image_data = None
@@ -152,19 +162,19 @@ class VisionHandler(BaseHandler):
                     image_data = await field.read(decode=False)
 
             if not question:
-                raise ValueError("缺少问题字段")
+                raise VisionRequestError("缺少问题字段")
             if not image_data:
-                raise ValueError("缺少图片文件")
+                raise VisionRequestError("缺少图片文件")
 
             # 检查文件大小
             if len(image_data) > MAX_FILE_SIZE:
-                raise ValueError(
+                raise VisionRequestError(
                     f"图片大小超过限制，最大允许{MAX_FILE_SIZE/1024/1024}MB"
                 )
 
             image_mime = get_image_mime_type(image_data)
             if image_mime is None:
-                raise ValueError(
+                raise VisionRequestError(
                     "不支持的文件格式，请上传有效的图片文件（支持JPEG、PNG、GIF、BMP、TIFF、WEBP格式）"
                 )
 
@@ -183,7 +193,7 @@ class VisionHandler(BaseHandler):
 
             select_vllm_module = current_config["selected_module"].get("VLLM")
             if not select_vllm_module:
-                raise ValueError("您还未设置默认的视觉分析模块")
+                raise VisionRequestError("视觉分析服务尚未配置")
 
             vllm_type = (
                 select_vllm_module
@@ -192,7 +202,7 @@ class VisionHandler(BaseHandler):
             )
 
             if not vllm_type:
-                raise ValueError(f"无法找到VLLM模块对应的供应器{vllm_type}")
+                raise VisionRequestError("视觉分析服务配置无效")
 
             vllm = create_instance(
                 vllm_type, current_config["VLLM"][select_vllm_module]
@@ -216,6 +226,9 @@ class VisionHandler(BaseHandler):
                 last_beacon_id=device_attributes.get("last_beacon_id"),
             )
 
+            if not isinstance(result, str) or not result.strip():
+                raise RuntimeError("VLLM 返回内容为空或格式无效")
+
             return_json = {
                 "success": True,
                 "action": Action.RESPONSE.name,
@@ -224,12 +237,16 @@ class VisionHandler(BaseHandler):
 
             self._push_direct_tts(device_id, result)
             return self._json_response(return_json)
-        except ValueError as e:
-            self.logger.bind(tag=TAG).error(f"MCP Vision POST请求异常: {e}")
+        except VisionRequestError as e:
+            self.logger.bind(tag=TAG).warning(f"MCP Vision POST请求无效: {e}")
             return self._json_response(self._create_error_response(str(e)))
         except Exception as e:
-            self.logger.bind(tag=TAG).error(f"MCP Vision POST请求异常: {e}")
-            return self._json_response(self._create_error_response(str(e)))
+            self.logger.bind(tag=TAG).error(
+                f"MCP Vision POST请求异常: {type(e).__name__}: {e}"
+            )
+            return self._json_response(
+                self._create_error_response(VISION_UNAVAILABLE_MESSAGE)
+            )
 
     async def handle_get(self, request):
         """处理 MCP Vision GET 请求"""

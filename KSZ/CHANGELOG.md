@@ -7,6 +7,7 @@
 ## [Unreleased]
 
 ### 变更
+- MCP 拍照视觉结果保持 VLM 直通：成功内容直接同步字幕与 TTS；服务异常改为固定友好提示，不再将原始错误交给聊天 LLM 二次处理或播报，并兼容旧客户端嵌套的 `vision_analysis` 返回结构。
 - 阿里百炼流式 TTS 使用服务端 `sentence-begin.original_text` 逐句下发字幕，使屏幕文字与对应音频同步；旧事件格式保留一次性整段字幕回退。
 - 阿里百炼流式 TTS 的 WebSocket 建连启用 Happy Eyeballs；IPv6 不可达时快速并行回退 IPv4，并统一使用 `tts_timeout` 控制握手超时。
 - 阿里百炼流式 TTS 新增可配置 `ws_url`，兼容含 Workspace ID 的北京与新加坡 MaaS WebSocket 地址；旧 DashScope 地址继续作为默认值，智控台同步提供该字段并限制 API Key 仅发送至阿里云官方 WSS 推理端点。

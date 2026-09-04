@@ -9,6 +9,9 @@ from ..base import ToolType, ToolDefinition, ToolExecutor
 from plugins_func.register import Action, ActionResponse
 from .mcp_handler import call_mcp_tool
 
+VISION_TOOL_NAMES = {"self_camera_take_photo", "self.camera.take_photo"}
+VISION_UNAVAILABLE_MESSAGE = "视觉服务暂时不可用，请稍后再试。"
+
 
 class DeviceMCPExecutor(ToolExecutor):
     """设备端MCP工具执行器"""
@@ -24,6 +27,31 @@ class DeviceMCPExecutor(ToolExecutor):
                 {"status": "error", "tool": tool_name, "message": message},
                 ensure_ascii=False,
             ),
+        )
+
+    @staticmethod
+    def _vision_result(result_json: dict) -> ActionResponse:
+        payload = result_json.get("vision_analysis")
+        if not isinstance(payload, dict):
+            payload = result_json
+
+        if result_json.get("success") is False or payload.get("success") is False:
+            return ActionResponse(
+                action=Action.RESPONSE,
+                response=VISION_UNAVAILABLE_MESSAGE,
+            )
+
+        if payload.get("action") == Action.RESPONSE.name:
+            response = payload.get("response")
+            if isinstance(response, str) and response.strip():
+                return ActionResponse(
+                    action=Action.RESPONSE,
+                    response=response.strip(),
+                )
+
+        return ActionResponse(
+            action=Action.RESPONSE,
+            response=VISION_UNAVAILABLE_MESSAGE,
         )
 
     async def execute(
@@ -53,6 +81,14 @@ class DeviceMCPExecutor(ToolExecutor):
                     resultJson = json.loads(result)
                 except Exception as e:
                     pass
+
+            if tool_name in VISION_TOOL_NAMES:
+                if isinstance(resultJson, dict):
+                    return self._vision_result(resultJson)
+                return ActionResponse(
+                    action=Action.RESPONSE,
+                    response=VISION_UNAVAILABLE_MESSAGE,
+                )
 
             # 视觉大模型不经过二次LLM处理
             if (
