@@ -42,7 +42,9 @@ class VisionHandler(BaseHandler):
         self.websocket_server = websocket_server
         self.auth = AuthToken(config["server"]["auth_key"])
 
-    def _push_direct_tts(self, device_id: str, text: str, expected_conn=None, expected_sentence_id=None) -> bool:
+    async def _push_direct_tts(self, device_id: str, text: str, expected_conn=None, expected_sentence_id=None) -> bool:
+        from core.handle.sendAudioHandle import send_tts_message
+
         websocket_server = getattr(self, "websocket_server", None)
         if websocket_server is None or not isinstance(text, str) or not text.strip():
             return False
@@ -60,6 +62,9 @@ class VisionHandler(BaseHandler):
             )
             return False
 
+        if conn.client_abort or conn.stop_event.is_set():
+            return False
+
         mcp_client = getattr(conn, "mcp_client", None)
         if getattr(mcp_client, "call_results", None):
             self.logger.bind(tag=TAG).debug(
@@ -73,15 +78,35 @@ class VisionHandler(BaseHandler):
             )
             return False
 
+        socket = conn.websocket
+        sentence_id = uuid.uuid4().hex
+        start_sent = False
+        first_queued = False
+        queued = False
+
+        def current():
+            return (
+                websocket_server.find_device_connection({"device_id": device_id}) is conn
+                and conn.websocket is socket
+                and conn.sentence_id == sentence_id
+                and not conn.client_abort
+                and not conn.stop_event.is_set()
+            )
+
         try:
             content = text.strip()
-            sentence_id = uuid.uuid4().hex
             conn.last_activity_time = time.time() * 1000
             conn.sentence_id = sentence_id
+            conn.client_is_speaking = True
+            await send_tts_message(conn, "start")
+            start_sent = True
+            if not current() or getattr(mcp_client, "call_results", None):
+                return False
             conn.tts.store_tts_text(sentence_id, content)
             conn.tts.tts_text_queue.put(
                 TTSMessageDTO(sentence_id, SentenceType.FIRST, ContentType.ACTION)
             )
+            first_queued = True
             conn.tts.tts_one_sentence(
                 conn,
                 ContentType.TEXT,
@@ -91,6 +116,7 @@ class VisionHandler(BaseHandler):
             conn.tts.tts_text_queue.put(
                 TTSMessageDTO(sentence_id, SentenceType.LAST, ContentType.ACTION)
             )
+            queued = True
             dialogue = getattr(conn, "dialogue", None)
             if dialogue is not None:
                 dialogue.put(Message(role="assistant", content=content))
@@ -103,6 +129,21 @@ class VisionHandler(BaseHandler):
                 f"MCP Vision 推送TTS失败: device_id={device_id}, error={e}"
             )
             return False
+        finally:
+            if not queued and current():
+                try:
+                    if first_queued:
+                        conn.tts.tts_text_queue.put(
+                            TTSMessageDTO(sentence_id, SentenceType.LAST, ContentType.ACTION)
+                        )
+                    elif start_sent:
+                        await send_tts_message(conn, "stop")
+                    else:
+                        conn.client_is_speaking = False
+                except Exception as e:
+                    if current():
+                        conn.client_is_speaking = False
+                    self.logger.bind(tag=TAG).warning(f"MCP Vision 结束TTS失败: {e}")
 
     def _create_error_response(self, message: str) -> dict:
         """创建统一的错误响应格式"""
@@ -250,7 +291,7 @@ class VisionHandler(BaseHandler):
                 sessions.finish(vision_request, result)
                 return_json.update(request_id=request_id, delivery="streamed")
             elif delivery_mode is None and original_conn is not None and not original_mcp_pending:
-                self._push_direct_tts(device_id, result, original_conn, original_sentence_id)
+                await self._push_direct_tts(device_id, result, original_conn, original_sentence_id)
             return self._json_response(return_json)
         except asyncio.CancelledError:
             if vision_request is not None:
