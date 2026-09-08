@@ -52,6 +52,9 @@ from core.utils.util import get_system_error_response
 from core.utils.beacon_location import fetch_beacon_location
 from core.utils import textUtils
 from core.utils.tool_feedback import ToolFeedbackScheduler
+from core.utils.vision_stream import (
+    VISION_TOOL_NAMES, VISION_TIMEOUT, run_vision_tool, fail_vision_tool,
+)
 from core.utils.tts_emotion import (
     EmotionStreamParser,
     strip_emotion_markers,
@@ -1283,6 +1286,12 @@ class ConnectionHandler:
         if depth == 0:
             current_sentence_id = str(uuid.uuid4().hex)
             self.sentence_id = current_sentence_id  # 更新共享属性
+            sessions = getattr(self, "vision_sessions", None)
+            if sessions is not None and self.loop is not None:
+                def cancel_previous_vision():
+                    if sessions.active and sessions.active.sentence_id != self.sentence_id:
+                        sessions.cancel("new_turn")
+                self.loop.call_soon_threadsafe(cancel_previous_vision)
             self.dialogue.put(Message(role="user", content=query))
             self.tts.tts_text_queue.put(
                 TTSMessageDTO(
@@ -1390,7 +1399,7 @@ class ConnectionHandler:
         content_arguments = ""
         try:
             for response in llm_responses:
-                if self.client_abort:
+                if self.client_abort or current_sentence_id != self.sentence_id:
                     break
                 if self.intent_type == "function_call" and functions is not None:
                     content, tools_call = response
@@ -1459,6 +1468,8 @@ class ConnectionHandler:
                     )
                 )
             return
+        if self.client_abort or current_sentence_id != self.sentence_id:
+            return False
         # 处理function call
         if tool_call_flag:
             bHasError = False
@@ -1555,42 +1566,47 @@ class ConnectionHandler:
                     tool_input = json.loads(tool_call_data.get("arguments") or "{}")
                     enqueue_tool_report(self, tool_call_data['name'], tool_input)
 
-                    future = asyncio.run_coroutine_threadsafe(
-                        self.func_handler.handle_llm_function_call(
-                            self, tool_call_data
-                        ),
-                        self.loop,
+                    is_camera = tool_call_data["name"] in VISION_TOOL_NAMES
+                    deadline = time.monotonic() + (
+                        VISION_TIMEOUT if is_camera
+                        else int(self.config.get("tool_call_timeout", 30))
                     )
+                    coroutine = (
+                        run_vision_tool(self, tool_call_data, current_sentence_id, deadline)
+                        if is_camera else self.func_handler.handle_llm_function_call(self, tool_call_data)
+                    )
+                    future = asyncio.run_coroutine_threadsafe(coroutine, self.loop)
                     feedback_key = self.tool_feedback.schedule(
                         tool_call_data["name"],
                         tool_call_data["id"],
                         current_sentence_id,
                     )
                     futures_with_data.append(
-                        (future, tool_call_data, tool_input, feedback_key)
+                        (future, tool_call_data, tool_input, feedback_key, deadline)
                     )
 
-                # 工具调用超时时间，可配置，默认30秒
-                tool_call_timeout = int(self.config.get("tool_call_timeout", 30))
                 # 等待协程结束（实际等待时长为最慢的那个）
                 tool_results = []
 
                 for (
-                    future, tool_call_data, tool_input, feedback_key
+                    future, tool_call_data, tool_input, feedback_key, deadline
                 ) in futures_with_data:
                     try:
-                        result = future.result(timeout=tool_call_timeout)
+                        cleanup_grace = 2 if tool_call_data["name"] in VISION_TOOL_NAMES else 0
+                        result = future.result(timeout=max(0, deadline - time.monotonic()) + cleanup_grace)
                         tool_results.append((result, tool_call_data))
                         # 使用公共方法上报工具调用结果
                         enqueue_tool_report(self, tool_call_data['name'], tool_input, str(result.result) if result.result else None, report_tool_call=False)
 
                     except Exception as e:
+                        future.cancel()
                         self.logger.bind(tag=TAG).error(
                             f"工具调用超时或异常: {tool_call_data['name']}, 错误: {e}"
                         )
                         # 超时时返回错误响应，避免整个流程卡死
                         tool_results.append((
-                            ActionResponse(
+                            fail_vision_tool(self, current_sentence_id)
+                            if tool_call_data["name"] in VISION_TOOL_NAMES else ActionResponse(
                                 action=Action.REQLLM,
                                 result=json.dumps(
                                     {
@@ -1609,10 +1625,14 @@ class ConnectionHandler:
                         self.tool_feedback.cancel(feedback_key)
 
                 # 统一处理工具调用结果
+                if self.client_abort or current_sentence_id != self.sentence_id:
+                    return False
                 if tool_results:
-                    self._handle_function_result(tool_results, depth=depth, streamed_text=streamed_text)
+                    self._handle_function_result(tool_results, depth=depth, streamed_text=streamed_text, sentence_id=current_sentence_id)
 
         # 存储对话内容
+        if self.client_abort or current_sentence_id != self.sentence_id:
+            return False
         if len(response_message) > 0:
             text_buff = "".join(response_message)
             self.tts.store_tts_text(current_sentence_id, text_buff)
@@ -1635,11 +1655,14 @@ class ConnectionHandler:
 
         return True
 
-    def _handle_function_result(self, tool_results, depth, streamed_text=""):
+    def _handle_function_result(self, tool_results, depth, streamed_text="", sentence_id=None):
+        sentence_id = sentence_id or self.sentence_id
         need_llm_tools = []
         record_tools = []
 
         for result, tool_call_data in tool_results:
+            if self.client_abort or self.sentence_id != sentence_id:
+                return
             if result.action in [
                 Action.RESPONSE,
                 Action.NOTFOUND,
@@ -1651,8 +1674,8 @@ class ConnectionHandler:
                         f"Skipping duplicate TTS for tool {tool_call_data['name']}, already streamed"
                     )
                 else:
-                    self.tts.tts_one_sentence(self, ContentType.TEXT, content_detail=text)
-                    self.tts.store_tts_text(self.sentence_id, text)
+                    self.tts.tts_one_sentence(self, ContentType.TEXT, content_detail=text, sentence_id=sentence_id)
+                    self.tts.store_tts_text(sentence_id, text)
                 self.dialogue.put(Message(role="assistant", content=text))
             elif result.action == Action.REQLLM:
                 need_llm_tools.append((result, tool_call_data))
@@ -1785,6 +1808,9 @@ class ConnectionHandler:
         """资源清理方法"""
         try:
             self.tool_feedback.cancel_all()
+            sessions = getattr(self, "vision_sessions", None)
+            if sessions is not None:
+                sessions.cancel("connection_closed")
             # 清理 VAD 连接资源
             if (
                     hasattr(self, "vad")

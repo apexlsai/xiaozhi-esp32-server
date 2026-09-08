@@ -4,6 +4,7 @@ import { getAudioPlayer } from './core/audio/player.js?v=0205';
 import { checkMicrophoneAvailability, isHttpNonLocalhost } from './core/audio/recorder.js?v=0205';
 import { initMcpTools } from './core/mcp/tools.js?v=0205';
 import { startWakewordBridgeListener } from './core/network/wakeword-bridge.js?v=0205';
+import { VisionRequests, createVisionRequestId, visionFailure } from './core/network/vision.js';
 import { uiController } from './ui/controller.js?v=0205';
 import { log } from './utils/logger.js?v=0205';
 
@@ -27,6 +28,7 @@ class App {
         this.live2dManager = null;
         this.cameraStream = null;
         this.currentFacingMode = 'user';
+        this.visionRequests = new VisionRequests();
     }
 
     // 初始化应用
@@ -152,6 +154,7 @@ class App {
         document.addEventListener('touchend', dragEnd);
 
         function dragStart(e) {
+            if (e.target.closest('button')) return;
             if (e.type === 'touchstart') {
                 initialX = e.touches[0].clientX - xOffset;
                 initialY = e.touches[0].clientY - yOffset;
@@ -263,20 +266,17 @@ class App {
                 }
             };
 
-            window.takePhoto = (question = '描述一下看到的物品') => {
-                return new Promise(async (resolve) => {
+            window.cancelVisionRequests = () => this.visionRequests.cancel();
+            window.takePhoto = async (question = '描述一下看到的物品', options = {}) => {
+                const requestId = options.requestId || createVisionRequestId();
+                const deliveryMode = options.deliveryMode || 'push';
+                try {
                     const canvas = document.createElement('canvas');
                     const video = cameraVideo;
 
                     if (!video || video.readyState !== video.HAVE_ENOUGH_DATA) {
                         log('无法拍照：摄像头未就绪', 'warning');
-                        resolve({
-                            success: false,
-                            action: 'RESPONSE',
-                            response: '摄像头尚未准备好，请稍后再试。',
-                            message: '摄像头尚未准备好，请稍后再试。'
-                        });
-                        return;
+                        return visionFailure(requestId, '摄像头尚未准备好，请稍后再试。');
                     }
 
                     canvas.width = video.videoWidth || 180;
@@ -287,97 +287,52 @@ class App {
                     const photoData = canvas.toDataURL('image/jpeg', 0.8);
                     log(`拍照成功，图像数据长度: ${photoData.length}`, 'success');
 
-                    try {
-                        const xz_tester_vision = localStorage.getItem('xz_tester_vision');
-                        if (xz_tester_vision) {
-                            let visionInfo = null;
+                    const { url, token } = JSON.parse(localStorage.getItem('xz_tester_vision') || 'null') || {};
+                    if (!url || !token) {
+                        log('未配置视觉分析服务', 'warning');
+                        return visionFailure(requestId, '视觉分析服务尚未配置。');
+                    }
 
-                            try {
-                                visionInfo = JSON.parse(xz_tester_vision);
-                            } catch (err) {
-                                throw new Error(`视觉配置解析失败`);
-                            }
+                    log(`上传视觉图片 request_id=${requestId}, mode=${deliveryMode}`, 'info');
+                    const result = await this.visionRequests.upload({
+                        url,
+                        token,
+                        deviceId: document.getElementById('deviceMac')?.value || '',
+                        clientId: document.getElementById('clientId')?.value || 'web_test_client',
+                        question,
+                        image: dataURItoBlob(photoData),
+                        requestId,
+                        deliveryMode
+                    });
+                    log(`视觉请求结束 request_id=${requestId}, delivery=${result.delivery || 'return'}, success=${result.success}`, 'info');
+                    return {
+                        ...result,
+                        photo_width: canvas.width,
+                        photo_height: canvas.height,
+                        vision_analysis: result
+                    };
+                } catch {
+                    log(`视觉分析失败 request_id=${requestId}`, 'error');
+                    return visionFailure(requestId);
+                }
+            };
 
-                            const { url, token } = visionInfo || {};
-                            if (!url || !token) {
-                                throw new Error('视觉分析失败：配置缺少接口地址(url)或令牌(token)');
-                            }
-
-                            log(`正在发送图片到视觉分析接口: ${url}`, 'info');
-
-                            const deviceId = document.getElementById('deviceMac')?.value || '';
-                            const clientId = document.getElementById('clientId')?.value || 'web_test_client';
-
-                            const formData = new FormData();
-                            formData.append('question', question);
-                            formData.append('image', dataURItoBlob(photoData), 'photo.jpg');
-
-                            const response = await fetch(url, {
-                                method: 'POST',
-                                body: formData,
-                                headers: {
-                                    'Device-Id': deviceId,
-                                    'Client-Id': clientId,
-                                    'Authorization': `Bearer ${token}`
-                                }
-                            });
-
-                            if (!response.ok) {
-                                throw new Error(`HTTP error! status: ${response.status}`);
-                            }
-
-                            const analysisResult = await response.json();
-                            log(`视觉分析完成: ${JSON.stringify(analysisResult).substring(0, 200)}...`, 'success');
-
-                            const analysisText = typeof analysisResult.response === 'string'
-                                ? analysisResult.response.trim()
-                                : '';
-                            const analysisSucceeded = analysisResult.success === true && analysisText.length > 0;
-                            const responseText = analysisSucceeded
-                                ? analysisText
-                                : '视觉服务暂时不可用，请稍后再试。';
-
-                            resolve({
-                                success: Boolean(analysisSucceeded),
-                                action: 'RESPONSE',
-                                response: responseText,
-                                message: analysisSucceeded ? question : responseText,
-                                photo_data: photoData,
-                                photo_width: canvas.width,
-                                photo_height: canvas.height,
-                                vision_analysis: analysisResult
-                            });
-                        } else {
-                            log('未配置视觉分析服务', 'warning');
-                            resolve({
-                                success: false,
-                                action: 'RESPONSE',
-                                response: '视觉分析服务尚未配置。',
-                                message: '视觉分析服务尚未配置。',
-                                photo_data: photoData,
-                                photo_width: canvas.width,
-                                photo_height: canvas.height
-                            });
-                        }
-                    } catch (error) {
-                        log(`视觉分析失败: ${error.message}`, 'error');
-                        resolve({
-                            success: false,
-                            action: 'RESPONSE',
-                            response: '视觉服务暂时不可用，请稍后再试。',
-                            message: '视觉服务暂时不可用，请稍后再试。',
-                            photo_data: photoData,
-                            photo_width: canvas.width,
-                            photo_height: canvas.height,
-                            vision_analysis: {
-                                success: false,
-                                action: 'RESPONSE',
-                                response: '视觉服务暂时不可用，请稍后再试。'
-                            }
-                        });
+            if (!document.getElementById('takePhotoBtn')) {
+                const takePhotoBtn = document.createElement('button');
+                takePhotoBtn.id = 'takePhotoBtn';
+                takePhotoBtn.type = 'button';
+                takePhotoBtn.className = 'control-btn';
+                takePhotoBtn.textContent = '拍照识别';
+                takePhotoBtn.title = '识别当前画面；再次拍照会替换上一次识别';
+                Object.assign(takePhotoBtn.style, { position: 'absolute', top: '8px', left: '8px', padding: '6px 10px', minWidth: 'auto' });
+                takePhotoBtn.addEventListener('click', async () => {
+                    const result = await window.takePhoto('拍照识别当前图像。', { deliveryMode: 'push' });
+                    if (!result.success && !result.delivery) {
+                        log(result.message, 'warning');
                     }
                 });
-            };
+                (cameraSwitchMask || cameraContainer).appendChild(takePhotoBtn);
+            }
 
             log('摄像头初始化完成', 'success');
             resolve(true);

@@ -242,9 +242,34 @@ Museum Guide Agent 接入使用智控台现有的 OpenAI VLLM，无需新增 Pro
 
 `server.vision_explain` 始终填写本 xiaozhi-server 的 `/mcp/vision/explain`，不能填写 Museum Agent 地址。小智会把图片、问题、`device_id`、规范语言码和最近 Beacon ID 转发给 `museum-guide-vision`，Museum Agent 返回最终可播报文本。
 
-KSZ 保留上游原版视觉协议：MCP `initialize` 继续下发 `vision.url` 与 `vision.token`，当前官方固件通过 `file` 字段上传，服务端返回 `success`、`action` 与 `response`。KSZ 同时兼容旧客户端的 `image` 字段并透传 Museum Guide 上下文，不要求固件实现额外的 `tool_choice`、Token 刷新通知或新的响应结构。
+KSZ 保留上游完整返回协议：MCP `initialize` 继续下发 `vision.url` 与 `vision.token`，官方固件通过 `file` 字段上传，服务端返回 `success`、`action` 与 `response`；同时兼容旧客户端的 `image` 字段。旧端无需修改即可继续使用完整返回，启用逐句播报需要下述可选适配。
 
 生产环境必须使用内网或 HTTPS 连接 Museum Agent。不要通过公网明文 HTTP 传输游客图片和 Bearer Token；曾出现在命令、日志或聊天记录中的密钥应立即轮换。
+
+#### 视觉流式播报与客户端适配
+
+流式链路为「图片 → VLM 正文增量 → 按句 TTS → 对应音频与字幕」，不再交给聊天 LLM 改写。服务端按 `。！？!?；;`、换行和英文句末句点分句，保留小数点，流结束时提交最后一段。字幕随对应音频发送，不按 HTTP 完整回答一次刷屏。
+
+这不是 `.env` 中的 `stream` 开关。OpenAI 兼容 VLLM 流式请求使用 `stream:true`，目标 `museum-guide-vision` 或其他视觉服务必须支持 SSE 正文增量；如果目标服务仍缓存完整回答才输出，小智侧无法提前取得首句。首句延迟需在实际模型、网络与设备上验证。
+
+仓库数字人页面已支持下列协议，并在摄像头预览增加「拍照识别」按钮。外部测试器、固件需同步适配后才能启用流式：
+
+1. WebSocket `hello.features` 增加 `"vision_stream":true`，保留既有 `mcp` 等能力。
+2. MCP 相机调用读取 `payload.params._meta.vision_request_id`；上传到 `vision.url` 时，将该值作为 multipart `request_id`，并设置 `delivery_mode=mcp`。原有 `question`、`file`/`image`、`Device-Id`、`Client-Id` 和 Bearer Token 保持不变。
+3. 手动拍照每次生成新的 UUID，上传 `request_id` 和 `delivery_mode=push`。先发起新 HTTP 请求，由服务端取消旧识别；不要只中止旧上传而不发送新请求。
+4. 上传请求最终仍返回 JSON，设备无需解析 SSE。保留返回的 `request_id` 与 `delivery`，MCP 调用仍按原 JSON-RPC `id` 回传结果；不能把完整 `response` 再送聊天 LLM 或本地 TTS。字幕、音频从现有设备 WebSocket 接收。
+
+| `delivery_mode` | 用途 | 结果交付 |
+| --- | --- | --- |
+| `mcp` | 已关联的 MCP 拍照调用 | HTTP 未完成时即可逐句播报，最终 MCP 回执由服务端登记去重 |
+| `push` | 手动拍照，使用新的请求 UUID | 向在线设备逐句推送字幕与音频 |
+| `return` | 仅取完整结果 | 只返回 HTTP JSON，不推送 TTS |
+
+`delivery:"streamed"` 表示结果已由服务端接管播报，失败提示也可能使用此标记；`delivery:"cancelled"` 表示请求已取消，回传对应 MCP 回执后静默结束。未声明能力、未携带新增参数的旧端继续走原完整返回路径；成功纯文本、顶层 JSON 与嵌套 `vision_analysis` 都可兼容。不要把整张图片的 Base64 再塞进 MCP 回执。
+
+带请求编号的新链路中，新照片替换同设备旧照片；打断、断线会取消旧识别，迟到正文和回执不能恢复旧播报。视觉请求与 MCP 工具调用共用从请求创建起算的 **120 秒**截止时间，外层线程另留 2 秒用于取消清理，不增加模型生成预算。SSE 连续无数据仍有 30 秒读取超时，不等于整轮只能运行 30 秒。
+
+首句前服务异常统一提示「视觉服务暂时不可用，请稍后再试。」；已有正文下发时仅补一次「识别中断了，请再拍一次。」。取消时不播失败提示，不自动重试 VLM；原始错误仅写服务端日志。
 
 ### 配置 FunASR
 
@@ -685,6 +710,12 @@ wss://<WorkspaceId>.ap-southeast-1.maas.aliyuncs.com/api-ws/v1/inference
 ```
 
 该配置不读取 `.env`。保存后清除 Redis 配置缓存并重启 server。为避免 API Key 泄露，Provider 仅接受阿里云官方域名、`wss` 协议和 `/api-ws/v1/inference` 路径。
+
+百炼合成任务在实际文本到达后才启动。「我看看。」使用独立短任务，文本发完即结束合成，视觉正文回来后再开新任务；两者仍属于同一设备对话轮次，提示结束不会提前发送整轮 `tts stop`。这可避免等待识图时把提示语任务空挂至供应商超时。
+
+流式视觉正文也按完整句子分别结束百炼任务，句间等待与等待 MCP 回执时不保留活动合成任务；只有整轮 `LAST` 才触发设备停止。普通聊天的增量文本仍使用原连续合成路径。
+
+若百炼返回 `task-failed`、1011 或连接关闭，服务端会使旧任务与连接失效，防止后续正文继续写入已关闭的连接。正文合成失败不自动重播已发送内容。此修改仅针对百炼任务生命周期，其他 TTS Provider 沿用各自接口。
 
 ### 定向语音开发 WebSocket
 

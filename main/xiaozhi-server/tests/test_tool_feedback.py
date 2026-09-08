@@ -83,6 +83,17 @@ class ToolFeedbackSchedulerTests(unittest.TestCase):
         self.assertTrue(FakeTimer.instances[0].cancelled)
         self.tts.tts_one_sentence.assert_not_called()
 
+    def test_provider_feedback_hook_owns_short_task_boundary(self):
+        self.tts.tts_tool_feedback = MagicMock()
+        self.scheduler.schedule("self_camera_take_photo", "call-1", "sentence-1")
+
+        FakeTimer.instances[0].fire()
+
+        self.tts.tts_tool_feedback.assert_called_once_with(
+            self.conn, "我看看。", "sentence-1"
+        )
+        self.tts.tts_one_sentence.assert_not_called()
+
     def test_old_or_aborted_session_does_not_play_feedback(self):
         for state in ("old", "aborted"):
             with self.subTest(state=state):

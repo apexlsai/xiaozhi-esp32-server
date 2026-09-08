@@ -476,19 +476,23 @@ export function getMcpTools() {
 /**
  * 执行工具调用
  */
-export async function executeMcpTool(toolName, toolArgs) {
-    const tool = mcpTools.find(t => t.name === toolName);
+export async function executeMcpTool(toolName, toolArgs, context = {}) {
+    const isCamera = toolName === 'self_camera_take_photo' || toolName === 'self.camera.take_photo';
+    const tool = mcpTools.find(t => t.name === toolName || (isCamera && t.name === 'self_camera_take_photo'));
     if (!tool) {
         log(`未找到工具: ${toolName}`, 'error');
         return { success: false, error: `未知工具: ${toolName}` };
     }
 
     // 处理拍照工具
-    if (toolName === 'self_camera_take_photo') {
+    if (isCamera) {
         if (typeof window.takePhoto === 'function') {
             const question = toolArgs && toolArgs.question ? toolArgs.question : '描述一下看到的物品';
             log(`正在执行拍照: ${question}`, 'info');
-            const result = await window.takePhoto(question);
+            const result = await window.takePhoto(question, {
+                requestId: context.vision_request_id,
+                deliveryMode: context.vision_request_id ? 'mcp' : 'return'
+            });
             return result;
         } else {
             log('拍照功能不可用', 'warning');

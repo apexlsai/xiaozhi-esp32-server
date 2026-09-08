@@ -35,6 +35,7 @@ export class WebSocketHandler {
                 token: config.token,
                 features: {
                     mcp: true,
+                    vision_stream: true,
                     emoji: config.emojiEnabled
                 }
             };
@@ -292,10 +293,12 @@ export class WebSocketHandler {
         } else if (payload.method === 'tools/call') {
             const toolName = payload.params?.name;
             const toolArgs = payload.params?.arguments;
+            const socket = this.websocket;
+            const isCamera = toolName === 'self_camera_take_photo' || toolName === 'self.camera.take_photo';
 
             log(`调用工具: ${toolName} 参数: ${JSON.stringify(toolArgs)}`, 'info');
 
-            executeMcpTool(toolName, toolArgs).then(result => {
+            executeMcpTool(toolName, toolArgs, payload.params?._meta || {}).then(result => {
                 const replyMessage = JSON.stringify({
                     "session_id": message.session_id || "",
                     "type": "mcp",
@@ -309,13 +312,13 @@ export class WebSocketHandler {
                                     "text": JSON.stringify(result)
                                 }
                             ],
-                            "isError": false
+                            "isError": isCamera && result?.success === false && result?.delivery !== 'cancelled'
                         }
                     }
                 });
 
                 log(`客户端上报: ${replyMessage}`, 'info');
-                this.websocket.send(replyMessage);
+                if (socket?.readyState === WebSocket.OPEN) socket.send(replyMessage);
             }).catch(error => {
                 log(`工具执行失败: ${error.message}`, 'error');
                 const errorReply = JSON.stringify({
@@ -326,11 +329,11 @@ export class WebSocketHandler {
                         "id": payload.id,
                         "error": {
                             "code": -32603,
-                            "message": error.message
+                            "message": isCamera ? '视觉服务暂时不可用，请稍后再试。' : error.message
                         }
                     }
                 });
-                this.websocket.send(errorReply);
+                if (socket?.readyState === WebSocket.OPEN) socket.send(errorReply);
             });
         } else if (payload.method === 'initialize') {
             log(`收到工具初始化请求: ${JSON.stringify(payload.params)}`, 'info');
@@ -453,6 +456,7 @@ export class WebSocketHandler {
 
         this.websocket.onclose = () => {
             log('已断开连接', 'info');
+            window.cancelVisionRequests?.();
 
             if (this.onConnectionStateChange) {
                 this.onConnectionStateChange(false);
@@ -501,6 +505,7 @@ export class WebSocketHandler {
     disconnect() {
         if (!this.websocket) return;
 
+        window.cancelVisionRequests?.();
         this.websocket.close();
         const audioRecorder = getAudioRecorder();
         audioRecorder.stop();
