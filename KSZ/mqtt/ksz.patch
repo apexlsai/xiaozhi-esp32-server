@@ -1,0 +1,173 @@
+--- a/app.js
++++ b/app.js
+@@ -144,6 +144,7 @@
+             });
+ 
+             this.wsClient.on('message', (data, isBinary) => {
++                if (this.connection.bridge !== this) return;
+                 if (isBinary) {
+                     const timestamp = data.readUInt32BE(8);
+                     const opusLength = data.readUInt32BE(12);
+@@ -155,10 +156,6 @@
+                     const message = JSON.parse(data.toString());
+                     if (message.type === 'hello') {
+                         resolve(message);
+-                    } else if (message.type === 'mcp' &&
+-                        this.connection.mcpCachedTools &&
+-                        ['notifications/initialized', 'tools/list'].includes(message.payload.method)) {
+-                        this.connection.onMcpMessageFromBridge(message);
+                     } else {
+                         this.connection.sendMqttMessage(JSON.stringify(message));
+                     }
+@@ -173,6 +170,7 @@
+ 
+             this.wsClient.on('close', () => {
+                 this.emit('close');
++                reject(new Error('WebSocket closed before hello'));
+             });
+         });
+     }
+@@ -207,7 +205,7 @@
+     }
+ }
+ 
+-const MacAddressRegex = /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/;
++const MacAddressRegex = /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i;
+ 
+ /**
+  * MQTT连接类
+@@ -259,6 +257,7 @@
+ 
+         this.protocol.on('close', () => {
+             debug(`${this.clientId} 客户端断开连接`);
++            this.close();
+             this.server.removeConnection(this);
+         });
+ 
+@@ -278,39 +277,27 @@
+         this.username = connectData.username;
+         this.password = connectData.password;
+ 
+-        debug('客户端连接:', {
+-            clientId: this.clientId,
+-            username: this.username,
+-            password: this.password,
+-            protocol: connectData.protocol,
+-            protocolLevel: connectData.protocolLevel,
+-            keepAlive: connectData.keepAlive
+-        });
+-
+-        const parts = this.clientId.split('@@@');
+-        if (parts.length === 3) { // GID_test@@@mac_address@@@uuid
++        try {
+             const validated = validateMqttCredentials(this.clientId, this.username, this.password, this.realClientIp);
+             this.groupId = validated.groupId;
+             this.macAddress = validated.macAddress;
+             this.uuid = validated.uuid;
+             this.userData = validated.userData;
+-        } else if (parts.length === 2) { // GID_test@@@mac_address
+-            this.groupId = parts[0];
+-            this.macAddress = parts[1].replace(/_/g, ':');
+-            if (!MacAddressRegex.test(this.macAddress)) {
+-                debug('无效的 macAddress:', this.macAddress);
+-                this.close();
+-                return;
+-            }
+-        } else {
+-            debug('无效的 clientId:', this.clientId);
++            if (!MacAddressRegex.test(this.macAddress) || !this.groupId || !this.uuid) {
++                throw new Error('Invalid device identity');
++            }
++        } catch (error) {
++            this.protocol.sendConnack(5, false);
+             this.close();
+             return;
+         }
++        this.protocol.isConnected = true;
++        this.protocol.sendConnack(0, false);
++        const parts = this.clientId.split('@@@');
+         this.replyTo = `devices/p2p/${parts[1]}`;
+ 
+         this.server.addConnection(this);
+-        this.initializeDeviceTools();
++        this.mcpRequestId = 10000;
+     }
+ 
+     handleSubscribe(subscribeData) {
+@@ -331,6 +318,7 @@
+     }
+ 
+     close() {
++        if (this.closing) return;
+         this.closing = true;
+         // 清理所有未完成的 MCP 请求
+         for (const request of Object.values(this.mcpPendingRequests)) {
+@@ -437,6 +425,7 @@
+     async parseHelloMessage(json) {
+         this.udp = {
+             ...this.udp,
++            remoteAddress: null,
+             key: crypto.randomBytes(16),
+             nonce: this.generateUdpHeader(0, 0, 0),
+             encryption: 'aes-128-ctr',
+@@ -447,11 +436,14 @@
+ 
+         if (this.bridge) {
+             debug(`${this.clientId} 收到重复 hello 消息，关闭之前的 bridge`);
+-            this.bridge.close();
+-            await new Promise(resolve => setTimeout(resolve, 100));
+-        }
+-        this.bridge = new WebSocketBridge(this, json.version, this.macAddress, this.uuid, this.userData);
+-        this.bridge.on('close', () => {
++            const previous = this.bridge;
++            this.bridge = null;
++            previous.close();
++        }
++        const bridge = new WebSocketBridge(this, json.version, this.macAddress, this.uuid, this.userData);
++        this.bridge = bridge;
++        bridge.on('close', () => {
++            if (this.bridge !== bridge) return;
+             const seconds = (Date.now() - this.udp.startTime) / 1000;
+             console.log(`通话结束: ${this.clientId} Session: ${this.udp.session_id} Duration: ${seconds}s`);
+             // 通话状态下不发送 goodbye 消息
+@@ -480,7 +472,8 @@
+                 }
+             }
+ 
+-            const helloReply = await this.bridge.connect(json.audio_params, json.features);
++            const helloReply = await bridge.connect(json.audio_params, json.features);
++            if (this.bridge !== bridge) return;
+             this.udp.session_id = helloReply.session_id;
+             this.sendMqttMessage(JSON.stringify({
+                 type: 'hello',
+@@ -497,6 +490,7 @@
+                 audio_params: helloReply.audio_params
+             }));
+         } catch (error) {
++            if (this.bridge !== bridge) return;
+             this.sendMqttMessage(JSON.stringify({ type: 'error', message: '处理 hello 消息失败' }));
+             console.error(`${this.clientId} 处理 hello 消息失败: ${error}`);
+         }
+@@ -1260,7 +1254,5 @@
+ if (validateSignatureKeyComplexity()) {
+     app.listen(adminPort, () => {
+         console.log(`管理API服务启动在端口 ${adminPort}`);
+-        // 计算并打印当天的临时密钥
+-        calculateAndPrintDailyToken();
+     });
+ }
+--- a/mqtt-protocol.js
++++ b/mqtt-protocol.js
+@@ -248,12 +248,6 @@
+         // 设置心跳间隔（客户端指定的keepAlive值的1.5倍，单位为秒）
+         this.keepAliveInterval = keepAlive * 1000 * 1.5;
+         
+-        // 发送 CONNACK
+-        this.sendConnack(0, false);
+-        
+-        // 标记为已连接
+-        this.isConnected = true;
+-        
+         // 发出连接事件
+         this.emit('connect', {
+             clientId,

@@ -2,6 +2,29 @@
 # 在本目录执行：docker compose up -d --build
 
 services:
+  xiaozhi-mqtt-gateway:
+    profiles: [mqtt]
+    image: xiaozhi-esp32-server:mqtt_local
+    build:
+      context: ./mqtt
+    restart: always
+    init: true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${MQTT_PORT:-1883}:${MQTT_PORT:-1883}/tcp"
+      - "${MQTT_UDP_PORT:-8884}:${MQTT_UDP_PORT:-8884}/udp"
+      - "127.0.0.1:${MQTT_API_PORT:-8007}:8007/tcp"
+    environment:
+      TZ: Asia/Shanghai
+      PUBLIC_IP: ${MQTT_PUBLIC_HOST:-}
+      MQTT_PORT: ${MQTT_PORT:-1883}
+      UDP_PORT: ${MQTT_UDP_PORT:-8884}
+      API_PORT: 8007
+      MQTT_SIGNATURE_KEY: ${MQTT_SIGNATURE_KEY:-}
+      SERVER_SECRET: ${MQTT_SERVER_SECRET:-}
+      MQTT_CHAT_SERVER: ${MQTT_CHAT_SERVER:-ws://host.docker.internal:8000/xiaozhi/v1/?from=mqtt_gateway}
+
   xiaozhi-esp32-server:
     image: xiaozhi-esp32-server:server_local
     build:

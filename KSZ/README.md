@@ -753,6 +753,111 @@ wss://<WorkspaceId>.ap-southeast-1.maas.aliyuncs.com/api-ws/v1/inference
 
 `peer_address` 的端口会在设备重连后变化，应优先使用 `device_id`。`/dev/ws` 不鉴权，仅可在受控内网使用；若服务暴露到公网，任何连接者都可向在线设备发起语音播报。
 
+## MQTT 首期接入
+
+可选 `mqtt` profile 将设备的 MQTT 控制消息和 UDP 音频桥接到现有 xiaozhi-server WebSocket。首期覆盖设备唤醒并建立会话后的语音、字幕表情、打断、语言换绑、信标导览、MCP 拍照、视觉流式及按 MAC 定向播报；不提供休眠自动唤醒、离线事件补发和设备互通电话功能。
+
+固件须支持上游 MQTT+UDP 应用协议 v3、QoS 0，并能在 MQTT 通道发送既有 KSZ 事件。语言换绑后需处理 `goodbye`，重新发送 `hello` 建立会话。视觉流式还需实现本文的 `vision_stream`、`_meta.vision_request_id` 与 HTTP 上传约定；未适配的旧端继续使用原视觉返回方式。
+
+### 构建与启动
+
+在 `KSZ/.env` 中补齐 `.env.example` 的 MQTT 配置：
+
+| 环境变量 | 填写要求 |
+| --- | --- |
+| `MQTT_PUBLIC_HOST` | 设备可访问的服务器 IPv4 或域名，不带协议和端口 |
+| `MQTT_PORT` | MQTT TCP 端口，默认 `1883` |
+| `MQTT_UDP_PORT` | 音频 UDP 端口，默认 `8884` |
+| `MQTT_API_PORT` | 管理 API 宿主机端口，默认 `8007`，只监听宿主机回环地址 |
+| `MQTT_SIGNATURE_KEY` | 与智控台 `server.mqtt_signature_key` 一致 |
+| `MQTT_SERVER_SECRET` | 与智控台 `server.secret` 一致 |
+| `MQTT_CHAT_SERVER` | 默认 `ws://host.docker.internal:8000/xiaozhi/v1/?from=mqtt_gateway` |
+
+签名密钥至少 8 位，包含大小写字母，不能包含上游禁止的弱密码片段 `test`、`1234`、`admin`、`password`、`qwerty`、`xiaozhi`。两种密钥各有用途，不要互相替代。配置缺失时网关会在监听端口前退出；普通 Compose 启动不要求配置 MQTT。
+
+先确保现有 server/web 已正常运行，再启动网关：
+
+```bash
+cd /apps/xiaozhi-esp32-server/KSZ
+docker compose --profile mqtt build xiaozhi-mqtt-gateway
+docker compose --profile mqtt up -d xiaozhi-mqtt-gateway
+docker compose --profile mqtt ps xiaozhi-mqtt-gateway
+docker compose --profile mqtt logs --tail=100 xiaozhi-mqtt-gateway
+```
+
+网关独立使用 Bridge 网络，其余服务继续使用 Host 网络。网关通过 Docker 的 `host-gateway` 访问宿主机 `8000`；宿主机防火墙须允许该容器访问服务端。设备网络须可达 MQTT TCP 和音频 UDP 端口；仅 HTTP 反向代理不能承载这两个入口。管理 API 映射为 `127.0.0.1:<MQTT_API_PORT>`，供 Host 网络的 manager-api 访问。
+
+镜像固定使用上游 [xiaozhi-mqtt-gateway](https://github.com/xinnan-tech/xiaozhi-mqtt-gateway/tree/93f026ad3a9a5572c9cf6ce651dd8fcf46fd2419) 提交 `93f026ad3a9a5572c9cf6ce651dd8fcf46fd2419`，校验源码归档 SHA256，通过 `npm ci` 使用提交的依赖锁。`qs` 使用兼容修复版本覆盖。构建文件、依赖及补丁均位于 `mqtt/`；升级网关时须同步更新提交、校验和、补丁及锁文件，并重新运行协议测试。
+
+若本机 Docker Hub 镜像代理不可用，可通过构建参数指定可访问的 Node 镜像仓库，例如：
+
+```bash
+docker compose --profile mqtt build \
+  --build-arg NODE_REGISTRY=public.ecr.aws/docker/library xiaozhi-mqtt-gateway
+```
+
+### 智控台参数与 OTA
+
+`.env` 只配置网关，不会自动写入数据库。通过智控台【参数管理】设置：
+
+| 系统参数 | 值 |
+| --- | --- |
+| `server.mqtt_gateway` | `<MQTT_PUBLIC_HOST>:<MQTT_PORT>` |
+| `server.mqtt_signature_key` | 与网关 `MQTT_SIGNATURE_KEY` 完全一致 |
+| `server.udp_gateway` | `<MQTT_PUBLIC_HOST>:<MQTT_UDP_PORT>` |
+| `server.mqtt_manager_api` | `127.0.0.1:<MQTT_API_PORT>` |
+
+保留 `server.websocket` 和 `server.ota`；`server.internal_api` 仍为 KSZ 的 `http://127.0.0.1:8004`。视觉 `vision.url` 必须可被设备访问，不能使用网关内部地址 `host.docker.internal`；图片仍直接上传 HTTP 视觉接口，音频和字幕经网关返回。
+
+这些 OTA 参数是全局配置，首期不提供按设备灰度。应先在测试环境启用，记录原参数值。保存后清理配置缓存、重启 server，再让测试设备重新获取 OTA：
+
+```bash
+docker compose exec xiaozhi-esp32-server-redis redis-cli DEL server:config
+docker compose restart xiaozhi-esp32-server
+```
+
+可用 Node.js 22 执行 OTA 检查，指定专用测试 MAC：
+
+```bash
+node mqtt/verify-ota.cjs http://<HOST_IP>:8002/xiaozhi/ota/ aa:bb:cc:dd:ee:ff
+```
+
+该命令会提交真实 OTA 请求，可能更新测试设备连接信息或产生激活码；不会切换语言、连接 MQTT 或播放语音。检查设备身份、主题、凭据及 WebSocket 回退地址，只输出检查结果，不输出密码。若进程环境提供 `MQTT_SIGNATURE_KEY`，还会校验 OTA 密码签名；脚本不自动读取 `.env`。
+
+### 兼容行为与验收
+
+`mqtt/ksz.patch` 让 MCP 初始化、工具发现和调用直接经过 KSZ 会话，避免网关提前缓存尚未配置视觉能力的工具列表；保留服务端下发的设备专属 `vision.url/token`。补丁还限定使用现有 OTA 生成的签名身份，认证完成才返回成功，并在 MQTT 断开时关闭后端会话。重新建立会话后，设备需重新发送 UDP 数据建立音频回程地址。
+
+仅保持 MQTT 连接时，不代表存在 KSZ 活动会话。没有会话时信标事件不转发、定向播报不可用；首期不缓存这些事件。按 MAC 定位设备，服务端显示的 TCP 对端地址属于网关。
+
+构建后运行隔离协议测试，无需模型、数据库或真实设备，不发布宿主机端口：
+
+```bash
+docker run --rm --network none \
+  --mount type=bind,source="$PWD/mqtt/tests",target=/app/tests,readonly \
+  --entrypoint node xiaozhi-esp32-server:mqtt_local \
+  --test tests/gateway.test.cjs
+```
+
+该测试使用真实网关进程、模拟设备和模拟后端，验证鉴权、MCP 视觉能力与工具列表、事件回执、双向 UDP 音频、会话重建和断线清理。健康检查只确认 MQTT/管理 API 进程可用，不证明设备端 UDP 或模型链路可用。
+
+真机上线前须完成以下验收，不能用模拟测试代替：
+
+- 普通对话、连续播报、字幕表情同步、语音打断；拔网线或重启网关后恢复。
+- 信标变化后属性落库、位置上下文进入 Agent，并只播报一次。
+- 切换语言及 `dev` 测试智能体后收到结果和 `goodbye`，重新 `hello` 后使用新智能体；目标不存在时保留原绑定。
+- MCP 拍照及手动上传均正常识别、流式播报；重复拍照、打断、断线后的旧结果不再播放。
+- 活动会话中按 MAC 定向播报；未唤醒时不误报可播报；UDP 被阻断时不以 MQTT 连接成功判断语音成功。
+- 原 WebSocket 设备连接和 OTA 连接前语言切换仍正常。
+
+回退时先恢复原 MQTT 系统参数（原本未配置则恢复字符串 `null`，包括管理 API 参数），清除 `server:config` 缓存并重启 server，让设备重新获取 OTA 并确认改回 WebSocket，再停止网关：
+
+```bash
+docker compose --profile mqtt stop xiaozhi-mqtt-gateway
+```
+
+如果固件持久化 MQTT 配置，需按固件流程清除旧配置或切换协议；仅停止网关不构成设备侧回退。
+
 ## MCP 配置
 
 外部 MCP 服务配置文件为 `data/.mcp_server_settings.json`；示例见 `../main/xiaozhi-server/mcp_server_settings.json`。支持 `stdio`、`sse`、`streamable-http` 三种传输方式。修改后重启 server：
