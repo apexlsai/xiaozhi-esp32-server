@@ -343,12 +343,12 @@ test('KSZ MQTT gateway protocol integration', { timeout: 60000 }, async (t) => {
         header.writeUInt32BE(3, 12);
         const secondCipher = crypto.createCipheriv(hello.udp.encryption, key, header);
         const latePacket = Buffer.concat([header, secondCipher.update(opus), secondCipher.final()]);
-        device.send({ type: 'listen', state: 'stop' });
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        device.send({ type: 'listen', state: 'stop', audio_sequence_end: 3, audio_packet_count: 2 });
+        await new Promise((resolve) => setTimeout(resolve, 700));
         udp.send(latePacket, udpPort, '127.0.0.1');
         await backendInbox.next((item) => item.audio?.readUInt32BE(8) === 123);
         await backendInbox.next((item) => item.type === 'listen' && item.state === 'stop');
-        await output.next((text) => text.includes('收到=2 序列跨度=3 缺失=1 最后序列=3'));
+        await output.next((text) => text.includes('收到=2 序列跨度=3 缺失=1 最后序列=3 设备末序列=3'));
     });
     await t.test('backend close produces goodbye and a new hello creates a fresh session', async () => {
         backendSocket.send(JSON.stringify({ type: 'device_event_result', event: 'language_change', success: true }));

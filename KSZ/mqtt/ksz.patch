@@ -151,18 +151,22 @@
              this.sendMqttMessage(JSON.stringify({ type: 'error', message: '处理 hello 消息失败' }));
              console.error(`${this.clientId} 处理 hello 消息失败: ${error}`);
          }
-@@ -540,1 +536,14 @@
+@@ -540,1 +536,18 @@
 +        if (json.type === 'listen' && json.state === 'start') {
 +            this.udp.utteranceStartSequence = this.udp.remoteSequence;
 +            this.udp.utterancePackets = 0;
 +        } else if (json.type === 'listen' && json.state === 'stop') {
-+            const deadline = Date.now() + 1500;
-+            while (Date.now() < deadline && Date.now() - this.udp.lastUdpAt < 300) {
++            const expectedSequence = Number.isSafeInteger(json.audio_sequence_end) ? json.audio_sequence_end : null;
++            const waitStartedAt = Date.now();
++            const deadline = waitStartedAt + 3000;
++            while (Date.now() < deadline) {
++                if (expectedSequence !== null && this.udp.remoteSequence >= expectedSequence) break;
++                if (expectedSequence === null && Date.now() - waitStartedAt >= 500 && Date.now() - this.udp.lastUdpAt >= 300) break;
 +                await new Promise(resolve => setTimeout(resolve, 50));
 +            }
 +            const sequenceSpan = this.udp.remoteSequence - this.udp.utteranceStartSequence;
 +            const missing = Math.max(0, sequenceSpan - this.udp.utterancePackets);
-+            console.log(`上行音频统计: ${this.clientId} 收到=${this.udp.utterancePackets} 序列跨度=${sequenceSpan} 缺失=${missing} 最后序列=${this.udp.remoteSequence}`);
++            console.log(`上行音频统计: ${this.clientId} 收到=${this.udp.utterancePackets} 序列跨度=${sequenceSpan} 缺失=${missing} 最后序列=${this.udp.remoteSequence} 设备末序列=${expectedSequence ?? '未提供'}`);
 +        }
 +
          this.bridge.sendJson(json);

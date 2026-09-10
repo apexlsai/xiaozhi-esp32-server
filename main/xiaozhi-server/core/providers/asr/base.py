@@ -89,6 +89,10 @@ class ASRProviderBase(ABC):
             # 数据已经是PCM直接使用
             pcm_data = asr_audio_task
             combined_pcm_data = b"".join(pcm_data)
+            duration = len(combined_pcm_data) / 32000
+            logger.bind(tag=TAG).info(
+                f"ASR输入音频: 帧={len(pcm_data)}, 字节={len(combined_pcm_data)}, 时长={duration:.2f}秒"
+            )
 
             # 预先准备WAV数据
             wav_data = None
