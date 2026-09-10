@@ -102,13 +102,14 @@
          this.closing = true;
          // 清理所有未完成的 MCP 请求
          for (const request of Object.values(this.mcpPendingRequests)) {
-@@ -437,6 +425,9 @@
+@@ -437,6 +425,10 @@
      async parseHelloMessage(json) {
          this.udp = {
              ...this.udp,
 +            remoteAddress: null,
 +            utteranceStartSequence: 0,
 +            utterancePackets: 0,
++            lastUdpAt: 0,
              key: crypto.randomBytes(16),
              nonce: this.generateUdpHeader(0, 0, 0),
              encryption: 'aes-128-ctr',
@@ -150,11 +151,15 @@
              this.sendMqttMessage(JSON.stringify({ type: 'error', message: '处理 hello 消息失败' }));
              console.error(`${this.clientId} 处理 hello 消息失败: ${error}`);
          }
-@@ -540,1 +536,10 @@
+@@ -540,1 +536,14 @@
 +        if (json.type === 'listen' && json.state === 'start') {
 +            this.udp.utteranceStartSequence = this.udp.remoteSequence;
 +            this.udp.utterancePackets = 0;
 +        } else if (json.type === 'listen' && json.state === 'stop') {
++            const deadline = Date.now() + 1500;
++            while (Date.now() < deadline && Date.now() - this.udp.lastUdpAt < 300) {
++                await new Promise(resolve => setTimeout(resolve, 50));
++            }
 +            const sequenceSpan = this.udp.remoteSequence - this.udp.utteranceStartSequence;
 +            const missing = Math.max(0, sequenceSpan - this.udp.utterancePackets);
 +            console.log(`上行音频统计: ${this.clientId} 收到=${this.udp.utterancePackets} 序列跨度=${sequenceSpan} 缺失=${missing} 最后序列=${this.udp.remoteSequence}`);
@@ -165,9 +170,10 @@
 -        if (sequence < this.udp.remoteSequence) {
 +        if (sequence <= this.udp.remoteSequence) {
              return;
-@@ -593,2 +598,3 @@
+@@ -593,2 +602,4 @@
              this.udp.remoteSequence = sequence;
 +            this.udp.utterancePackets++;
++            this.udp.lastUdpAt = Date.now();
          } catch (decryptionError) {
 @@ -1260,7 +1266,5 @@
  if (validateSignatureKeyComplexity()) {

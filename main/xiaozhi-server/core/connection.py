@@ -55,6 +55,7 @@ from core.utils.tool_feedback import ToolFeedbackScheduler
 from core.utils.vision_stream import (
     VISION_TOOL_NAMES, VISION_TIMEOUT, run_vision_tool, fail_vision_tool,
 )
+from core.utils.asr_audio import accept_pcm_frame
 from core.utils.tts_emotion import (
     EmotionStreamParser,
     strip_emotion_markers,
@@ -405,7 +406,7 @@ class ConnectionHandler:
             # 入口处直接解码PCM，避免VAD和ASR重复解码
             pcm_frame = self._decode_opus_packet(message)
             if pcm_frame:
-                self.asr_audio_queue.put(pcm_frame)
+                accept_pcm_frame(self, pcm_frame)
 
     async def _process_mqtt_audio_message(self, message):
         """
@@ -431,7 +432,7 @@ class ConnectionHandler:
             if timestamp > 0 and self.client_aec:
                 pcm_frame = self._apply_aec(timestamp, pcm_frame)
 
-            self.asr_audio_queue.put(pcm_frame)
+            accept_pcm_frame(self, pcm_frame)
             return True
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"解析WebSocket音频包失败: {e}")

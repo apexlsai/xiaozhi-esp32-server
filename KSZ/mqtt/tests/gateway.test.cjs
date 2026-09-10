@@ -342,9 +342,11 @@ test('KSZ MQTT gateway protocol integration', { timeout: 60000 }, async (t) => {
         assert.deepEqual(Buffer.concat([decipher.update(audio.subarray(16)), decipher.final()]), opus);
         header.writeUInt32BE(3, 12);
         const secondCipher = crypto.createCipheriv(hello.udp.encryption, key, header);
-        udp.send(Buffer.concat([header, secondCipher.update(opus), secondCipher.final()]), udpPort, '127.0.0.1');
-        await backendInbox.next((item) => item.audio?.readUInt32BE(8) === 123);
+        const latePacket = Buffer.concat([header, secondCipher.update(opus), secondCipher.final()]);
         device.send({ type: 'listen', state: 'stop' });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        udp.send(latePacket, udpPort, '127.0.0.1');
+        await backendInbox.next((item) => item.audio?.readUInt32BE(8) === 123);
         await backendInbox.next((item) => item.type === 'listen' && item.state === 'stop');
         await output.next((text) => text.includes('收到=2 序列跨度=3 缺失=1 最后序列=3'));
     });
