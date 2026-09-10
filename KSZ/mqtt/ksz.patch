@@ -102,11 +102,13 @@
          this.closing = true;
          // 清理所有未完成的 MCP 请求
          for (const request of Object.values(this.mcpPendingRequests)) {
-@@ -437,6 +425,7 @@
+@@ -437,6 +425,9 @@
      async parseHelloMessage(json) {
          this.udp = {
              ...this.udp,
 +            remoteAddress: null,
++            utteranceStartSequence: 0,
++            utterancePackets: 0,
              key: crypto.randomBytes(16),
              nonce: this.generateUdpHeader(0, 0, 0),
              encryption: 'aes-128-ctr',
@@ -148,7 +150,26 @@
              this.sendMqttMessage(JSON.stringify({ type: 'error', message: '处理 hello 消息失败' }));
              console.error(`${this.clientId} 处理 hello 消息失败: ${error}`);
          }
-@@ -1260,7 +1254,5 @@
+@@ -540,1 +536,10 @@
++        if (json.type === 'listen' && json.state === 'start') {
++            this.udp.utteranceStartSequence = this.udp.remoteSequence;
++            this.udp.utterancePackets = 0;
++        } else if (json.type === 'listen' && json.state === 'stop') {
++            const sequenceSpan = this.udp.remoteSequence - this.udp.utteranceStartSequence;
++            const missing = Math.max(0, sequenceSpan - this.udp.utterancePackets);
++            console.log(`上行音频统计: ${this.clientId} 收到=${this.udp.utterancePackets} 序列跨度=${sequenceSpan} 缺失=${missing} 最后序列=${this.udp.remoteSequence}`);
++        }
++
+         this.bridge.sendJson(json);
+@@ -579,2 +584,2 @@
+-        if (sequence < this.udp.remoteSequence) {
++        if (sequence <= this.udp.remoteSequence) {
+             return;
+@@ -593,2 +598,3 @@
+             this.udp.remoteSequence = sequence;
++            this.udp.utterancePackets++;
+         } catch (decryptionError) {
+@@ -1260,7 +1266,5 @@
  if (validateSignatureKeyComplexity()) {
      app.listen(adminPort, () => {
          console.log(`管理API服务启动在端口 ${adminPort}`);

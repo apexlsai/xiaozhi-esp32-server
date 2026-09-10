@@ -809,7 +809,7 @@ docker compose --profile mqtt build \
 
 保留 `server.websocket` 和 `server.ota`；`server.internal_api` 仍为 KSZ 的 `http://127.0.0.1:8004`。视觉 `vision.url` 必须可被设备访问，不能使用网关内部地址 `host.docker.internal`；图片仍直接上传 HTTP 视觉接口，音频和字幕经网关返回。
 
-这些 OTA 参数是全局配置，首期不提供按设备灰度。应先在测试环境启用，记录原参数值。保存后清理配置缓存、重启 server，再让测试设备重新获取 OTA：
+这些 OTA 参数是全局配置，首期不提供按设备灰度。应先在测试环境启用，记录原参数值。保存后清理配置缓存、重启 server，再让测试设备重新获取 OTA。下面清缓存命令适用于默认 Redis 端口 `6379`；如果 `.env` 配置了 `REDIS_PORT=6380`，需使用 `redis-cli -p 6380 DEL server:config`。Compose 会读取 `.env`，直接执行的 `redis-cli` 不会自动读取其中的端口：
 
 ```bash
 docker compose exec xiaozhi-esp32-server-redis redis-cli DEL server:config
@@ -827,6 +827,8 @@ node mqtt/verify-ota.cjs http://<HOST_IP>:8002/xiaozhi/ota/ aa:bb:cc:dd:ee:ff
 ### 兼容行为与验收
 
 `mqtt/ksz.patch` 让 MCP 初始化、工具发现和调用直接经过 KSZ 会话，避免网关提前缓存尚未配置视觉能力的工具列表；保留服务端下发的设备专属 `vision.url/token`。补丁还限定使用现有 OTA 生成的签名身份，认证完成才返回成功，并在 MQTT 断开时关闭后端会话。重新建立会话后，设备需重新发送 UDP 数据建立音频回程地址。
+
+每次设备发送 `listen stop` 时，网关日志输出 `上行音频统计`。`收到` 是本轮停止前到达网关并转发的帧数，`序列跨度` 是设备 UDP 序列号前进量，`缺失` 是跨度内未到达的帧数。60 ms 音频一秒约 16.7 帧；若设备端已发送帧数明显更高，且网关 `缺失` 大于零，丢包发生在设备至网关的公网 UDP 路径。
 
 仅保持 MQTT 连接时，不代表存在 KSZ 活动会话。没有会话时信标事件不转发、定向播报不可用；首期不缓存这些事件。按 MAC 定位设备，服务端显示的 TCP 对端地址属于网关。
 

@@ -14,6 +14,8 @@
 - 增加可选 `vision_stream` 能力及 `request_id` / `delivery_mode` 协议，区分 MCP、手动直推和仅 HTTP 返回；数字人页面增加手动拍照入口与取消回执，旧端保留完整返回兼容。
 
 ### 变更
+- MQTT 网关按每次 `listen start/stop` 输出上行 UDP 接收数、序列跨度和缺失数，并拒绝重复序列，便于区分设备采集不足、到云端丢包和 ASR 截断。
+- MQTT 部署说明补充自定义 Redis 端口的清缓存命令，避免仍连接默认 `6379` 导致配置刷新失败。
 - MCP 拍照视觉结果保持 VLM 直通：成功内容直接同步字幕与 TTS；服务异常改为固定友好提示，不再将原始错误交给聊天 LLM 二次处理或播报，并兼容旧客户端嵌套的 `vision_analysis` 返回结构。
 - 阿里百炼流式 TTS 使用服务端 `sentence-begin.original_text` 逐句下发字幕，使屏幕文字与对应音频同步；旧事件格式保留一次性整段字幕回退。
 - 阿里百炼流式 TTS 的 WebSocket 建连启用 Happy Eyeballs；IPv6 不可达时快速并行回退 IPv4，并统一使用 `tts_timeout` 控制握手超时。
