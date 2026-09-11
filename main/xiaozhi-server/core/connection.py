@@ -50,6 +50,7 @@ from core.utils.prompt_manager import PromptManager
 from core.utils.voiceprint_provider import VoiceprintProvider
 from core.utils.util import get_system_error_response
 from core.utils.beacon_location import fetch_beacon_location
+from core.utils.ksz_extension import guide, track_chat
 from core.utils import textUtils
 from core.utils.tool_feedback import ToolFeedbackScheduler
 from core.utils.vision_stream import (
@@ -1150,9 +1151,11 @@ class ConnectionHandler:
                 extra_body["language"] = language
             if self.device_attributes.get("last_beacon_id"):
                 extra_body["last_beacon_id"] = self.device_attributes.get("last_beacon_id")
-        return extra_body
+        return guide.filter_context(self, extra_body) if guide else extra_body
 
     async def refresh_beacon_location(self, force=False):
+        if guide and guide.refresh_location(self):
+            return self.beacon_location
         beacon_id = self.device_attributes.get("last_beacon_id")
         if not beacon_id:
             self.beacon_location = None
@@ -1188,6 +1191,8 @@ class ConnectionHandler:
         return location
 
     def _ensure_beacon_location_fresh(self):
+        if guide and guide.refresh_location(self):
+            return
         beacon_id = self.device_attributes.get("last_beacon_id")
         if not beacon_id:
             return
@@ -1276,6 +1281,7 @@ class ConnectionHandler:
                 )
         return "".join(cleaned_parts)
 
+    @track_chat
     def chat(self, query, depth=0):
         # 保存当前任务的sentence_id到局部变量，避免被新任务覆盖
         current_sentence_id = None

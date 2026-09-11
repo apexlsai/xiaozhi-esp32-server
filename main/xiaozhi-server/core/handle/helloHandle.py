@@ -14,6 +14,7 @@ from core.utils.wakeup_word import WakeupWordsConfig
 from core.handle.sendAudioHandle import sendAudioMessage, send_tts_message
 from core.utils.util import remove_punctuation_and_length, opus_datas_to_wav_bytes
 from core.providers.tools.device_mcp import MCPClient, send_mcp_initialize_message
+from core.utils.ksz_extension import guide
 
 TAG = __name__
 
@@ -41,6 +42,8 @@ _wakeup_response_lock = asyncio.Lock()
 
 async def handleHelloMessage(conn: "ConnectionHandler", msg_json):
     """处理hello消息"""
+    if guide and not await guide.on_hello(conn, msg_json):
+        return
     audio_params = msg_json.get("audio_params")
     if audio_params:
         format = audio_params.get("format")

@@ -4,6 +4,7 @@ from config.logger import setup_logging
 from core.api.device_command_handler import DeviceCommandHandler
 from core.api.ota_handler import OTAHandler
 from core.api.vision_handler import VisionHandler
+from core.utils.ksz_extension import guide
 
 TAG = __name__
 
@@ -11,6 +12,7 @@ TAG = __name__
 class SimpleHttpServer:
     def __init__(self, config: dict, websocket_server):
         self.config = config
+        self.websocket_server = websocket_server
         self.logger = setup_logging()
         self.ota_handler = OTAHandler(config)
         self.vision_handler = VisionHandler(config, websocket_server)
@@ -35,6 +37,7 @@ class SimpleHttpServer:
             return f"ws://{local_ip}:{port}/xiaozhi/v1/"
 
     async def start(self):
+        runner = None
         try:
             server_config = self.config["server"]
             read_config_from_api = self.config.get("read_config_from_api", False)
@@ -43,6 +46,8 @@ class SimpleHttpServer:
 
             if port:
                 app = web.Application()
+                if guide:
+                    guide.register_routes(app, self.websocket_server)
 
                 if not read_config_from_api:
                     # 如果没有开启智控台，只是单模块运行，就需要再添加简单OTA接口，用于下发websocket接口
@@ -100,3 +105,8 @@ class SimpleHttpServer:
 
             self.logger.bind(tag=TAG).error(f"错误堆栈: {traceback.format_exc()}")
             raise
+        finally:
+            if runner:
+                await runner.cleanup()
+            if guide:
+                await guide.close_runtime(self.websocket_server)

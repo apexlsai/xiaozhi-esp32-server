@@ -24,12 +24,14 @@ services:
       MQTT_SIGNATURE_KEY: ${MQTT_SIGNATURE_KEY:-}
       SERVER_SECRET: ${MQTT_SERVER_SECRET:-}
       MQTT_CHAT_SERVER: ${MQTT_CHAT_SERVER:-ws://host.docker.internal:8000/xiaozhi/v1/?from=mqtt_gateway}
+      KSZ_GUIDE_CONTROL_URL: ${KSZ_GUIDE_CONTROL_URL:-}
+      KSZ_GUIDE_CONTROL_TOKEN: ${KSZ_GUIDE_CONTROL_TOKEN:-}
 
   xiaozhi-esp32-server:
     image: xiaozhi-esp32-server:server_local
     build:
       context: ..
-      dockerfile: Dockerfile-server
+      dockerfile: KSZ/Dockerfile-server
     container_name: xiaozhi-esp32-server
     depends_on:
       xiaozhi-esp32-server-db:
@@ -42,6 +44,10 @@ services:
       - seccomp:unconfined
     environment:
       - TZ=Asia/Shanghai
+      - KSZ_GUIDE_ENABLED=${KSZ_GUIDE_ENABLED:-0}
+      - KSZ_MANAGEMENT_API_URL=${KSZ_MANAGEMENT_API_URL:-http://127.0.0.1:14000/api/v1/integration}
+      - KSZ_MANAGEMENT_API_TOKEN=${KSZ_MANAGEMENT_API_TOKEN:-}
+      - KSZ_GUIDE_CONTROL_TOKEN=${KSZ_GUIDE_CONTROL_TOKEN:-}
     volumes:
       - ${DATA_DIR:-./data}:/opt/xiaozhi-esp32-server/data
       # 使用远程 OpenAI 兼容 ASR，故不挂载本地 SenseVoice 模型。

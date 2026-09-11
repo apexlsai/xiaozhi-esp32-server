@@ -5,6 +5,7 @@ import httpx
 from config.logger import setup_logging
 from core.utils.util import check_model_key
 from core.providers.vllm.base import VLLMProviderBase
+from core.utils.ksz_extension import guide
 
 TAG = __name__
 logger = setup_logging()
@@ -83,7 +84,7 @@ class VLLMProvider(VLLMProviderBase):
             value = kwargs.get(key)
             if value:
                 payload[key] = value
-        return payload
+        return guide.extend_vision_payload(payload, kwargs) if guide else payload
 
     def _request_headers(self):
         return {

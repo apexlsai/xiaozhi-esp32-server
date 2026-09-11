@@ -1,0 +1,45 @@
+{
+  "devices": 1000,
+  "venues": 10,
+  "heartbeat_interval_seconds": 5,
+  "heartbeat_rounds": 12,
+  "heartbeat_count": 12000,
+  "elapsed_seconds": 61.64,
+  "warmup_seconds": 4.61,
+  "latency_ms": {
+    "median": 7.154,
+    "p95": 12.886,
+    "max": 101.787
+  },
+  "steady_http_requests": {
+    "GET /api/v1/integration/venues/TKd-WRREI0JiKVrNJuNyr/beacons": 1,
+    "GET /api/v1/integration/venues/ZjCUpf1_jPNQkjOCfZKX2/beacons": 1,
+    "GET /api/v1/integration/venues/CYgKS-7huhNZxJ2Rgwy3a/beacons": 1,
+    "GET /api/v1/integration/venues/Sp8oA9fRpSyV764WRsLCz/beacons": 1,
+    "GET /api/v1/integration/venues/aFvwmLjMo2J22b1oPPEMF/beacons": 1,
+    "GET /api/v1/integration/venues/OB9zRix9f7yAQ9I_jpl4x/beacons": 1,
+    "GET /api/v1/integration/venues/W1TvTAuwoDFtvtWGrWYQ1/beacons": 1,
+    "GET /api/v1/integration/venues/4jEVGS7PyAvBsvkODt7Pk/beacons": 1,
+    "GET /api/v1/integration/venues/mMAVsyJ0LQfMzJ-KEGFaN/beacons": 1,
+    "GET /api/v1/integration/venues/BR9sUEJppDBxAQ3SuGL2Y/beacons": 1,
+    "POST /api/v1/integration/policies/query": 10,
+    "POST /api/v1/integration/runtime-reports": 10
+  },
+  "steady_sql_statements": {
+    "SELECT": 110
+  },
+  "warmup_http_requests": {
+    "POST /api/v1/integration/devices/sync": 19,
+    "GET /api/v1/integration/venues/TKd-WRREI0JiKVrNJuNyr/beacons": 1,
+    "GET /api/v1/integration/venues/ZjCUpf1_jPNQkjOCfZKX2/beacons": 1,
+    "GET /api/v1/integration/venues/CYgKS-7huhNZxJ2Rgwy3a/beacons": 1,
+    "GET /api/v1/integration/venues/Sp8oA9fRpSyV764WRsLCz/beacons": 1,
+    "GET /api/v1/integration/venues/aFvwmLjMo2J22b1oPPEMF/beacons": 1,
+    "GET /api/v1/integration/venues/OB9zRix9f7yAQ9I_jpl4x/beacons": 1,
+    "GET /api/v1/integration/venues/W1TvTAuwoDFtvtWGrWYQ1/beacons": 1,
+    "GET /api/v1/integration/venues/4jEVGS7PyAvBsvkODt7Pk/beacons": 1,
+    "GET /api/v1/integration/venues/mMAVsyJ0LQfMzJ-KEGFaN/beacons": 1,
+    "GET /api/v1/integration/venues/BR9sUEJppDBxAQ3SuGL2Y/beacons": 1
+  },
+  "max_rss_mib": 111.79
+}

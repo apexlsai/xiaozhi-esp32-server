@@ -6,6 +6,7 @@ if TYPE_CHECKING:
     from core.connection import ConnectionHandler
 from config.manage_api_client import report_device_event, rebind_device_agent
 from config.logger import setup_logging
+from core.utils.ksz_extension import guide
 from core.utils.language import (
     LANGUAGE_AGENT_SUFFIXES,
     resolve_language_agent_name,
@@ -18,6 +19,8 @@ logger = setup_logging()
 
 async def handle_device_event(conn: "ConnectionHandler", msg_json: Dict[str, Any]):
     """处理设备主动上报的事件"""
+    if guide and await guide.handle_legacy_event(conn, msg_json):
+        return
     event = msg_json.get("event")
     payload = msg_json.get("payload", {})
     timestamp = msg_json.get("timestamp")

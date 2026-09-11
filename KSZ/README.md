@@ -2,10 +2,14 @@
 
 本目录是 KSZ 定制开发、部署与运维的唯一入口。`compose.yml` 从项目根目录构建本地 server 和 web 镜像，不依赖不存在的 `xiaozhi-esp32-server:*_local` 远程镜像。上游通用部署请使用项目根目录的 `docker-compose.yml`。
 
+## 场馆资产联动入口
+
+场馆、区域、信标、设备归属及工程/C端模式统一由 management 管理。启用方法、缓存生效规则和验证见 [场馆与设备联动](guide-management.md)，固件团队对接见 [导览控制协议](guide-protocol.md)。
+
 ## 前置条件
 
 - 已安装 Docker Engine 和 Docker Compose v2。
-- 在项目根目录中保留 `Dockerfile-server`、`Dockerfile-web` 和 `main/` 源码目录。
+- 保留 `KSZ/Dockerfile-server`、项目根目录的 `Dockerfile-web` 和 `main/` 源码目录。
 - 确保 Docker 可以拉取基础镜像，以及 MySQL、Redis 镜像。
 - 默认使用远程 OpenAI 兼容 ASR，无需下载或挂载本地 SenseVoice 模型。
 

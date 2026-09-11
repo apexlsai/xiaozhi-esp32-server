@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const dgram = require('node:dgram');
 const net = require('node:net');
+const http = require('node:http');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { once } = require('node:events');
@@ -185,6 +186,24 @@ test('OTA checks identity, topics, fallback and signature without returning cred
 });
 
 test('KSZ MQTT gateway protocol integration', { timeout: 60000 }, async (t) => {
+    const guideInbox = new Inbox();
+    const guideToken = 'gateway-guide-integration-test-token-32';
+    const guideServer = http.createServer(async (request, response) => {
+        assert.equal(request.headers.authorization, `Bearer ${guideToken}`);
+        const chunks = [];
+        for await (const chunk of request) chunks.push(chunk);
+        const body = JSON.parse(Buffer.concat(chunks));
+        guideInbox.push(body);
+        const message = body.message;
+        const command = { type: 'guide_control', version: 1, request_id: message.request_id,
+            action: message.action === 'observation' ? 'request_hello' : 'result',
+            activation_id: 'validated-move', session_attempt: 1, accepted: true };
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ messages: [command] }));
+    });
+    guideServer.listen(0, '127.0.0.1');
+    await once(guideServer, 'listening');
+    t.after(() => { guideServer.closeAllConnections(); guideServer.close(); });
     const backend = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await once(backend, 'listening');
     const backendInbox = new Inbox();
@@ -231,7 +250,9 @@ test('KSZ MQTT gateway protocol integration', { timeout: 60000 }, async (t) => {
     probe.close();
     const env = { ...process.env, PUBLIC_IP: '127.0.0.1', MQTT_SIGNATURE_KEY: signatureKey,
         SERVER_SECRET: serverSecret, MQTT_PORT: String(mqttPort), UDP_PORT: String(udpPort),
-        API_PORT: String(apiPort), MQTT_CHAT_SERVER: `ws://127.0.0.1:${backend.address().port}/xiaozhi/v1/?from=mqtt_gateway` };
+        API_PORT: String(apiPort), MQTT_CHAT_SERVER: `ws://127.0.0.1:${backend.address().port}/xiaozhi/v1/?from=mqtt_gateway`,
+        KSZ_GUIDE_CONTROL_URL: `http://127.0.0.1:${guideServer.address().port}/internal/ksz/guide/control`,
+        KSZ_GUIDE_CONTROL_TOKEN: guideToken };
     const child = spawn(process.execPath, ['start.cjs'], { cwd: gatewayDir, env, stdio: ['ignore', 'pipe', 'pipe'] });
     const output = new Inbox();
     let logs = '';
@@ -376,5 +397,40 @@ test('KSZ MQTT gateway protocol integration', { timeout: 60000 }, async (t) => {
     await t.test('MQTT disconnect closes the backend session', async () => {
         device.socket.destroy();
         await backendInbox.next((item) => item.closed === hello.session_id);
+    });
+    await t.test('idle guide controls use HTTP and activation hello is idempotent', async () => {
+        const guideDevice = new Device(mqttPort);
+        t.after(() => guideDevice.socket.destroy());
+        assert.equal(await guideDevice.connect(), 0);
+        await guideDevice.subscribe();
+        const previousSessions = sessionNumber;
+        guideDevice.send({ type: 'guide_control', version: 1, action: 'sync', request_id: 'guide-sync',
+            device_mac: 'forged', session_id: 'forged' });
+        const synced = await guideInbox.next((item) => item.message.request_id === 'guide-sync');
+        assert.equal(synced.device_mac, mac.toUpperCase());
+        assert.equal(synced.message.session_id, null);
+        await guideDevice.inbox.next((item) => item.request_id === 'guide-sync');
+        assert.equal(sessionNumber, previousSessions);
+        guideDevice.send({ type: 'guide_control', version: 1, action: 'observation', request_id: 'guide-move' });
+        await guideDevice.inbox.next((item) => item.action === 'request_hello');
+        const guideHello = { type: 'hello', version: 3, transport: 'udp',
+            features: { mcp: true, vision_stream: true },
+            audio_params: { format: 'opus', sample_rate: 16000, channels: 1, frame_duration: 60 },
+            guide: { activation_id: 'validated-move', session_attempt: 1, boot_id: 'boot-1',
+                connection_id: 'forged' } };
+        guideDevice.send(guideHello);
+        const started = await guideDevice.inbox.next((item) => item.type === 'hello');
+        const forwarded = await backendInbox.next((item) => item.guide?.activation_id === 'validated-move');
+        assert.equal(forwarded.guide.connection_id, synced.connection_id);
+        guideDevice.send(guideHello);
+        const repeated = await guideDevice.inbox.next((item) => item.type === 'hello');
+        assert.deepEqual(repeated, started);
+        assert.equal(sessionNumber, previousSessions + 1);
+        guideDevice.send({ type: 'guide_control', version: 1, action: 'ready', request_id: 'guide-ready',
+            session_id: 'forged' });
+        const ready = await guideInbox.next((item) => item.message.request_id === 'guide-ready');
+        assert.equal(ready.message.session_id, started.session_id);
+        assert.equal(ready.udp_ready, false);
+        assert.equal(backendInbox.items.some((item) => item.type === 'guide_control'), false);
     });
 });

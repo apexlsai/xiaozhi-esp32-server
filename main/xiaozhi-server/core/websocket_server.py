@@ -36,6 +36,7 @@ _setup_websockets_logger()
 from core.connection import ConnectionHandler
 from config.config_loader import get_config_from_api_async
 from core.auth import AuthManager, AuthenticationError
+from core.utils.ksz_extension import guide
 from core.utils.modules_initialize import initialize_modules
 from core.utils.util import check_vad_update, check_asr_update
 
@@ -71,6 +72,7 @@ class WebSocketServer:
         expire_seconds = auth_config.get("expire_seconds", None)
         self.auth = AuthManager(secret_key=secret_key, expire_seconds=expire_seconds)
         self.device_connections = {}
+        self.guide_runtime = guide.create_runtime(self) if guide else None
 
     async def start(self):
         server_config = self.config["server"]
@@ -165,6 +167,8 @@ class WebSocketServer:
         )
 
     def unregister_device_connection(self, conn: ConnectionHandler):
+        if guide:
+            guide.on_disconnect(conn)
         connection = self.device_connections.pop(conn, None)
         if connection:
             self.logger.bind(tag=TAG).info(

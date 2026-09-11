@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from core.connection import ConnectionHandler
 from core.handle.textMessageHandlerRegistry import TextMessageHandlerRegistry
+from core.utils.ksz_extension import guide
 
 TAG = __name__
 
@@ -22,6 +23,8 @@ class TextMessageProcessor:
 
             # 处理JSON消息
             if isinstance(msg_json, dict):
+                if guide and await guide.handle_control_message(conn, msg_json):
+                    return
                 message_type = msg_json.get("type")
 
                 # 记录日志

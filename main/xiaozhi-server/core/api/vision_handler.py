@@ -8,6 +8,7 @@ import uuid
 from typing import Optional, Tuple
 
 from aiohttp import web
+from core.utils.ksz_extension import guide
 
 from config.config_loader import get_private_config_from_api
 from config.logger import setup_logging
@@ -375,6 +376,8 @@ class VisionHandler(BaseHandler):
             "language": language,
             "last_beacon_id": device_attributes.get("last_beacon_id"),
         }
+        if guide:
+            kwargs = guide.vision_context(getattr(self, "websocket_server", None), device_id, kwargs)
         buffer = SentenceBuffer()
         if vision_request is not None and getattr(vllm, "supports_streaming", False) is True:
             fragments = []

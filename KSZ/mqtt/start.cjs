@@ -35,6 +35,16 @@ function gatewayConfig(env) {
         || url.pathname !== '/xiaozhi/v1/' || url.search !== '?from=mqtt_gateway' || url.hash) {
         throw new Error('MQTT_CHAT_SERVER must end with /xiaozhi/v1/?from=mqtt_gateway');
     }
+    if (env.KSZ_GUIDE_CONTROL_URL || env.KSZ_GUIDE_CONTROL_TOKEN) {
+        const guideUrl = new URL(required('KSZ_GUIDE_CONTROL_URL'));
+        if (!['http:', 'https:'].includes(guideUrl.protocol) || guideUrl.username || guideUrl.password
+            || guideUrl.pathname !== '/internal/ksz/guide/control' || guideUrl.search || guideUrl.hash) {
+            throw new Error('KSZ_GUIDE_CONTROL_URL must end with /internal/ksz/guide/control');
+        }
+        if (required('KSZ_GUIDE_CONTROL_TOKEN').length < 32) {
+            throw new Error('KSZ_GUIDE_CONTROL_TOKEN must contain at least 32 characters');
+        }
+    }
     return { production: { chat_servers: [endpoint] }, debug: false };
 }
 

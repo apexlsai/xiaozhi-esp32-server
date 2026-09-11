@@ -1,0 +1,6 @@
+FROM ghcr.io/xinnan-tech/xiaozhi-esp32-server:server-base
+
+COPY main/xiaozhi-server .
+COPY KSZ/server/ksz_guide ./ksz_guide
+
+CMD ["python", "app.py"]
