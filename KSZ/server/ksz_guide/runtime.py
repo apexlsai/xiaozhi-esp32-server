@@ -589,10 +589,45 @@ class GuideRuntime:
         task.add_done_callback(self.announcement_tasks.discard)
         await asyncio.sleep(0)
 
-    @staticmethod
-    async def _announce(conn, beacon):
-        from core.handle.receiveAudioHandle import startToChat
-        await startToChat(conn, f"[位置变化] 用户当前位于{beacon.to_prompt_context()}。请直接说明当前位置并简要介绍附近展品；信息不足时请坦诚说明，不要编造。")
+    async def _announce(self, conn, beacon):
+        from core.handle.sendAudioHandle import send_tts_message
+        from core.utils.output_counter import check_device_output_limit
+
+        limit = getattr(conn, "max_output_size", 0)
+        if limit > 0 and check_device_output_limit(conn.device_id, limit):
+            return
+        sentence_id = conn.sentence_id
+        socket = conn.websocket
+        cancelled = False
+
+        def owns_playback():
+            return (conn.websocket is socket and conn.sentence_id == sentence_id
+                    and not conn.client_abort and connection_is_open(conn))
+
+        def chat():
+            state = self.devices.get(mac_address(conn.device_id))
+            if (not cancelled and owns_playback() and state and state.owner is conn
+                    and not getattr(conn, "client_have_voice", False)
+                    and not getattr(conn, "guide_chat_count", 0)
+                    and self.location(state.mac) is beacon):
+                conn.chat(f"[位置变化] 用户当前位于{beacon.to_prompt_context()}。请直接说明当前位置并简要介绍附近展品；信息不足时请坦诚说明，不要编造。")
+
+        conn.client_abort = False
+        conn.client_is_speaking = True
+        conn.last_activity_time = self.wall_clock() * 1000
+        try:
+            await send_tts_message(conn, "start")
+            if owns_playback():
+                await asyncio.wrap_future(conn.executor.submit(chat))
+        finally:
+            cancelled = True
+            if owns_playback():
+                try:
+                    await send_tts_message(conn, "stop")
+                except Exception:
+                    if owns_playback():
+                        conn.client_is_speaking = False
+                    log.warning("Guide playback cleanup failed")
 
     def report(self, state):
         if self.guide_enabled:
