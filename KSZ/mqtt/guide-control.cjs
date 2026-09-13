@@ -3,7 +3,7 @@ const crypto = require('node:crypto');
 const actions = new Set(['sync', 'policy_ack', 'observation', 'lost', 'heartbeat', 'ready']);
 
 class GuideControl {
-    constructor(connection, { env = process.env, fetchImpl = fetch } = {}) {
+    constructor(connection, { env = process.env, fetchImpl = fetch, presence = null } = {}) {
         this.connection = connection;
         this.url = env.KSZ_GUIDE_CONTROL_URL;
         this.token = env.KSZ_GUIDE_CONTROL_TOKEN;
@@ -14,6 +14,8 @@ class GuideControl {
         this.activation = null;
         this.handshake = null;
         this.closed = false;
+        this.presence = presence;
+        this.presence?.connect(connection.macAddress, this.connectionId);
     }
 
     send(message) {
@@ -118,7 +120,9 @@ class GuideControl {
     }
 
     close() {
+        if (this.closed) return;
         this.closed = true;
+        this.presence?.disconnect(this.connection.macAddress, this.connectionId);
         this.activation = null;
         this.handshake = null;
     }

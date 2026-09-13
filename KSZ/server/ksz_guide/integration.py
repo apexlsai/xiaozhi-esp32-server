@@ -19,7 +19,9 @@ chat_lock = threading.Lock()
 
 
 def create_runtime(server):
-    if os.environ.get("KSZ_GUIDE_ENABLED", "0").lower() not in {"1", "true", "yes"}:
+    guide_enabled = os.environ.get("KSZ_GUIDE_ENABLED", "0").lower() in {"1", "true", "yes"}
+    presence_enabled = os.environ.get("KSZ_GUIDE_PRESENCE_ENABLED", "0").lower() in {"1", "true", "yes"}
+    if not guide_enabled and not presence_enabled:
         return None
     base_url = os.environ.get("KSZ_MANAGEMENT_API_URL", "").rstrip("/")
     parsed = urlparse(base_url)
@@ -29,14 +31,14 @@ def create_runtime(server):
         raise ValueError("KSZ_MANAGEMENT_API_URL must be an HTTP(S) integration API URL")
     if not token or len(control_token) < 32:
         raise ValueError("KSZ guide requires a management token and a control token of at least 32 characters")
-    runtime = GuideRuntime(ManagementClient(base_url, token), server)
+    runtime = GuideRuntime(ManagementClient(base_url, token), server, guide_enabled=guide_enabled)
     runtime.control_token = control_token
     return runtime
 
 
-def runtime_for(conn):
+def runtime_for(conn, *, guide_only=True):
     runtime = getattr(getattr(conn, "server", None), "guide_runtime", None)
-    return runtime if isinstance(runtime, GuideRuntime) else None
+    return runtime if isinstance(runtime, GuideRuntime) and (runtime.guide_enabled or not guide_only) else None
 
 
 async def close_runtime(server):
@@ -50,14 +52,22 @@ def register_routes(app, server):
     if runtime is None:
         return
 
-    async def control(request):
+    async def authenticated_body(request):
         expected = f"Bearer {runtime.control_token}"
         if not hmac.compare_digest(request.headers.get("Authorization", ""), expected):
             raise web.HTTPUnauthorized()
         if request.content_length is not None and request.content_length > 65536:
             raise web.HTTPRequestEntityTooLarge(max_size=65536, actual_size=request.content_length)
+        body = bytearray()
+        async for chunk in request.content.iter_chunked(65536):
+            body.extend(chunk)
+            if len(body) > 65536:
+                raise web.HTTPRequestEntityTooLarge(max_size=65536, actual_size=len(body))
+        return json.loads(body)
+
+    async def control(request):
         try:
-            data = await request.json()
+            data = await authenticated_body(request)
             if not isinstance(data, dict) or data.get("transport") != "mqtt":
                 raise GuideError("invalid_transport")
             connection_id = data.get("connection_id")
@@ -71,13 +81,23 @@ def register_routes(app, server):
         except GuideError as error:
             raise web.HTTPBadRequest(text=str(error)) from None
 
+    async def presence(request):
+        try:
+            return web.json_response(runtime.receive_presence(await authenticated_body(request)))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise web.HTTPBadRequest(text="invalid_json") from None
+        except GuideError as error:
+            raise web.HTTPBadRequest(text=str(error)) from None
+
     async def start(application):
         runtime.maintenance_task = asyncio.create_task(runtime.run())
 
     async def stop(application):
         await runtime.close()
 
-    app.router.add_post("/internal/ksz/guide/control", control)
+    if runtime.guide_enabled:
+        app.router.add_post("/internal/ksz/guide/control", control)
+    app.router.add_post("/internal/ksz/guide/presence", presence)
     app.on_startup.append(start)
     app.on_cleanup.append(stop)
 
@@ -95,10 +115,18 @@ async def on_hello(conn, message):
     return accepted
 
 
-def on_disconnect(conn):
-    runtime = runtime_for(conn)
+def on_connect(conn):
+    runtime = runtime_for(conn, guide_only=False)
     if runtime:
-        runtime.unbind(conn)
+        runtime.connection_opened(conn)
+
+
+def on_disconnect(conn):
+    runtime = runtime_for(conn, guide_only=False)
+    if runtime:
+        runtime.connection_closed(conn)
+        if runtime.guide_enabled:
+            runtime.unbind(conn)
 
 
 async def handle_control_message(conn, message):
@@ -164,7 +192,7 @@ def validated_context(runtime, device_mac, values):
 
 def vision_context(server, device_mac, values):
     runtime = getattr(server, "guide_runtime", None)
-    return validated_context(runtime, device_mac, values) if isinstance(runtime, GuideRuntime) else values
+    return validated_context(runtime, device_mac, values) if isinstance(runtime, GuideRuntime) and runtime.guide_enabled else values
 
 
 def extend_vision_payload(payload, kwargs):

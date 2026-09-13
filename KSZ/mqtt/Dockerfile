@@ -7,7 +7,7 @@ COPY package.json package-lock.json ksz.patch ./
 RUN git apply --check ksz.patch && git apply ksz.patch \
     && npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
     && rm ksz.patch
-COPY start.cjs healthcheck.cjs verify-ota.cjs guide-control.cjs ./
+COPY start.cjs healthcheck.cjs verify-ota.cjs guide-control.cjs presence.cjs ./
 
 FROM ${NODE_REGISTRY}/node:22-bookworm-slim
 WORKDIR /app

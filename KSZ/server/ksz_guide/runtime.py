@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from uuid import uuid4
 
 from .models import Beacon, GuideError, Policy, beacon_identity, mac_address
+from .presence import PresenceTracker, connection_is_open, is_mqtt_bridge
 
 
 log = logging.getLogger(__name__)
@@ -58,7 +59,8 @@ class DeviceState:
 
 
 class GuideRuntime:
-    def __init__(self, client, server=None, *, clock=time.monotonic, wall_clock=time.time, announcer=None):
+    def __init__(self, client, server=None, *, clock=time.monotonic, wall_clock=time.time, announcer=None,
+                 guide_enabled=True):
         self.client = client
         self.server = server
         self.clock = clock
@@ -69,6 +71,131 @@ class GuideRuntime:
         self.closed = False
         self.maintenance_task = None
         self.announcement_tasks = set()
+        self.guide_enabled = guide_enabled
+        self.presence = PresenceTracker(clock, wall_clock)
+        self.voice_connections = {}
+        self.voice_by_device = {}
+        self.presence_sequence = 0
+        self.dirty_reports = {}
+        self.pending_registration = set()
+        self.presence_task = None
+        self.presence_lock = asyncio.Lock()
+        self.presence_retry_at = 0
+        self.next_connection_snapshot = 0
+        self.report_sequence = 0
+
+    def _mark_reports(self, macs):
+        for mac in macs:
+            self.dirty_reports[mac] = self.dirty_reports.get(mac, 0) + 1
+
+    def _schedule_presence(self):
+        if self.closed or self.clock() < self.presence_retry_at:
+            return
+        if self.presence_task is None or self.presence_task.done():
+            async def flush():
+                await asyncio.sleep(0.1)
+                await self.flush_presence()
+            self.presence_task = asyncio.create_task(flush())
+
+    def receive_presence(self, payload):
+        instance, sequence, reports = self.presence.validate(payload)
+        for item in reports:
+            self.state(item["device_mac"])
+        accepted, touched, changed = self.presence.update(instance, sequence, reports, "mqtt")
+        self._presence_touched(touched, changed)
+        return {"accepted": accepted, "ignored": len(reports) - accepted}
+
+    def _presence_touched(self, touched, changed):
+        for mac in touched:
+            state = self.state(mac)
+            observed = self.presence.fields(mac)["last_seen_at"]
+            if observed is not None:
+                state.last_seen = max(state.last_seen, self.clock() - max(0, self.wall_clock() - observed))
+        self.pending_registration.update(touched)
+        self._mark_reports(changed)
+        if self.pending_registration or self.dirty_reports:
+            self._schedule_presence()
+
+    def connection_opened(self, conn, connected_at=None):
+        if conn in self.voice_connections:
+            return
+        try:
+            state = self.state(conn.device_id)
+        except GuideError:
+            return
+        entry = {"device_mac": state.mac, "connection_id": uuid4().hex,
+                 "connected_at": connected_at if connected_at is not None else self.wall_clock(),
+                 "online": True, "observed_at": self.wall_clock()}
+        self.voice_connections[conn] = (entry, is_mqtt_bridge(conn))
+        self.voice_by_device.setdefault(state.mac, set()).add(conn)
+        self.pending_registration.add(state.mac)
+        self._mark_reports({state.mac})
+        self._update_ws_presence(conn)
+        self._schedule_presence()
+
+    def _update_ws_presence(self, conn, online=True):
+        entry, mqtt = self.voice_connections[conn]
+        if mqtt:
+            return
+        self.presence_sequence += 1
+        report = {**entry, "online": online, "observed_at": self.wall_clock()}
+        _, touched, changed = self.presence.update(self.instance_id, self.presence_sequence, [report], "websocket")
+        self._presence_touched(touched, changed)
+
+    def connection_closed(self, conn):
+        found = self.voice_connections.get(conn)
+        if found is None:
+            return
+        self._update_ws_presence(conn, False)
+        self.voice_connections.pop(conn, None)
+        mac = found[0]["device_mac"]
+        self.voice_by_device[mac].discard(conn)
+        if not self.voice_by_device[mac]:
+            self.voice_by_device.pop(mac, None)
+        self._mark_reports({mac})
+        self._schedule_presence()
+
+    def snapshot_connections(self):
+        connections = getattr(self.server, "device_connections", None)
+        if not isinstance(connections, dict):
+            return
+        active = {conn for conn in connections if connection_is_open(conn)}
+        for conn in list(self.voice_connections):
+            if conn not in active:
+                self.connection_closed(conn)
+                if self.guide_enabled:
+                    self.unbind(conn)
+        for conn in active:
+            if conn not in self.voice_connections:
+                self.connection_opened(conn, connections[conn].get("connected_at"))
+            elif not self.voice_connections[conn][1]:
+                self._update_ws_presence(conn)
+
+    async def flush_presence(self):
+        async with self.presence_lock:
+            registrations = set(self.pending_registration)
+            try:
+                if registrations:
+                    await self.client.ensure_registered(list(registrations))
+                    self.pending_registration.difference_update(registrations)
+                    if self.guide_enabled:
+                        for mac in registrations:
+                            state = self.devices.get(mac)
+                            policy = self.client.policies.get(mac)
+                            if state and policy:
+                                async with state.lock:
+                                    self._apply_policy(state, policy)
+                versions = dict(self.dirty_reports)
+                reports = [self.report(self.devices[mac]) for mac in versions if mac in self.devices]
+                if reports:
+                    await self.client.report(reports)
+                for mac, version in versions.items():
+                    if self.dirty_reports.get(mac) == version:
+                        self.dirty_reports.pop(mac, None)
+                self.presence_retry_at = 0
+            except GuideError:
+                self.presence_retry_at = self.clock() + 5
+                log.warning("Device presence synchronization unavailable; retrying automatically")
 
     def state(self, mac):
         mac = mac_address(mac)
@@ -468,28 +595,39 @@ class GuideRuntime:
         await startToChat(conn, f"[位置变化] 用户当前位于{beacon.to_prompt_context()}。请直接说明当前位置并简要介绍附近展品；信息不足时请坦诚说明，不要编造。")
 
     def report(self, state):
-        self._expire(state)
-        state.report_revision += 1
-        return {
+        if self.guide_enabled:
+            self._expire(state)
+        self.report_sequence += 1
+        state.report_revision = self.report_sequence
+        result = {
             "device_mac": state.mac, "instance_id": self.instance_id,
             "report_revision": state.report_revision, "reported_at": self.wall_clock(),
-            "last_seen_at": self.wall_clock() - max(0, self.clock() - state.last_seen),
+            **self.presence.fields(state.mac),
+            "session_active": any(connection_is_open(conn) for conn in self.voice_by_device.get(state.mac, ())),
+        }
+        if not self.guide_enabled:
+            return result
+        result.update({
             "location_observed_at": self.wall_clock() - max(0, self.clock() - state.last_position_at) if state.current else None,
-            "online": self.clock() - state.last_seen < 30,
-            "transport": state.transport, "session_active": state.owner is not None,
             "policy_revision": state.policy.revision if state.policy else None,
             "applied_policy_revision": state.ack_revision, "compatibility": state.compatibility,
             "current_venue_id": state.current.venue_id if state.current else None,
             "current_beacon_id": state.current.id if state.current else None,
             "location_revision": state.location_revision, "last_error": state.rejection,
             "rejected_count": state.rejected_count,
-        }
+        })
+        return result
 
     async def tick(self, *, refresh=False):
+        if self.clock() >= self.next_connection_snapshot:
+            self.snapshot_connections()
+            self.next_connection_snapshot = self.clock() + 10
+        self._mark_reports(self.presence.sweep())
         states = list(self.devices.values())
-        if refresh:
+        if refresh and self.guide_enabled:
             macs = [state.mac for state in states if self.clock() - state.last_seen < 60 or state.owner is not None]
             try:
+                await self.client.ensure_registered(macs)
                 policies = await self.client.refresh_policies(macs)
                 for mac, policy in policies.items():
                     state = self.devices.get(mac)
@@ -500,16 +638,16 @@ class GuideRuntime:
                 log.warning("Guide policy refresh unavailable; existing leases are not extended")
         for state in states:
             async with state.lock:
-                await self._try_announce(state)
-                if state.owner is None and self.clock() - state.last_seen >= 300:
+                if self.guide_enabled:
+                    await self._try_announce(state)
+                if (state.owner is None and self.clock() - state.last_seen >= 300
+                        and not self.presence.fields(state.mac)["online"]
+                        and state.mac not in self.pending_registration and state.mac not in self.dirty_reports):
                     self.devices.pop(state.mac, None)
         if refresh:
-            reports = [self.report(state) for state in states]
-            if reports:
-                try:
-                    await self.client.report(reports)
-                except GuideError:
-                    log.warning("Guide runtime report unavailable")
+            self._mark_reports(self.devices)
+        if (self.pending_registration or self.dirty_reports) and self.clock() >= self.presence_retry_at:
+            await self.flush_presence()
 
     async def run(self):
         next_refresh = self.clock() + 30
@@ -527,6 +665,9 @@ class GuideRuntime:
         if self.maintenance_task:
             self.maintenance_task.cancel()
             await asyncio.gather(self.maintenance_task, return_exceptions=True)
+        if self.presence_task:
+            self.presence_task.cancel()
+            await asyncio.gather(self.presence_task, return_exceptions=True)
         for task in self.announcement_tasks:
             task.cancel()
         await asyncio.gather(*self.announcement_tasks, return_exceptions=True)

@@ -38,7 +38,7 @@ class Inbox {
             waiter.resolve(item);
         }
     }
-    next(predicate = () => true) {
+    next(predicate = () => true, timeoutMs = 5000) {
         const index = this.items.findIndex(predicate);
         if (index >= 0) return Promise.resolve(this.items.splice(index, 1)[0]);
         return new Promise((resolve, reject) => {
@@ -46,7 +46,7 @@ class Inbox {
             waiter.timer = setTimeout(() => {
                 this.waiters.splice(this.waiters.indexOf(waiter), 1);
                 reject(new Error('Timed out waiting for protocol message'));
-            }, 5000);
+            }, timeoutMs);
             this.waiters.push(waiter);
         });
     }
@@ -107,11 +107,14 @@ class Device {
     }
     async connect(auth = credentials) {
         await once(this.socket, 'connect');
+        this.sendConnect(auth);
+        return (await this.inbox.next((item) => item.packetType === 2)).body[1];
+    }
+    sendConnect(auth = credentials) {
         this.socket.write(packet(0x10, Buffer.concat([
             textField('MQTT'), Buffer.from([4, 0xc2, 0, 30]),
             textField(auth.client_id), textField(auth.username), textField(auth.password),
         ])));
-        return (await this.inbox.next((item) => item.packetType === 2)).body[1];
     }
     send(json) {
         this.socket.write(packet(0x30, Buffer.concat([
@@ -187,12 +190,30 @@ test('OTA checks identity, topics, fallback and signature without returning cred
 
 test('KSZ MQTT gateway protocol integration', { timeout: 60000 }, async (t) => {
     const guideInbox = new Inbox();
+    const presenceInbox = new Inbox();
+    let failPresence = false;
+    let failedPresence;
     const guideToken = 'gateway-guide-integration-test-token-32';
     const guideServer = http.createServer(async (request, response) => {
         assert.equal(request.headers.authorization, `Bearer ${guideToken}`);
         const chunks = [];
         for await (const chunk of request) chunks.push(chunk);
         const body = JSON.parse(Buffer.concat(chunks));
+        if (request.url === '/internal/ksz/guide/presence') {
+            assert.ok(body.reports.length <= 100);
+            if (failPresence) {
+                failPresence = false;
+                failedPresence = body;
+                response.writeHead(503);
+                response.end();
+                return;
+            }
+            presenceInbox.push(body);
+            response.writeHead(200, { 'Content-Type': 'application/json' });
+            response.end(JSON.stringify({ accepted: body.reports.length, ignored: 0 }));
+            return;
+        }
+        assert.equal(request.url, '/internal/ksz/guide/control');
         guideInbox.push(body);
         const message = body.message;
         const command = { type: 'guide_control', version: 1, request_id: message.request_id,
@@ -282,6 +303,8 @@ test('KSZ MQTT gateway protocol integration', { timeout: 60000 }, async (t) => {
             assert.equal(await device.connect(auth), 5);
         }
         assert.equal(sessionNumber, 0);
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        assert.equal(presenceInbox.items.length, 0);
     });
     await t.test('signed uppercase MAC identities remain accepted', async () => {
         const auth = { ...credentials, client_id: credentials.client_id.toUpperCase() };
@@ -290,13 +313,43 @@ test('KSZ MQTT gateway protocol integration', { timeout: 60000 }, async (t) => {
         const device = new Device(mqttPort);
         t.after(() => device.socket.destroy());
         assert.equal(await device.connect(auth), 0);
+        const online = await presenceInbox.next((batch) => batch.reports.some((report) => report.online));
+        const connectionId = online.reports[0].connection_id;
+        assert.equal(online.reports[0].device_mac, mac.toUpperCase());
         device.socket.destroy();
+        await presenceInbox.next((batch) => batch.reports.some((report) =>
+            report.connection_id === connectionId && !report.online));
+    });
+    await t.test('a second CONNECT closes the authenticated socket without leaking online presence', async () => {
+        const repeated = new Device(mqttPort);
+        t.after(() => repeated.socket.destroy());
+        assert.equal(await repeated.connect(), 0);
+        const online = await presenceInbox.next((batch) => batch.reports.some((report) => report.online));
+        const connectionId = online.reports[0].connection_id;
+        const closed = once(repeated.socket, 'close');
+        repeated.sendConnect();
+        await closed;
+        await presenceInbox.next((batch) => batch.reports.some((report) =>
+            report.connection_id === connectionId && !report.online));
+        assert.equal(repeated.inbox.items.some((item) => item.packetType === 2), false);
     });
 
     const device = new Device(mqttPort);
     t.after(() => device.socket.destroy());
     assert.equal(await device.connect(), 0);
     await device.subscribe();
+    let presenceConnectionId;
+    await t.test('legacy idle connection reports online and refreshes independently of a voice session', async () => {
+        const online = await presenceInbox.next((batch) => batch.reports.some((report) => report.online));
+        const report = online.reports.find((item) => item.online);
+        presenceConnectionId = report.connection_id;
+        const snapshot = await presenceInbox.next((batch) => batch.reports.some((item) =>
+            item.connection_id === presenceConnectionId && item.observed_at > report.observed_at), 15000);
+        assert.ok(snapshot.sequence > online.sequence);
+        assert.equal(snapshot.reports[0].connected_at, report.connected_at);
+        assert.equal(sessionNumber, 0);
+        assert.equal(device.inbox.items.length, 0);
+    });
     await t.test('an idle MQTT connection does not start a backend session for beacon events', async () => {
         device.send({ type: 'device_event', event: 'beacon_change', payload: { beacon_id: 'idle-beacon' } });
         await device.inbox.next((item) => item.type === 'goodbye');
@@ -395,8 +448,13 @@ test('KSZ MQTT gateway protocol integration', { timeout: 60000 }, async (t) => {
         assert.equal(device.inbox.items.filter((item) => item.type === 'goodbye').length, 0);
     });
     await t.test('MQTT disconnect closes the backend session', async () => {
+        failPresence = true;
         device.socket.destroy();
         await backendInbox.next((item) => item.closed === hello.session_id);
+        const offline = await presenceInbox.next((batch) => batch.reports.some((report) =>
+            report.connection_id === presenceConnectionId && !report.online));
+        assert.ok(failedPresence.reports.some((report) => !report.online));
+        assert.ok(offline.sequence > failedPresence.sequence);
     });
     await t.test('idle guide controls use HTTP and activation hello is idempotent', async () => {
         const guideDevice = new Device(mqttPort);

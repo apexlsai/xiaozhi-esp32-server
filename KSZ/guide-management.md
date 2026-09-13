@@ -10,6 +10,7 @@
 
 ```dotenv
 KSZ_GUIDE_ENABLED=1
+KSZ_GUIDE_PRESENCE_ENABLED=1
 KSZ_MANAGEMENT_API_URL=http://127.0.0.1:14000/api/v1/integration
 KSZ_MANAGEMENT_API_TOKEN=<与management的INTEGRATION_API_KEY一致>
 KSZ_GUIDE_CONTROL_URL=http://host.docker.internal:8004/internal/ksz/guide/control
@@ -24,6 +25,10 @@ docker compose --env-file .env --profile mqtt up -d --build xiaozhi-esp32-server
 
 此命令是部署操作，会重启对应服务。仓库默认 `KSZ_GUIDE_ENABLED=0`，便于先完成资产登记及固件联调后再启用。启用时不得关闭现有设备接入鉴权。源码运行时将 `KSZ/server` 加入 `PYTHONPATH`；专用 Dockerfile 已打包 `ksz_guide`。
 
+仅同步设备在线状态时，设置 `KSZ_GUIDE_PRESENCE_ENABLED=1`、`KSZ_GUIDE_ENABLED=0`。开启导览会同时开启在线同步。两种模式均需配置上述服务地址和令牌；management 还需设置 `REDIS_URL`。管理端在容器中访问宿主机 Redis 时使用 `host.docker.internal` 和实际 Redis 端口，例如 `redis://host.docker.internal:6380/2`。
+
+更新源码后必须重新构建 server 和 MQTT 网关镜像；单独 `restart` 不会更新代码或容器环境变量。management 修改环境变量后也需要通过其 Compose 重新创建 API 容器。
+
 ## 管理操作
 
 1. 创建场馆及导览区域，登记信标的业务编号、完整 MAC 和区域。多枚信标可以覆盖同一区域。
@@ -37,6 +42,8 @@ docker compose --env-file .env --profile mqtt up -d --build xiaozhi-esp32-server
 ## 生效与故障语义
 
 management 的 PostgreSQL 保存资产和操作记录。Redis 仅缓存目录和运行态，使用独立键前缀；小智不直接读取该 Redis。
+
+设备只连接 xiaozhi。MQTT 网关和 WebSocket 服务根据已认证连接同步在线状态，旧固件无需新增报文；MQTT 待机连接也会显示在线。在线状态、语音会话、当前位置和策略确认分别记录，连接保活不会延长位置有效期。连接变化合并上报，网关每10秒更新存活快照；状态服务暂时失败后自动重试。
 
 小智每30秒批量校验策略，授权硬有效期最多60秒；同场馆共享目录缓存，未知候选有负缓存及限速。变更不会被设备自报场馆或模式覆盖。配置页应根据实际服务端版本与固件 ACK 判断同步状态。
 

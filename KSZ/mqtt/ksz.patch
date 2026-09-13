@@ -2,11 +2,13 @@ diff --git a/app.js b/app.js
 index 2db412a..1878a22 100644
 --- a/app.js
 +++ b/app.js
-@@ -14,6 +14,7 @@ const { MQTTProtocol } = require('./mqtt-protocol');
+@@ -14,6 +14,9 @@ const { MQTTProtocol } = require('./mqtt-protocol');
  const { ConfigManager } = require('./utils/config-manager');
  const { CallManager } = require('./utils/call-manager');
  const { validateMqttCredentials } = require('./utils/mqtt_config_v2');
 +const { GuideControl } = require('./guide-control.cjs');
++const { PresenceReporter } = require('./presence.cjs');
++const guidePresence = new PresenceReporter();
 
  // libopus-wasm 编码器缓存（用于生成静音帧）
  let opusEncoderPromise = null;
@@ -70,7 +72,13 @@ index 2db412a..1878a22 100644
              this.server.removeConnection(this);
          });
 
-@@ -278,39 +279,28 @@ class MQTTConnection {
+@@ -276,41 +277,34 @@ class MQTTConnection {
+     handleConnect(connectData) {
++        if (this.closing || this.guideControl) {
++            this.close();
++            return;
++        }
+         this.clientId = connectData.clientId;
          this.username = connectData.username;
          this.password = connectData.password;
 
@@ -116,7 +124,7 @@ index 2db412a..1878a22 100644
          this.server.addConnection(this);
 -        this.initializeDeviceTools();
 +        this.mcpRequestId = 10000;
-+        this.guideControl = new GuideControl(this);
++        this.guideControl = new GuideControl(this, { presence: guidePresence });
      }
 
      handleSubscribe(subscribeData) {
@@ -252,3 +260,18 @@ index 2db412a..1878a22 100644
 -        calculateAndPrintDailyToken();
      });
  }
+diff --git a/mqtt-protocol.js b/mqtt-protocol.js
+--- a/mqtt-protocol.js
++++ b/mqtt-protocol.js
+@@ -249,11 +249,5 @@ class MQTTProtocol extends Emitter {
+         this.keepAliveInterval = keepAlive * 1000 * 1.5;
+         
+-        // 发送 CONNACK
+-        this.sendConnack(0, false);
+-        
+-        // 标记为已连接
+-        this.isConnected = true;
+-        
+         // 发出连接事件
+         this.emit('connect', {
+             clientId,

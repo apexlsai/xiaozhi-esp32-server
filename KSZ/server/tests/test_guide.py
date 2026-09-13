@@ -62,6 +62,10 @@ class FakeClient:
             raise GuideError("management_unavailable")
         return self.policies[mac]
 
+    async def ensure_registered(self, macs):
+        if self.failed:
+            raise GuideError("management_unavailable")
+
     async def refresh_policies(self, macs):
         if self.failed:
             raise GuideError("management_unavailable")
@@ -491,11 +495,12 @@ async def test_cold_start_devices_are_batched_and_sync_policy_is_reused():
     await client.close()
 
 
-def test_enabled_extension_fails_when_package_is_not_installed():
+@pytest.mark.parametrize("enabled_flag", ["KSZ_GUIDE_ENABLED", "KSZ_GUIDE_PRESENCE_ENABLED"])
+def test_enabled_extension_fails_when_package_is_not_installed(enabled_flag):
     path = Path(__file__).resolve().parents[3] / "main/xiaozhi-server/core/utils/ksz_extension.py"
-    enabled = subprocess.run([sys.executable, "-I", str(path)], env={**os.environ, "KSZ_GUIDE_ENABLED": "1"}, capture_output=True, text=True)
+    enabled = subprocess.run([sys.executable, "-I", str(path)], env={**os.environ, enabled_flag: "1"}, capture_output=True, text=True)
     assert enabled.returncode != 0
-    assert "KSZ_GUIDE_ENABLED requires the ksz_guide package" in enabled.stderr
+    assert "KSZ guide or presence requires the ksz_guide package" in enabled.stderr
     disabled = subprocess.run([sys.executable, "-I", str(path)], env={**os.environ, "KSZ_GUIDE_ENABLED": "0"}, capture_output=True, text=True)
     assert disabled.returncode == 0
 

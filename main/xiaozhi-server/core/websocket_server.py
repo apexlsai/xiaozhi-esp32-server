@@ -162,6 +162,8 @@ class WebSocketServer:
             "peer_address": peer_address,
             "connected_at": time.time(),
         }
+        if guide:
+            guide.on_connect(conn)
         self.logger.bind(tag=TAG).info(
             f"设备连接已注册: device_id={conn.device_id}, peer={peer_address}"
         )

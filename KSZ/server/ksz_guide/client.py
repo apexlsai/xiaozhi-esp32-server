@@ -98,8 +98,16 @@ class ManagementClient:
     async def policy(self, mac, metadata=None):
         mac = mac_address(mac)
         cached = self.policies.get(mac)
-        if cached and cached.deadline > self.clock():
+        if mac in self.registered and cached and cached.deadline > self.clock():
             return cached
+        return await self._fetch_policy(mac, metadata)
+
+    async def ensure_registered(self, macs):
+        missing = [mac_address(mac) for mac in macs if mac_address(mac) not in self.registered]
+        if missing:
+            await asyncio.gather(*(self._fetch_policy(mac) for mac in missing))
+
+    async def _fetch_policy(self, mac, metadata=None):
         async def fetch():
             future = asyncio.get_running_loop().create_future()
             self.pending_policies[mac] = (metadata, future)
@@ -295,4 +303,6 @@ class ManagementClient:
 
     async def report(self, reports):
         for start in range(0, len(reports), 100):
-            await self._request("POST", "/runtime-reports", json={"reports": reports[start:start + 100]})
+            result = await self._request("POST", "/runtime-reports", json={"reports": reports[start:start + 100]})
+            if result.get("runtime_available") is False:
+                raise GuideError("management_runtime_unavailable")
