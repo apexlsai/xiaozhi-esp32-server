@@ -10,8 +10,13 @@ from urllib.parse import urlparse
 from aiohttp import web
 
 from .client import ManagementClient
+from .announcement import (
+    filter_guide_announcement_text, guide_announcement_messages, is_guide_announcement,
+    queue_guide_tool_reply, start_guide_announcement,
+)
 from .models import GuideError, mac_address
 from .runtime import GuideRuntime
+from .settings import GuideSettings
 
 
 log = logging.getLogger(__name__)
@@ -31,7 +36,8 @@ def create_runtime(server):
         raise ValueError("KSZ_MANAGEMENT_API_URL must be an HTTP(S) integration API URL")
     if not token or len(control_token) < 32:
         raise ValueError("KSZ guide requires a management token and a control token of at least 32 characters")
-    runtime = GuideRuntime(ManagementClient(base_url, token), server, guide_enabled=guide_enabled)
+    settings = GuideSettings.from_env()
+    runtime = GuideRuntime(ManagementClient(base_url, token), server, guide_enabled=guide_enabled, settings=settings)
     runtime.control_token = control_token
     return runtime
 

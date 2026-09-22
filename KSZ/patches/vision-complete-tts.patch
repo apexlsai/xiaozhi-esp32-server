@@ -1,0 +1,12 @@
+--- a/core/providers/tts/base.py
++++ b/core/providers/tts/base.py
+@@ -425,6 +425,9 @@
+                     self.is_first_sentence = True
+                     self.tts_audio_first_sentence = True
+                     self.current_emotion_context = None
++                elif getattr(message, "ksz_complete_sentence", False):
++                    from ksz_guide.tts import consume_complete_sentence
++                    consume_complete_sentence(self, message)
+                 elif ContentType.EMOTION == message.content_type:
+                     self._process_remaining_text_stream(opus_handler=self.handle_opus)
+                     self.current_emotion_context = message.emotion_context

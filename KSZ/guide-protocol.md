@@ -107,9 +107,11 @@ UTF8(manifest.manifest_json + "\n" + chunk_json[0] + "\n" + ... + chunk_json[N-1
 
 可选广播身份使用 `beacon.uuid`、`beacon.major`、`beacon.minor`，必须全填或全空。Major/Minor是0–65535整数。若管理端登记了广播三元组，新协议必须完整携带且与登记值匹配；旧协议仅按完整MAC兼容校验。
 
-每5秒发送 `action=heartbeat`，其他信封字段一致，并携带当前仍稳定观测到的 `beacon`。仅设备在线但未观测到信标时，不得补报历史信标。确认丢失发送 `action=lost`（不带beacon）；服务端15秒未获得有效位置确认也会失位。
+每5秒发送 `action=heartbeat`，其他信封字段一致，并携带当前仍稳定观测到的 `beacon`。仅设备在线但未观测到信标时，不得补报历史信标。确认丢失发送 `action=lost`（不带beacon）；服务端默认15秒未获得有效位置确认也会失位，可通过 `KSZ_GUIDE_POSITION_TTL_MS` 调整。
 
-首次有效位置只建立基准；后续导览区域变化且自动讲解开启时触发。多枚信标覆盖同一区域不重复播报，重连不算移动。位置变化不会修改设备固定归属。
+默认首次有效位置只建立基准，`KSZ_GUIDE_ANNOUNCE_ON_FIRST_BEACON=1` 时首次也触发讲解；后续有效信标 MAC 变化且自动讲解开启时触发，即使两枚信标属于同一导览区域。同一信标的重复上报、位置心跳和重连不重复播报；切换到其他信标后再返回原信标属于新的变化。位置变化不会修改设备固定归属。
+
+新协议策略中的 `auto_announce` 同时受设备授权与 `KSZ_GUIDE_AUTO_ANNOUNCE_ENABLED` 约束；`filter.min_announce_interval_ms` 为服务端 `KSZ_GUIDE_MIN_ANNOUNCE_INTERVAL_MS` 的有效值，参与策略摘要。其他服务器端讲解规则见[配置说明](guide-management.md#信标讲解规则)，RSSI 与扫描判定仍按原策略执行。
 
 结果消息使用 `action=result`，含 `request_id`、`seq`、`accepted` 和 `reason`。未知、跨馆、停用或冲突信标不更新位置、不触发语音。`policy_revision_mismatch` 时同步新策略；`resolve_rate_limited` 时按正常稳定观测节奏重试，不能快速循环请求。
 
@@ -158,7 +160,7 @@ UTF8(manifest.manifest_json + "\n" + chunk_json[0] + "\n" + ... + chunk_json[N-1
 
 服务端核验当前会话、任务、UDP回程及TTS初始化就绪后才消费待播任务。MQTT降级到WebSocket时使用相同任务ID及递增attempt，并沿用原WebSocket鉴权；旧连接迟到消息不能覆盖新会话。
 
-待播任务有效期15秒。失位、策略失效、区域变化和建链超时会取消旧任务；只保留最新有效区域。用户正在交互时不插播，过期任务不会在稍后突然补播。`ready`成功只表示协议接受，不保证立刻有音频。
+待播任务默认有效期15秒，可通过 `KSZ_GUIDE_PENDING_TTL_MS` 调整，设备以 `request_hello.expires_in_ms` 为准。失位、策略失效、信标变化和建链超时会取消旧任务；只保留最新有效信标。用户正在交互时不插播，过期任务不会在稍后突然补播。`ready`成功只表示协议接受，不保证立刻有音频。
 
 ## 旧固件兼容
 
@@ -168,6 +170,8 @@ UTF8(manifest.manifest_json + "\n" + chunk_json[0] + "\n" + ... + chunk_json[N-1
 
 启用管理联动后，位置服务失败不会保存未知信标或播“已进入新区域”。文字和视觉都只使用尚有效的校验位置；未经确认的旧 `last_beacon_id` 不再作为当前位置。
 
+信标自动讲解的第一句由服务端按语言模板直接生成，中文默认“您现在位于{location}。”，后续为模型生成的介绍。两部分属于同一播报轮次，固件继续按现有 `tts/start`、`tts/sentence_start` 和音频处理，无需增加消息类型；内部位置提示仍不回传为 `stt`。
+
 ## 固件验收
 
 - 待配置、禁用、报废设备不启用导览；场馆机不能识别外馆信标。
@@ -175,4 +179,4 @@ UTF8(manifest.manifest_json + "\n" + chunk_json[0] + "\n" + ... + chunk_json[N-1
 - 边界RSSI抖动不反复上报；丢失信标后停止位置心跳并发lost。
 - MQTT待机可同步策略和上报位置，只有授权唤醒任务才建立语音会话。
 - 重复hello不生成双会话；UDP就绪前不开始播音；降级后旧会话不得重复播报。
-- 首次只建基准，同区域不重播；新区域仅在策略有效且自动讲解开启时播报。
+- 默认首次只建基准，开启首次播报时也讲解；同信标不重播，不同信标即使属于同一区域也触发讲解，仅在策略有效且自动讲解开启时播报。

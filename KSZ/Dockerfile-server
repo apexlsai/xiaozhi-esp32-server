@@ -1,6 +1,17 @@
+FROM node:18 AS patched-source
+
+WORKDIR /src
+COPY main/xiaozhi-server .
+COPY KSZ/patches/vision-complete-tts.patch /tmp/vision-complete-tts.patch
+RUN git apply --check /tmp/vision-complete-tts.patch \
+    && git apply /tmp/vision-complete-tts.patch
+COPY KSZ/patches/guide-announcement.patch /tmp/guide-announcement.patch
+RUN git apply --check /tmp/guide-announcement.patch \
+    && git apply /tmp/guide-announcement.patch
+
 FROM ghcr.io/xinnan-tech/xiaozhi-esp32-server:server-base
 
-COPY main/xiaozhi-server .
+COPY --from=patched-source /src .
 COPY KSZ/server/ksz_guide ./ksz_guide
 
 CMD ["python", "app.py"]

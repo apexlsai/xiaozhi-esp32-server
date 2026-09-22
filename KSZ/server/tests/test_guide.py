@@ -7,7 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from aiohttp import ClientSession, web
@@ -92,11 +92,12 @@ class FakeClient:
 
 
 class Harness:
-    def __init__(self, **changes):
+    def __init__(self, *, settings=None, **changes):
         self.clock = Clock()
         self.client = FakeClient(self.clock, **changes)
         self.announce = AsyncMock()
-        self.runtime = GuideRuntime(self.client, clock=self.clock, wall_clock=self.clock, announcer=self.announce)
+        self.runtime = GuideRuntime(self.client, clock=self.clock, wall_clock=self.clock,
+                                    announcer=self.announce, settings=settings)
         self.runtime.control_token = "x" * 32
         self.seq = 0
 
@@ -208,20 +209,84 @@ async def test_stale_pending_activation_cannot_restore_position(failure):
 
 
 @pytest.mark.asyncio
-async def test_same_area_heartbeat_and_reconnect_do_not_count_as_movement():
-    h = Harness(items=[beacon(1), beacon(2, area_id="area1")])
+async def test_same_beacon_heartbeat_and_reconnect_do_not_count_as_movement():
+    h = Harness()
     await h.sync()
     await h.observe(1)
     for _ in range(4):
         h.clock.now += 5
         messages = await h.send("heartbeat", beacon={"mac": beacon(1).mac})
         assert all(item["action"] != "request_hello" for item in messages)
-    await h.observe(2)
+    await h.observe(1)
     assert h.runtime.state(DEVICE).pending is None
     conn = h.conn()
     await h.runtime.bind(conn)
     h.runtime.unbind(conn)
     await h.runtime.bind(h.conn("session2"))
+    await h.observe(1)
+    await h.runtime.tick()
+    assert h.runtime.state(DEVICE).pending is None
+    h.announce.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["observation", "heartbeat", "legacy"])
+@pytest.mark.parametrize("area_id", ["area1", None])
+async def test_different_beacons_in_same_area_announce_each_transition(transport, area_id):
+    first = beacon(1, area_id=area_id)
+    second = beacon(2, area_id=area_id, area=first.area)
+    h = Harness(items=[first, second])
+    if transport != "legacy":
+        await h.sync()
+    conn = h.conn()
+    await h.runtime.bind(conn)
+    h.runtime.state(DEVICE).owner_ready = True
+
+    async def observe(item):
+        if transport == "legacy":
+            assert await h.runtime.legacy(conn, {"beacon_id": item.mac.lower()})
+        else:
+            messages = await h.send(transport, beacon={"mac": item.mac.lower()})
+            assert messages[0]["accepted"] is True
+
+    await observe(first)
+    h.announce.assert_not_awaited()
+    await observe(second)
+    h.announce.assert_awaited_once_with(conn, second)
+    for _ in range(3):
+        h.clock.now += 5
+        await observe(second)
+    h.announce.assert_awaited_once()
+    await observe(first)
+    assert [call.args[1] for call in h.announce.await_args_list] == [second, first]
+    assert h.runtime.context(DEVICE)["beacon_mac"] == first.mac
+
+
+@pytest.mark.asyncio
+async def test_same_area_beacon_change_replaces_pending_activation():
+    h = Harness(items=[beacon(1), beacon(2, area_id="area1"), beacon(3, area_id="area1")])
+    await h.sync()
+    await h.observe(1)
+    old_wake = next(item for item in await h.observe(2) if item["action"] == "request_hello")
+    wake = next(item for item in await h.observe(3) if item["action"] == "request_hello")
+    assert wake["activation_id"] != old_wake["activation_id"]
+    conn = h.conn()
+    metadata = {"session_attempt": 1, "boot_id": "boot1", "connection_id": "connection1"}
+    assert not await h.runtime.bind(conn, {**metadata, "activation_id": old_wake["activation_id"]})
+    assert await h.runtime.bind(conn, {**metadata, "activation_id": wake["activation_id"]})
+    await h.send("ready", activation_id=wake["activation_id"], session_attempt=1,
+                 session_id=conn.session_id, udp_ready=True)
+    h.announce.assert_awaited_once_with(conn, h.client.items[2])
+
+
+@pytest.mark.asyncio
+async def test_same_area_beacon_change_respects_auto_announce_disabled():
+    h = Harness(items=[beacon(1), beacon(2, area_id="area1")], auto_announce=False)
+    conn = h.conn()
+    await h.runtime.legacy(conn, {"beacon_id": beacon(1).mac})
+    await h.runtime.legacy(conn, {"beacon_id": beacon(2).mac})
+    assert h.runtime.context(DEVICE)["beacon_mac"] == beacon(2).mac
+    assert h.runtime.state(DEVICE).pending is None
     h.announce.assert_not_awaited()
 
 
@@ -242,6 +307,51 @@ async def test_active_conversation_is_not_interrupted(busy):
     setattr(conn, busy, False)
     await h.runtime.tick()
     h.announce.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("same_area", [False, True])
+async def test_new_beacon_preempts_active_guide_announcement(monkeypatch, same_area):
+    items = [beacon(number, area_id="area1") if same_area else beacon(number) for number in (1, 2, 3)]
+    h = Harness(items=items)
+    await h.sync()
+    conn = h.conn()
+    conn.sentence_id = "guide-turn"
+    conn.client_abort = False
+    conn.client_is_speaking = False
+    conn.clear_queues = Mock()
+    conn.clearSpeakStatus = Mock(side_effect=lambda: setattr(conn, "client_is_speaking", False))
+    conn.logger = Mock()
+    conn.close_after_chat = False
+    await h.runtime.bind(conn)
+    h.runtime.state(DEVICE).owner_ready = True
+    await h.runtime.legacy(conn, {"beacon_id": beacon(1).mac})
+
+    first_started = asyncio.Event()
+    second_started = asyncio.Event()
+
+    async def announce(owner, item):
+        owner.client_is_speaking = True
+        if item == items[1]:
+            first_started.set()
+            await asyncio.Future()
+        second_started.set()
+
+    h.announce.side_effect = announce
+    abort = AsyncMock(side_effect=lambda owner: (
+        setattr(owner, "client_abort", True),
+        setattr(owner, "client_is_speaking", False),
+    ))
+    monkeypatch.setattr("core.handle.abortHandle.handleAbortMessage", abort)
+
+    await h.runtime.legacy(conn, {"beacon_id": beacon(2).mac})
+    await asyncio.wait_for(first_started.wait(), 1)
+    await h.runtime.legacy(conn, {"beacon_id": beacon(3).mac})
+    await asyncio.wait_for(second_started.wait(), 1)
+
+    abort.assert_awaited_once_with(conn)
+    assert [call.args[1] for call in h.announce.await_args_list] == items[1:]
+    assert h.runtime.state(DEVICE).current == items[2]
 
 
 @pytest.mark.asyncio

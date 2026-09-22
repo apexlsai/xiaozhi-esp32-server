@@ -6,6 +6,10 @@
 
 场馆、区域、信标、设备归属及工程/C端模式统一由 management 管理。启用方法、缓存生效规则和验证见 [场馆与设备联动](guide-management.md)，固件团队对接见 [导览控制协议](guide-protocol.md)。
 
+信标自动讲解、首次播报、切换打断、冷却、位置/待播有效期和交互静默时间统一在 `KSZ/.env` 配置，变量及默认值见[信标讲解规则](guide-management.md#信标讲解规则)。修改后通过 `KSZ/compose.yml` 重新创建 server 容器；单独 `restart` 不会更新环境变量。
+
+信标播报采用固定位置开场加模型正文，中文默认“您现在位于{location}。”；四语模板同样放在 `KSZ/.env`。专用 `guide-announcement.patch` 将开场接入同一轮 TTS，并过滤模型正文开头的问候、自我介绍和重复位置，普通聊天不受影响。
+
 ## 前置条件
 
 - 已安装 Docker Engine 和 Docker Compose v2。
