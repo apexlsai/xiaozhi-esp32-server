@@ -11,6 +11,7 @@ from .models import Beacon, GuideError, Policy, beacon_identity, mac_address
 from .presence import PresenceTracker, connection_is_open, is_mqtt_bridge
 from .settings import GuideSettings
 from .announcement import guide_announcement
+from .location import LocationUpdates
 
 
 log = logging.getLogger(__name__)
@@ -87,6 +88,7 @@ class GuideRuntime:
         self.presence_retry_at = 0
         self.next_connection_snapshot = 0
         self.report_sequence = 0
+        self.location_updates = LocationUpdates(self)
 
     def _mark_reports(self, macs):
         for mac in macs:
@@ -241,6 +243,7 @@ class GuideRuntime:
             state.baseline_mac = None
         if state.owner is not None:
             state.owner.beacon_location = None
+        self.location_updates.notify(state)
 
     def _expire(self, state):
         now = self.clock()
@@ -431,6 +434,7 @@ class GuideRuntime:
             if should_announce:
                 state.pending = Pending(uuid4().hex, state.location_revision, policy.revision,
                                         self.clock() + self.settings.pending_ttl_ms / 1000, state.owner_attempt + 1)
+        self.location_updates.notify(state)
 
     async def _interrupt_announcement(self, state):
         owner = state.owner
@@ -527,10 +531,12 @@ class GuideRuntime:
                 state.compatibility = "v1"
             conn.beacon_location = self.location(state.mac)
             if old is not None and old is not conn:
+                self.location_updates.stop(old)
                 await old.websocket.close()
             return True
 
     def unbind(self, conn):
+        self.location_updates.stop(conn)
         try:
             state = self.devices.get(mac_address(conn.device_id))
         except GuideError:
@@ -726,6 +732,7 @@ class GuideRuntime:
             async with state.lock:
                 if self.guide_enabled:
                     await self._try_announce(state)
+                    self.location_updates.notify(state)
                 if (state.owner is None and self.clock() - state.last_seen >= 300
                         and not self.presence.fields(state.mac)["online"]
                         and state.mac not in self.pending_registration and state.mac not in self.dirty_reports):
@@ -748,6 +755,7 @@ class GuideRuntime:
         if self.closed:
             return
         self.closed = True
+        await self.location_updates.close()
         if self.maintenance_task:
             self.maintenance_task.cancel()
             await asyncio.gather(self.maintenance_task, return_exceptions=True)

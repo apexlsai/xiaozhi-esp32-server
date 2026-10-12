@@ -127,6 +127,12 @@ def on_connect(conn):
         runtime.connection_opened(conn)
 
 
+def on_hello_complete(conn):
+    runtime = runtime_for(conn)
+    if runtime:
+        runtime.location_updates.start(conn)
+
+
 def on_disconnect(conn):
     runtime = runtime_for(conn, guide_only=False)
     if runtime:

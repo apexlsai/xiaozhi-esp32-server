@@ -8,6 +8,9 @@ RUN git apply --check ksz.patch && git apply ksz.patch \
     && npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
     && rm ksz.patch
 COPY start.cjs healthcheck.cjs verify-ota.cjs guide-control.cjs presence.cjs ./
+COPY location-updates.patch ./
+RUN git apply --check location-updates.patch && git apply location-updates.patch \
+    && rm location-updates.patch
 
 FROM ${NODE_REGISTRY}/node:22-bookworm-slim
 WORKDIR /app

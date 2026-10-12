@@ -117,6 +117,40 @@ UTF8(manifest.manifest_json + "\n" + chunk_json[0] + "\n" + ... + chunk_json[N-1
 
 完整策略确认后，成功结果可携带轻量续期信息：`lease: {policy_revision, policy_sha256, expires_at}`。固件仅在这三个字段有效，且版本与摘要均匹配本地已原子应用的策略时更新到期时间；没有匹配的lease就不续期。无需重复下载相同清单。拒绝、未完成ACK或授权过期的结果不提供续期；重复请求也重新核验当前租期。无位置信标时仍每5秒发送不带beacon的heartbeat维持策略同步，但不延长位置有效期。
 
+## 活动会话的位置显示
+
+设备在 `hello.features` 中声明 `"location_updates": true` 后，服务端先完成 `hello` 响应，再通过同一活动连接发送当前位置快照。WS 直连直接接收 JSON；MQTT+UDP 会话由网关将此 JSON 原样转发至设备订阅主题，音频仍走原链路。未声明能力的设备不接收此消息。
+
+```json
+{
+  "type": "guide_control",
+  "version": 1,
+  "action": "location",
+  "session_id": "<hello响应session_id>",
+  "location_revision": 1,
+  "status": "located",
+  "expires_in_ms": 15000,
+  "location": {
+    "beacon_id": "<管理端业务编号>",
+    "beacon_mac": "DA:01:16:00:08:57",
+    "venue_id": "<场馆ID>",
+    "floor": "1F",
+    "area": "青铜器展区",
+    "location_description": "展柜旁"
+  }
+}
+```
+
+`status` 为 `located`、`unknown` 或 `lost`。未定位或已失位时 `location=null`、`expires_in_ms=0`，设备立即清空当前位置。楼层、区域或位置描述可为空，但至少一项有内容才作为可显示位置下发；位置字段来自管理端登记资产，不采用设备上报的显示文本。
+
+首次有效定位、信标切换、同信标有效上报续期、策略撤销和位置过期均更新显示，不受自动讲解开关或播报冷却限制。旧 `beacon_change` 与新 `observation` / 带信标的 `heartbeat` 共用服务端校验；无效、跨馆、未授权上报不能覆盖有效位置。位置通知不进入 Agent、对话历史、TTS 或音频队列，发送异常不阻塞位置处理和讲解。
+
+`location_revision` 是当前 `session_id` 内从 1 开始递增的通知序号，续期也递增；它独立于导览运行时的信标变化序号。设备只接受当前连接、当前会话且序号严格递增的消息。断线或换绑时清空显示和计时器；新会话重新计数并接收快照，旧连接迟到消息不得恢复位置。
+
+`expires_in_ms` 为发送时剩余位置有效期，取 `KSZ_GUIDE_POSITION_TTL_MS` 和当前授权租期的较小剩余值。每次有效续期重设本地过期计时；超时即清屏，即使没有收到 `lost` 也不继续显示旧位置。重连快照只下发剩余时长，不重新获得完整有效期。模拟器的“切换信标”是单次上报，线上配置为 15000ms 时约 15 秒失效，需要再次上报真实观测才续期。
+
+本功能只覆盖已有活动会话，不因显示位置单独唤醒语音连接；MQTT 待机无会话的位置显示推送不在此能力范围内。
+
 ## 待机唤醒与播放就绪
 
 服务端决定需要待机播报时发送：

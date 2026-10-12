@@ -8,6 +8,9 @@ RUN git apply --check /tmp/vision-complete-tts.patch \
 COPY KSZ/patches/guide-announcement.patch /tmp/guide-announcement.patch
 RUN git apply --check /tmp/guide-announcement.patch \
     && git apply /tmp/guide-announcement.patch
+COPY KSZ/patches/location-updates.patch /tmp/location-updates.patch
+RUN git apply --check /tmp/location-updates.patch \
+    && git apply /tmp/location-updates.patch
 
 FROM ghcr.io/xinnan-tech/xiaozhi-esp32-server:server-base
 

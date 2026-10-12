@@ -6,6 +6,8 @@
 
 场馆、区域、信标、设备归属及工程/C端模式统一由 management 管理。启用方法、缓存生效规则和验证见 [场馆与设备联动](guide-management.md)，固件团队对接见 [导览控制协议](guide-protocol.md)。
 
+活动会话可通过 `hello.features.location_updates=true` 订阅服务端确认的位置，屏幕按独立 `guide_control/location` 消息显示楼层、区域及位置描述，并在失位、断线或有效期到达时清空；WS 与 MQTT+UDP 使用同一消息契约，详见[位置显示协议](guide-protocol.md#活动会话的位置显示)。部署时同步更新 KSZ server 和 MQTT 网关镜像：网关沿用 JSON 透传，并保证先发送设备 `hello`、后发送位置快照。未声明能力的设备保持原协议。
+
 信标自动讲解、首次播报、切换打断、冷却、位置/待播有效期和交互静默时间统一在 `KSZ/.env` 配置，变量及默认值见[信标讲解规则](guide-management.md#信标讲解规则)。修改后通过 `KSZ/compose.yml` 重新创建 server 容器；单独 `restart` 不会更新环境变量。
 
 信标播报采用固定位置开场加模型正文，中文默认“您现在位于{location}。”；四语模板同样放在 `KSZ/.env`。专用 `guide-announcement.patch` 将开场接入同一轮 TTS，并过滤模型正文开头的问候、自我介绍和重复位置，普通聊天不受影响。

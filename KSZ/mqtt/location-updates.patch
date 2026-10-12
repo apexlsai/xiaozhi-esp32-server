@@ -1,0 +1,59 @@
+diff --git a/app.js b/app.js
+--- a/app.js
++++ b/app.js
+@@ -81,6 +81,7 @@
+         this.wsClient = null;
+         this.protocolVersion = protocolVersion;
+         this.deviceSaidGoodbye = false;
++        this.pendingMessages = [];
+         this.initializeChatServer();
+     }
+
+@@ -161,7 +162,17 @@
+                     if (message.type === 'hello') {
+                         resolve(message);
+                     } else {
+-                        this.connection.sendMqttMessage(JSON.stringify(message));
++                        const payload = JSON.stringify(message);
++                        if (this.pendingMessages) {
++                            if (this.pendingMessages.length >= 64) {
++                                reject(new Error('Too many messages before hello'));
++                                this.close();
++                                return;
++                            }
++                            this.pendingMessages.push(payload);
++                        } else {
++                            this.connection.sendMqttMessage(payload);
++                        }
+                     }
+                 }
+             });
+@@ -183,6 +194,12 @@
+         if (this.wsClient && this.wsClient.readyState === WebSocket.OPEN) {
+             this.wsClient.send(JSON.stringify(message));
+         }
++    }
++
++    flushPendingMessages() {
++        const pending = this.pendingMessages || [];
++        this.pendingMessages = null;
++        for (const payload of pending) this.connection.sendMqttMessage(payload);
+     }
+
+     sendAudio(opus, timestamp) {
+@@ -202,6 +219,7 @@
+     }
+
+     close() {
++        this.pendingMessages = [];
+         if (this.wsClient) {
+             this.wsClient.close();
+             this.wsClient = null;
+@@ -507,6 +525,7 @@
+                 audio_params: helloReply.audio_params
+             };
+             this.sendMqttMessage(JSON.stringify(reply));
++            bridge.flushPendingMessages();
+             return reply;
+         } catch (error) {
+             if (this.bridge !== bridge) return;

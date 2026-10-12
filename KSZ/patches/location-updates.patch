@@ -1,0 +1,12 @@
+diff --git a/core/handle/helloHandle.py b/core/handle/helloHandle.py
+--- a/core/handle/helloHandle.py
++++ b/core/handle/helloHandle.py
+@@ -66,6 +66,8 @@ async def handleHelloMessage(conn: "ConnectionHandler", msg_json):
+             conn.client_aec = True
+
+     await conn.websocket.send(json.dumps(conn.welcome_msg))
++    if guide:
++        guide.on_hello_complete(conn)
+
+
+ async def checkWakeupWords(conn: "ConnectionHandler", text):

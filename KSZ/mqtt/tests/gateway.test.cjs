@@ -72,6 +72,7 @@ function packet(type, body) {
 
 class Device {
     inbox = new Inbox();
+    received = [];
     buffer = Buffer.alloc(0);
     vision = null;
     toolLists = 0;
@@ -99,6 +100,7 @@ class Device {
                     const topicLength = body.readUInt16BE(0);
                     assert.equal(body.toString('utf8', 2, 2 + topicLength), credentials.subscribe_topic);
                     const json = JSON.parse(body.subarray(2 + topicLength).toString());
+                    this.received.push(json);
                     this.onMessage(json);
                     this.inbox.push(json);
                 } else this.inbox.push({ packetType: type, body });
@@ -129,7 +131,7 @@ class Device {
     }
     hello() {
         this.send({ type: 'hello', version: 3, transport: 'udp',
-            features: { mcp: true, vision_stream: true },
+            features: { mcp: true, vision_stream: true, location_updates: true },
             audio_params: { format: 'opus', sample_rate: 16000, channels: 1, frame_duration: 60 } });
         return this.inbox.next((item) => item.type === 'hello');
     }
@@ -249,8 +251,10 @@ test('KSZ MQTT gateway protocol integration', { timeout: 60000 }, async (t) => {
             const json = JSON.parse(data);
             backendInbox.push(json);
             if (json.type === 'hello') {
-                assert.deepEqual(json.features, { mcp: true, vision_stream: true });
+                assert.deepEqual(json.features, { mcp: true, vision_stream: true, location_updates: true });
                 socket.send(JSON.stringify({ type: 'hello', session_id: session, audio_params: json.audio_params }));
+                socket.send(JSON.stringify({ type: 'guide_control', version: 1, action: 'location', session_id: session,
+                    location_revision: 1, status: 'unknown', expires_in_ms: 0, location: null }));
                 socket.send(JSON.stringify({ type: 'mcp', payload: { jsonrpc: '2.0', id: 1, method: 'initialize',
                     params: { capabilities: { vision: { url: 'http://vision.example/mcp/vision/explain', token: session } } } } }));
             } else if (json.type === 'mcp' && json.payload.id === 1 && json.payload.result) {
@@ -366,6 +370,9 @@ test('KSZ MQTT gateway protocol integration', { timeout: 60000 }, async (t) => {
         assert.equal(tools.payload.result.tools[0].name, 'self.camera.take_photo');
         assert.equal(device.vision.token, hello.session_id);
         assert.equal(device.toolLists, 1);
+        const location = await device.inbox.next((item) => item.action === 'location' && item.session_id === hello.session_id);
+        assert.equal(location.status, 'unknown');
+        assert.ok(device.received.indexOf(location) > device.received.indexOf(hello));
     });
     await t.test('custom KSZ events, results, subtitles and MCP vision metadata are preserved', async () => {
         for (const event of [
@@ -379,6 +386,10 @@ test('KSZ MQTT gateway protocol integration', { timeout: 60000 }, async (t) => {
         for (const event of [
             { type: 'device_event_result', event: 'language_change', request_id: 'lang-1', success: false, error: '目标不存在' },
             { type: 'tts', state: 'sentence_start', text: '展品介绍。' },
+            { type: 'guide_control', version: 1, action: 'location', session_id: hello.session_id,
+                location_revision: 2, status: 'located', expires_in_ms: 15000,
+                location: { beacon_id: 'asset-1', beacon_mac: 'DA:01:16:00:08:87', venue_id: 'venue-1',
+                    floor: '1F', area: '青铜器展区', location_description: '展柜旁' } },
             { type: 'llm', emotion: 'happy', text: '😆' },
         ]) {
             backendSocket.send(JSON.stringify(event));
@@ -407,6 +418,9 @@ test('KSZ MQTT gateway protocol integration', { timeout: 60000 }, async (t) => {
         const key = Buffer.from(hello.udp.key, 'hex');
         const cipher = crypto.createCipheriv(hello.udp.encryption, key, header);
         const reply = once(udp, 'message');
+        const lost = { type: 'guide_control', version: 1, action: 'location', session_id: hello.session_id,
+            location_revision: 3, status: 'lost', expires_in_ms: 0, location: null };
+        backendSocket.send(JSON.stringify(lost));
         udp.send(Buffer.concat([header, cipher.update(opus), cipher.final()]), udpPort, '127.0.0.1');
         const received = await backendInbox.next((item) => item.audio);
         assert.equal(received.audio.readUInt32BE(8), 123);
@@ -414,6 +428,7 @@ test('KSZ MQTT gateway protocol integration', { timeout: 60000 }, async (t) => {
         const [audio] = await Promise.race([reply, new Promise((_, reject) => setTimeout(() => reject(new Error('No UDP audio received')), 3000))]);
         const decipher = crypto.createDecipheriv(hello.udp.encryption, key, audio.subarray(0, 16));
         assert.deepEqual(Buffer.concat([decipher.update(audio.subarray(16)), decipher.final()]), opus);
+        assert.deepEqual(await device.inbox.next((item) => item.action === 'location'), lost);
         header.writeUInt32BE(3, 12);
         const secondCipher = crypto.createCipheriv(hello.udp.encryption, key, header);
         const latePacket = Buffer.concat([header, secondCipher.update(opus), secondCipher.final()]);
@@ -472,7 +487,7 @@ test('KSZ MQTT gateway protocol integration', { timeout: 60000 }, async (t) => {
         guideDevice.send({ type: 'guide_control', version: 1, action: 'observation', request_id: 'guide-move' });
         await guideDevice.inbox.next((item) => item.action === 'request_hello');
         const guideHello = { type: 'hello', version: 3, transport: 'udp',
-            features: { mcp: true, vision_stream: true },
+            features: { mcp: true, vision_stream: true, location_updates: true },
             audio_params: { format: 'opus', sample_rate: 16000, channels: 1, frame_duration: 60 },
             guide: { activation_id: 'validated-move', session_attempt: 1, boot_id: 'boot-1',
                 connection_id: 'forged' } };
