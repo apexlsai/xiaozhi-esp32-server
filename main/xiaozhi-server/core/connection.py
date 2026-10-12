@@ -150,7 +150,7 @@ class ConnectionHandler:
         self.vad = None
         self.asr = None
         self.tts = None
-        self.tool_feedback = ToolFeedbackScheduler(self)
+        self.tool_feedback = guide.create_tool_feedback(self) if guide else ToolFeedbackScheduler(self)
         self._asr = _asr
         self._vad = _vad
         self.llm = _llm
@@ -1582,12 +1582,12 @@ class ConnectionHandler:
                         run_vision_tool(self, tool_call_data, current_sentence_id, deadline)
                         if is_camera else self.func_handler.handle_llm_function_call(self, tool_call_data)
                     )
-                    future = asyncio.run_coroutine_threadsafe(coroutine, self.loop)
                     feedback_key = self.tool_feedback.schedule(
                         tool_call_data["name"],
                         tool_call_data["id"],
                         current_sentence_id,
                     )
+                    future = asyncio.run_coroutine_threadsafe(coroutine, self.loop)
                     futures_with_data.append(
                         (future, tool_call_data, tool_input, feedback_key, deadline)
                     )

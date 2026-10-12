@@ -10,3 +10,14 @@
                  elif ContentType.EMOTION == message.content_type:
                      self._process_remaining_text_stream(opus_handler=self.handle_opus)
                      self.current_emotion_context = message.emotion_context
+--- a/core/utils/vision_stream.py
++++ b/core/utils/vision_stream.py
+@@ -211,6 +211,8 @@
+         complete_sentence = getattr(self.conn.tts, "tts_complete_sentence", None)
+         if callable(complete_sentence):
+             complete_sentence(self.conn, text, request.sentence_id)
++        elif guide:
++            guide.tts_complete_sentence(self.conn, text, request.sentence_id)
+         else:
+             self.conn.tts.tts_text_queue.put(TTSMessageDTO(
+                 request.sentence_id, SentenceType.MIDDLE, ContentType.TEXT,

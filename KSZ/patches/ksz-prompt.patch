@@ -1,0 +1,35 @@
+--- a/core/utils/prompt_manager.py
++++ b/core/utils/prompt_manager.py
+@@ -79,6 +79,9 @@
+             template_path = self.config.get("prompt_template", None)
+             if not template_path:
+                 template_path = "agent-base-prompt.txt"
++            from core.utils.ksz_extension import guide
++            if guide:
++                template_path = guide.prompt_template_path(template_path)
+             cache_key = f"prompt_template:{template_path}"
+ 
+             # 先从缓存获取
+--- a/core/connection.py
++++ b/core/connection.py
+@@ -1125,6 +1125,8 @@
+             asyncio.run_coroutine_threadsafe(self.func_handler._initialize(), self.loop)
+ 
+     def change_system_prompt(self, prompt):
++        if guide:
++            prompt = guide.prepare_system_prompt(self, prompt)
+         self.prompt = prompt
+         # 更新系统prompt至上下文
+         self.dialogue.update_system_message(self.prompt)
+@@ -1151,7 +1153,10 @@
+                 extra_body["language"] = language
+             if self.device_attributes.get("last_beacon_id"):
+                 extra_body["last_beacon_id"] = self.device_attributes.get("last_beacon_id")
+-        return guide.filter_context(self, extra_body) if guide else extra_body
++        if guide:
++            extra_body["language"] = guide.response_language(self)
++            return guide.filter_context(self, extra_body)
++        return extra_body
+ 
+     async def refresh_beacon_location(self, force=False):
+         if guide and guide.refresh_location(self):

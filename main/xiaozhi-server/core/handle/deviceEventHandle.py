@@ -89,6 +89,7 @@ async def _do_rebind(
     raise_on_error: bool = False,
     language: Optional[str] = None,
     dev: bool = False,
+    role: Optional[str] = None,
 ):
     """换绑核心流程：调用 manager-api，回传结果，成功后断开连接促使重连"""
     result_msg = {
@@ -133,18 +134,21 @@ async def _do_rebind(
         if language is not None:
             rebind_args["language"] = language
             rebind_args["dev"] = dev
+        if role is not None:
+            rebind_args["role"] = role
         data = await rebind_device_agent(**rebind_args)
         result_msg["success"] = True
         result_msg["data"] = data or {}
         await _send_json(conn, result_msg)
-        logger.bind(tag=TAG).info(
-            f"设备换绑成功: {conn.device_id} {current_agent_name} -> {target_agent_name}，准备断开重连"
-        )
-        await asyncio.sleep(0.1)
-        try:
-            await conn.websocket.close()
-        except Exception as close_error:
-            logger.bind(tag=TAG).warning(f"换绑成功后关闭连接失败: {close_error}")
+        if not isinstance(data, dict) or data.get("reconnectRequired") is not False:
+            logger.bind(tag=TAG).info(
+                f"设备换绑成功: {conn.device_id} {current_agent_name} -> {target_agent_name}，准备断开重连"
+            )
+            await asyncio.sleep(0.1)
+            try:
+                await conn.websocket.close()
+            except Exception as close_error:
+                logger.bind(tag=TAG).warning(f"换绑成功后关闭连接失败: {close_error}")
         return data
     except Exception as e:
         logger.bind(tag=TAG).error(f"设备换绑失败: {e}")

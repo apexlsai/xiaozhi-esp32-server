@@ -14,9 +14,19 @@ from .announcement import (
     filter_guide_announcement_text, guide_announcement_messages, is_guide_announcement,
     queue_guide_tool_reply, start_guide_announcement,
 )
+from .feedback import (
+    CameraFeedbackScheduler as create_tool_feedback,
+    camera_image_received,
+    cancel_camera_feedback,
+    finish_camera_feedback,
+)
 from .models import GuideError, mac_address
+from .prompt import prepare_system_prompt, prompt_template_path, response_language
+from .role_patch import handle_profile_change, handle_role_rebind, on_hello as role_on_hello
 from .runtime import GuideRuntime
 from .settings import GuideSettings
+from .vision import vision_message, vision_read_timeout
+from .tts import tts_complete_sentence
 
 
 log = logging.getLogger(__name__)
@@ -109,6 +119,7 @@ def register_routes(app, server):
 
 
 async def on_hello(conn, message):
+    role_on_hello(conn)
     runtime = runtime_for(conn)
     if runtime is None:
         return True
@@ -164,6 +175,10 @@ async def handle_control_message(conn, message):
 
 
 async def handle_legacy_event(conn, message):
+    if await handle_profile_change(conn, message):
+        return True
+    if await handle_role_rebind(conn, message):
+        return True
     runtime = runtime_for(conn)
     if runtime is None or message.get("event") != "beacon_change":
         return False

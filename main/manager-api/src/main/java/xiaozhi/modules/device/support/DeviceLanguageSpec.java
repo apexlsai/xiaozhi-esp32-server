@@ -2,17 +2,38 @@ package xiaozhi.modules.device.support;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.commons.lang3.StringUtils;
 
 public final class DeviceLanguageSpec {
     private static final Map<String, String> AGENT_SUFFIXES = createAgentSuffixes();
+    private static final Map<String, String> ROLE_PREFIXES = Map.of(
+            "child", "儿童",
+            "youth", "青年",
+            "expert", "专家");
+    private static final Set<String> PROFILE_LANGUAGES = Set.of("zh-CN", "en", "ja", "ko");
 
     private DeviceLanguageSpec() {
     }
 
     public static boolean isSupported(String language) {
         return AGENT_SUFFIXES.containsKey(language);
+    }
+
+    public static boolean isProfileLanguageSupported(String language) {
+        return language != null && PROFILE_LANGUAGES.contains(language);
+    }
+
+    public static boolean isRoleSupported(String role) {
+        return role != null && ROLE_PREFIXES.containsKey(role);
+    }
+
+    public static String resolveProfileAgentName(String language, String role, boolean dev) {
+        if (!isProfileLanguageSupported(language) || !isRoleSupported(role)) {
+            return null;
+        }
+        return ROLE_PREFIXES.get(role) + "-" + AGENT_SUFFIXES.get(language) + (dev ? "-测试" : "");
     }
 
     public static String resolveTargetAgentName(String currentAgentName, String language, boolean dev) {

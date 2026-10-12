@@ -271,6 +271,7 @@ async def rebind_device_agent(
     confirm: bool = True,
     language: Optional[str] = None,
     dev: bool = False,
+    role: Optional[str] = None,
 ) -> Optional[Dict]:
     """设备智能体换绑（经 server.secret 调用 manager-api）"""
     if not ManageApiClient._instance:
@@ -284,6 +285,8 @@ async def rebind_device_agent(
     if language is not None:
         payload["language"] = language
         payload["dev"] = dev
+    if role is not None:
+        payload["role"] = role
     return await ManageApiClient._instance._execute_async_request(
         "POST",
         "/device/rebind",

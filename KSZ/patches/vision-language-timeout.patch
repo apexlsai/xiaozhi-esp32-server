@@ -1,0 +1,201 @@
+--- a/core/utils/vision_stream.py
++++ b/core/utils/vision_stream.py
+@@ -16,6 +16,12 @@
+ VISION_UNAVAILABLE_MESSAGE = "视觉服务暂时不可用，请稍后再试。"
+ VISION_INTERRUPTED_MESSAGE = "识别中断了，请再拍一次。"
+ vision_call_scope = contextvars.ContextVar("vision_call_scope", default=None)
++
++
++def vision_failure_message(conn=None, kind="unavailable"):
++    if guide:
++        return guide.vision_message(conn, kind)
++    return VISION_INTERRUPTED_MESSAGE if kind == "interrupted" else VISION_UNAVAILABLE_MESSAGE
+ 
+ 
+ async def run_vision_tool(conn, call, sentence_id, deadline):
+@@ -46,7 +52,7 @@
+         if not request.cancelled and not request.finished:
+             sessions.fail(request)
+         return ActionResponse(Action.NONE)
+-    return ActionResponse(Action.RESPONSE, response=VISION_UNAVAILABLE_MESSAGE)
++    return ActionResponse(Action.RESPONSE, response=vision_failure_message(conn))
+ 
+ 
+ class SentenceBuffer:
+@@ -233,8 +239,7 @@
+ 
+     def fail(self, request):
+         message = (
+-            VISION_INTERRUPTED_MESSAGE if request.emitted
+-            else VISION_UNAVAILABLE_MESSAGE
++            vision_failure_message(self.conn, "interrupted" if request.emitted else "unavailable")
+         )
+         self.emit(request, message)
+         self.finish(request)
+--- a/core/providers/vllm/openai.py
++++ b/core/providers/vllm/openai.py
+@@ -128,7 +128,10 @@
+             remaining = deadline - asyncio.get_running_loop().time()
+             if remaining <= 0:
+                 raise TimeoutError("VLLM 请求已超过截止时间")
+-        read_timeout = min(30.0, remaining) if remaining is not None else 30.0
++        read_timeout = (
++            guide.vision_read_timeout(remaining) if guide
++            else min(30.0, remaining) if remaining is not None else 30.0
++        )
+         timeout = httpx.Timeout(read_timeout, connect=min(10.0, read_timeout))
+         has_content = False
+         completed = False
+--- a/core/providers/tools/device_mcp/mcp_executor.py
++++ b/core/providers/tools/device_mcp/mcp_executor.py
+@@ -12,7 +12,7 @@
+ from .mcp_handler import call_mcp_tool
+ from core.utils.vision_stream import (
+     VISION_TOOL_NAMES, VISION_TIMEOUT, VISION_UNAVAILABLE_MESSAGE,
+-    get_vision_sessions, vision_call_scope,
++    get_vision_sessions, vision_call_scope, vision_failure_message,
+ )
+ 
+ 
+@@ -22,10 +22,9 @@
+     def __init__(self, conn):
+         self.conn = conn
+ 
+-    @staticmethod
+-    def _error_result(tool_name: str, message: str) -> ActionResponse:
++    def _error_result(self, tool_name: str, message: str) -> ActionResponse:
+         if tool_name in VISION_TOOL_NAMES:
+-            return ActionResponse(Action.RESPONSE, response=VISION_UNAVAILABLE_MESSAGE)
++            return ActionResponse(Action.RESPONSE, response=vision_failure_message(self.conn))
+         return ActionResponse(
+             action=Action.REQLLM,
+             result=json.dumps(
+@@ -34,11 +33,10 @@
+             ),
+         )
+ 
+-    @staticmethod
+-    def _vision_result(result_json) -> ActionResponse:
++    def _vision_result(self, result_json) -> ActionResponse:
+         if isinstance(result_json, dict) and "content" in result_json:
+             if result_json.get("isError") is True:
+-                return ActionResponse(Action.RESPONSE, response=VISION_UNAVAILABLE_MESSAGE)
++                return ActionResponse(Action.RESPONSE, response=vision_failure_message(self.conn))
+             content = result_json.get("content")
+             if isinstance(content, list):
+                 result_json = "\n".join(
+@@ -49,17 +47,17 @@
+         if isinstance(result_json, str):
+             text = result_json.strip()
+             if not text or text.startswith(("VLLM 请求失败", "VLLM请求失败", "Traceback", "HTTP error")):
+-                return ActionResponse(Action.RESPONSE, response=VISION_UNAVAILABLE_MESSAGE)
++                return ActionResponse(Action.RESPONSE, response=vision_failure_message(self.conn))
+             if not text.startswith(("{", "[")):
+                 return ActionResponse(Action.RESPONSE, response=text)
+             try:
+                 result_json = json.loads(text)
+             except json.JSONDecodeError:
+-                return ActionResponse(Action.RESPONSE, response=VISION_UNAVAILABLE_MESSAGE)
++                return ActionResponse(Action.RESPONSE, response=vision_failure_message(self.conn))
+         if not isinstance(result_json, dict):
+-            return ActionResponse(Action.RESPONSE, response=VISION_UNAVAILABLE_MESSAGE)
++            return ActionResponse(Action.RESPONSE, response=vision_failure_message(self.conn))
+         if result_json.get("isError") is True:
+-            return ActionResponse(Action.RESPONSE, response=VISION_UNAVAILABLE_MESSAGE)
++            return ActionResponse(Action.RESPONSE, response=vision_failure_message(self.conn))
+         payload = result_json.get("vision_analysis")
+         if not isinstance(payload, dict):
+             payload = result_json
+@@ -67,7 +65,7 @@
+         if result_json.get("success") is False or payload.get("success") is False:
+             return ActionResponse(
+                 action=Action.RESPONSE,
+-                response=VISION_UNAVAILABLE_MESSAGE,
++                response=vision_failure_message(self.conn),
+             )
+ 
+         if payload.get("action") == Action.RESPONSE.name or payload.get("success") is True:
+@@ -80,7 +78,7 @@
+ 
+         return ActionResponse(
+             action=Action.RESPONSE,
+-            response=VISION_UNAVAILABLE_MESSAGE,
++            response=vision_failure_message(self.conn),
+         )
+ 
+     async def execute(
+--- a/core/api/vision_handler.py
++++ b/core/api/vision_handler.py
+@@ -1,6 +1,7 @@
+ import asyncio
+ import base64
+ import copy
++from types import SimpleNamespace
+ import json
+ import re
+ import time
+@@ -24,6 +25,7 @@
+ from core.utils.vllm import create_instance
+ from core.utils.vision_stream import (
+     SentenceBuffer, VISION_TIMEOUT, VISION_UNAVAILABLE_MESSAGE, get_vision_sessions,
++    vision_failure_message,
+ )
+ from plugins_func.register import Action
+ 
+@@ -188,6 +190,8 @@
+         sessions = None
+         disconnect_watch = None
+         feedback_handle = None
++        original_conn = None
++        language_context = SimpleNamespace(device_attributes={})
+         deadline = time.monotonic() + VISION_TIMEOUT
+         try:
+             # 验证token
+@@ -281,7 +285,7 @@
+ 
+             task = asyncio.create_task(self._generate(
+                 device_id, client_id, question, image_base64, image_mime,
+-                deadline, sessions, vision_request,
++                deadline, sessions, vision_request, language_context=language_context,
+             ))
+             if vision_request is not None:
+                 vision_request.task = task
+@@ -331,7 +335,7 @@
+                 payload = self._create_error_response(sessions.fail(vision_request))
+                 payload.update(request_id=vision_request.request_id, delivery="streamed")
+                 return self._json_response(payload)
+-            return self._json_response(self._create_error_response(VISION_UNAVAILABLE_MESSAGE))
++            return self._json_response(self._create_error_response(vision_failure_message(original_conn or language_context)))
+         finally:
+             if guide:
+                 guide.finish_camera_feedback(feedback_handle)
+@@ -356,7 +360,7 @@
+ 
+     async def _generate(
+         self, device_id, client_id, question, image_base64, image_mime,
+-        deadline, sessions, vision_request,
++        deadline, sessions, vision_request, language_context=None,
+     ):
+         current_config = copy.deepcopy(self.config)
+         if current_config.get("read_config_from_api", False):
+@@ -375,6 +379,8 @@
+         vllm = create_instance(vllm_type, vllm_config)
+ 
+         device_attributes = current_config.get("device_attributes") or {}
++        if language_context is not None:
++            language_context.device_attributes = device_attributes
+         language = resolve_language_code_from_agent_name(
+             device_attributes.get("agent_name")
+         )
+--- a/tests/test_vllm_openai.py
++++ b/tests/test_vllm_openai.py
+@@ -196,7 +196,8 @@
+         self.assertFalse(mocked_client.call_args.kwargs["trust_env"])
+         timeout = mocked_client.call_args.kwargs["timeout"]
+         self.assertEqual(timeout.connect, 10)
+-        self.assertEqual(timeout.read, 30)
++        from core.utils.ksz_extension import guide
++        self.assertEqual(timeout.read, 120 if guide else 30)
+ 
+     async def test_sse_comments_empty_events_multiline_and_split_unicode(self):
+         event = (

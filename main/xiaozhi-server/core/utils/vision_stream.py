@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 from core.providers.tts.dto.dto import ContentType, SentenceType, TTSMessageDTO
 from core.utils.dialogue import Message
+from core.utils.ksz_extension import guide
 from plugins_func.register import Action, ActionResponse
 
 
@@ -116,6 +117,8 @@ class VisionSessions:
         if self.active is not None and not self.active.cancelled:
             request = self.active
             request.cancel()
+            if guide:
+                guide.cancel_camera_feedback(self.conn, request)
             self.conn.logger.info(
                 f"[VISION] request_id={request.request_id} cancelled={reason}"
             )

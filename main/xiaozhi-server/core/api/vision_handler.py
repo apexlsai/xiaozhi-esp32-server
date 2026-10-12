@@ -187,6 +187,7 @@ class VisionHandler(BaseHandler):
         vision_request = None
         sessions = None
         disconnect_watch = None
+        feedback_handle = None
         deadline = time.monotonic() + VISION_TIMEOUT
         try:
             # 验证token
@@ -270,6 +271,14 @@ class VisionHandler(BaseHandler):
                     raise VisionRequestError(str(exc)) from exc
                 deadline = vision_request.deadline
 
+            if guide:
+                feedback_handle = guide.camera_image_received(
+                    sessions.conn if sessions else original_conn,
+                    vision_request,
+                    legacy_mcp=delivery_mode is None and original_mcp_pending,
+                    sentence_id=original_sentence_id,
+                )
+
             task = asyncio.create_task(self._generate(
                 device_id, client_id, question, image_base64, image_mime,
                 deadline, sessions, vision_request,
@@ -324,6 +333,8 @@ class VisionHandler(BaseHandler):
                 return self._json_response(payload)
             return self._json_response(self._create_error_response(VISION_UNAVAILABLE_MESSAGE))
         finally:
+            if guide:
+                guide.finish_camera_feedback(feedback_handle)
             if disconnect_watch is not None:
                 disconnect_watch.cancel()
                 await asyncio.gather(disconnect_watch, return_exceptions=True)

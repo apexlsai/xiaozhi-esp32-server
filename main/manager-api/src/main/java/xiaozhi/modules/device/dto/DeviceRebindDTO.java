@@ -34,4 +34,7 @@ public class DeviceRebindDTO implements Serializable {
 
     @Schema(description = "语言切换时是否选择测试智能体")
     private Boolean dev;
+
+    @Schema(description = "语言与角色原子切换时的稳定角色码")
+    private String role;
 }
