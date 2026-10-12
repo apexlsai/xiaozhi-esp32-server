@@ -15,7 +15,7 @@
 ## 前置条件
 
 - 已安装 Docker Engine 和 Docker Compose v2。
-- 保留 `KSZ/Dockerfile-server`、项目根目录的 `Dockerfile-web` 和 `main/` 源码目录。
+- 保留 `KSZ/Dockerfile-server`、`KSZ/Dockerfile-web`、`KSZ/patches/` 和 `main/` 源码目录。
 - 确保 Docker 可以拉取基础镜像，以及 MySQL、Redis 镜像。
 - 默认使用远程 OpenAI 兼容 ASR，无需下载或挂载本地 SenseVoice 模型。
 
@@ -117,7 +117,7 @@ SPRING_DATASOURCE_DRUID_EXTRA_ARGS=allowPublicKeyRetrieval=true&useSSL=false
 
 ### 更新代码后的部署
 
-修改 `main/manager-api/`、`main/manager-web/` 后：
+修改 `main/manager-api/`、`main/manager-web/` 或 `KSZ/patches/` 后：
 
 ```bash
 docker compose up -d --build xiaozhi-esp32-server-web
@@ -130,6 +130,28 @@ docker compose restart xiaozhi-esp32-server
 ```bash
 docker compose up -d --build xiaozhi-esp32-server
 docker compose logs --tail=50 xiaozhi-esp32-server
+```
+
+### 智能体 prompt 容量
+
+KSZ 将角色设定上限统一为 10,000 字符，覆盖角色配置、模板管理、模板快速配置和移动端编辑；智能体更新及模板创建、更新接口执行相同上限校验。总结记忆仍保留原有上限。数据库沿用 `TEXT`，无需迁移；实际模型上下文预算按最终拼接后的 token 数评估。
+
+定制保存在 `patches/prompt-limit.patch`。`Dockerfile-web` 在独立源码阶段执行 `git apply --check` 和 `git apply` 后构建网页与 Java API，不修改工作区的 `main/` 文件。补丁与上游源码不匹配时构建失败，应调整补丁后重新验证。
+
+“无需迁移”仅指此 prompt 补丁。旧部署升级整个分支时仍会执行该分支已有的历史迁移；单独发布此补丁时，应在与当前部署匹配的源码副本中使用 KSZ 构建文件和补丁，并核对数据库资源保持一致。
+
+在 `KSZ/` 中部署本次修改：
+
+```bash
+docker compose build xiaozhi-esp32-server-web
+docker compose up -d --no-deps xiaozhi-esp32-server-web
+```
+
+网页部署后刷新浏览器即可使用新上限，无需重启语音服务。此镜像不包含移动端安装包；移动端补丁也经过构建阶段校验，单独发布移动端时，在临时源码副本的仓库根目录应用对应部分后按移动端原有流程构建：
+
+```bash
+git apply --check --include='main/manager-mobile/*' KSZ/patches/prompt-limit.patch
+git apply --include='main/manager-mobile/*' KSZ/patches/prompt-limit.patch
 ```
 
 ### 验证设备属性接口
@@ -547,7 +569,22 @@ Authorization: Bearer <server.secret>
 }
 ```
 
-成功消息发送后 server 主动关闭 WebSocket；设备自动重连即可加载新智能体配置，无需关机重启。失败时 `success=false` 且附带 `error`，连接保持。
+成功响应的 `reconnectRequired=true` 时 server 主动关闭 WebSocket；设备自动重连即可加载新智能体配置，无需关机重启。目标已是当前智能体时返回 `reconnectRequired=false` 并保持连接。失败时 `success=false` 且附带 `error`，连接保持。
+
+KSZ 支持通过 `profile_change` 同时切换语言与角色：
+
+```json
+{
+  "type": "device_event",
+  "event": "profile_change",
+  "request_id": "profile-001",
+  "payload": {"language": "en", "role": "child", "dev": false}
+}
+```
+
+`language` 仅接受 `zh-CN`、`en`、`ja`、`ko`，`role` 仅接受 `child`（儿童）、`youth`（青年）、`expert`（专家）；`dev` 为可选布尔值，默认 `false`。目标按 `<角色中文名>-<语言后缀>` 推导，`dev=true` 时追加 `-测试`，例如上述请求对应 `儿童-英语`。目标必须在设备所属用户下唯一存在，绑定与语言属性在同一事务更新。OTA 连接前请求也支持使用 `event=profile_change` 和相同 `payload`，在返回连接配置前完成选择。
+
+仅切换角色时，可发送 `agent_rebind` 配合 `payload: {"role": "expert"}`，沿用当前语言和测试环境后缀；此形式不能与旧换绑字段 `current_agent_name`、`target_agent_name`、`confirm` 混用。
 
 ### 语言码约定
 
@@ -886,3 +923,33 @@ docker compose restart xiaozhi-esp32-server
 - [MCP 接入点使用](../docs/mcp-endpoint-integration.md)
 - [视觉模型 MCP 集成](../docs/mcp-vision-integration.md)（KSZ Host 部署请将文档中 **8003** 改为 **8004**）
 - [通过 MCP 获取设备信息](../docs/mcp-get-device-info.md)
+
+### 视觉语言与超时对齐
+
+KSZ 服务镜像构建时应用 `patches/vision-language-timeout.patch`。拍照等待、失败与识别中断提示均按绑定智能体语言选择中英日韩文，未知语言回退中文；普通聊天仍由角色 prompt 决定语言。视觉会话总上限为 120 秒，HTTP 与拍照 MCP 等待使用会话剩余预算，用户打断和断线仍会取消结果投递。
+
+配套 Museum Guide Agent 使用 `VISION_REQUEST_TIMEOUT=120` 与 `VISION_TOTAL_TIMEOUT=120`，图像分析、检索和回答共享总预算；前者仅限制单次图像分析，实际等待不超过剩余总预算。
+
+三个儿童角色的历史中文回复指令可用 `python KSZ/scripts/align_child_languages.py` 预览修正；增加 `--apply --backup /安全目录/child-prompts.json` 才写入，备份文件以 0600 权限创建。整批更新使用事务和原值校验，并只替换对应语言指令。恢复使用 `--apply --rollback /安全目录/child-prompts.json`，若原值已被他人修改则整批回滚。设备重连后加载新 prompt。
+
+回归测试需先在隔离目录应用构建补丁，再运行上游视觉测试与 `KSZ/server/tests`；不要将补丁应用到工作区的上游源码。
+
+### 相机完整句子的 TTS 提交
+
+`patches/vision-complete-tts.patch` 配合 `server/ksz_guide/tts.py`，让拍照等待词和已分好的视觉正文以完整句子提交给采用通用文本队列的 TTS（包括 MiMo）。通用分句器原先不识别英文句号，英文等待词会一直缓冲，并与后续正文合并到整轮结束才合成。KSZ 标记让这些完整句子立即进入合成队列，不需要额外追加标点或提前结束整个播报；已有原生完整句子接口的流式 Provider 继续使用自身实现。普通聊天的增量分句由下面的多语言补丁处理。
+
+补丁通过 `KSZ/Dockerfile-server` 在语言和超时补丁后检查并应用，不直接改写工作区的上游文件。回归覆盖真实 MiMo 队列、英文和韩文句末、手动及 MCP 视觉路径、取消、旧轮次过滤和原生流式 TTS。
+
+诊断时需分别检查视觉完成、TTS 合成和客户端连接：HTTP `delivery=streamed` 只表示结果已交给服务端播报。模拟器新版本会在 hello 中携带 `tts_sentence_audio_timeout=true`，页面记录 Python 实际运行的源码指纹和超时策略；发生回退时的诊断包含 TTS 状态和 UDP 计数。仅拉取文件或刷新页面不会更新已经运行的 Python 桥接进程。
+
+### KSZ 多语言提示词与分句
+
+`patches/ksz-prompt.patch` 在 KSZ 镜像构建时接入 `server/ksz_guide/agent-base-prompt.txt`，替代默认基础模板。管理端保存的角色设定仍是身份、专业程度与语气的来源；基础模板只补充开放问答、事实边界、语音格式和工具调用规则，移除默认活泼人设、中文口头语、强制追问及无关上下文。已显式配置其他 `prompt_template` 路径时保留该模板。
+
+`server/ksz_guide/prompt.py` 为快速初始化和增强提示词统一附加语言规则，同时对齐发送给 Museum Guide Agent 的 `language` 参数。语言按当前绑定智能体名称后缀、设备扩展属性 `language`、连接语言依次确定，最终回退 `zh-CN`；不根据游客的 ASR 文本或 TTS 音色猜测语言。游客换用其他语言提问不会修改绑定语言，显式翻译请求允许译文使用目标语言。角色与语言切换继续走智能体换绑流程。
+
+`patches/multilingual-sentences.patch` 接入 `server/ksz_guide/sentences.py`，供通用 TTS 文本队列和视觉 SSE 共用。每轮 TTS 收到 `FIRST` 时固定当前语言，视觉请求使用该请求解析出的语言：中文及方言、英文、日文、韩文分别选择标点规则，同时兼容混用的句末标点。多句一起到达时逐句处理，不再合并到最后一个同类标点；英文与韩文句号可在整轮结束前触发合成。
+
+分句器保护小数、版本号、域名和常见英文缩写；ASCII 句点处于增量末尾时等待后续字符或流结束，以免将下一块中的小数部分误切开。中文、日文、韩文、英文分别在累计至少 12、8、20、40 个字符后的本语言逗号处分段，括号内枚举及数字分组不切开；英文和韩文超过 120、60 个字符时也可在词间空格处分段，不截断单词，中日文不按字数强切。完整相机等待词仍即时提交，普通聊天首句保留按逗号提前合成的行为。打断、断线和旧轮次消息不会继续播报剩余句子。原生流式 Provider 的供应商内部分句仍由该 Provider 控制。
+
+回归测试位于 `server/tests/test_prompt_policy.py` 和 `server/tests/test_multilingual_sentences.py`，覆盖四语逐字符/多句增量、缩写与数字跨块、语言换绑、打断、断线及情绪切换。Museum Guide Agent 的配套修改移除追加上下文中的冲突人设，并在下游 Tools 推理载荷末尾按请求语言补充简短系统提醒；提醒不写入对话历史，也不改变工具结果轮的判定或原始工具消息顺序。提示词不能保证模型对所有输入绝不偏离，需结合真实模型验证语言遵循情况。
