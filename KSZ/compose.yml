@@ -69,7 +69,7 @@ services:
     image: xiaozhi-esp32-server:web_local
     build:
       context: ..
-      dockerfile: Dockerfile-web
+      dockerfile: KSZ/Dockerfile-web
     container_name: xiaozhi-esp32-server-web
     restart: always
     network_mode: host
