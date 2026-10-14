@@ -112,4 +112,16 @@ uv run --with-requirements KSZ/scripts/latency-requirements.txt python -m unitte
 
 8项测试覆盖日志匹配、重复问题取最后一轮、Agent 去重、多轮工具衔接、并发归属保护、时间过滤、日志缺失、Ogg 校验，以及本机模拟 OTA/MQTT/加密 UDP 的 MCP、音频上行和缺音频失败。测试只监听本机回环端口，不请求真实模型或操作实际设备。
 
+## ASR 补丁隔离回归
+
+```bash
+uv run --with httpx==0.28.1 python -m unittest discover -s KSZ/server/tests -p test_qwen_asr.py -v
+```
+
+测试在临时目录复制上游 Provider，检查并应用 `patches/qwen-fun-asr.patch`，加载构建补丁的实际产物；不会改写工作区上游文件，也不需要真实 API Key。9项测试覆盖官方 Qwen 与 Fun-ASR-Flash 请求协议、WAV 上传和参数兼容、嵌套结果解析、请求超时不阻塞事件循环、取消与临时文件清理、HTTP 错误、超过5秒的 TCP 复用、空闲过期重连、云端关闭后的重连及关闭客户端。
+
+构建接入采用 `Dockerfile-server` 的源码阶段 `git apply --check` 和 `git apply`，不再通过最终镜像 COPY 覆盖 Provider。整合时已在隔离目录按 Docker 顺序应用全部7个 server 补丁，校验 Python 语法及 ASR 产物与迁移前实现一致。该验证证明源码补丁兼容，不代替镜像构建和真实云端识别验收。
+
+测试分支 `feature/ksz/request-latency` 维护诊断脚本与测试篇，ASR 分支 `feature/ksz/fun-asr-flash` 维护识别补丁、回归测试和构建接入；两类更新分别提交后合入 `dev`。配置方法见 [Fun-ASR-Flash 远程识别](README.md#配置-fun-asr-flash-远程识别)。
+
 其他 KSZ 构建补丁的验证按 [README](README.md) 对应功能节执行；保持在隔离目录应用补丁，不直接改写工作区上游源码。
