@@ -2,6 +2,8 @@
 
 本目录是 KSZ 定制开发、部署与运维的唯一入口。`compose.yml` 从项目根目录构建本地 server 和 web 镜像，不依赖不存在的 `xiaozhi-esp32-server:*_local` 远程镜像。上游通用部署请使用项目根目录的 `docker-compose.yml`。
 
+测试命令、单次请求延时诊断、天气缓存对比及验收口径见 [KSZ 测试篇](testing.md)。
+
 ## 场馆资产联动入口
 
 场馆、区域、信标、设备归属及工程/C端模式统一由 management 管理。启用方法、缓存生效规则和验证见 [场馆与设备联动](guide-management.md)，固件团队对接见 [导览控制协议](guide-protocol.md)。
@@ -876,6 +878,8 @@ node mqtt/verify-ota.cjs http://<HOST_IP>:8002/xiaozhi/ota/ aa:bb:cc:dd:ee:ff
 `mqtt/ksz.patch` 让 MCP 初始化、工具发现和调用直接经过 KSZ 会话，避免网关提前缓存尚未配置视觉能力的工具列表；保留服务端下发的设备专属 `vision.url/token`。补丁还限定使用现有 OTA 生成的签名身份，认证完成才返回成功，并在 MQTT 断开时关闭后端会话。重新建立会话后，设备需重新发送 UDP 数据建立音频回程地址。
 
 每次设备发送 `listen stop` 时，网关日志输出 `上行音频统计`。`收到` 是本轮停止前到达网关并转发的帧数，`序列跨度` 是设备 UDP 序列号前进量，`缺失` 是跨度内未到达的帧数。60 ms 音频一秒约 16.7 帧；若设备端已发送帧数明显更高，且网关 `缺失` 大于零，丢包发生在设备至网关的公网 UDP 路径。
+
+单次请求可用 `python KSZ/scripts/request_latency.py logs --query '今天天气怎么样？'` 分析（在仓库根目录执行）。脚本也支持原生 MQTT+UDP 请求、文本/音频输入、可选设备 MCP、天气/新闻场景及 JSON 输出，按 ASR、RAG、各轮模型、工具执行和首音频拆分耗时；安装、命令与本次测量结论见[请求延时诊断](request-latency.md)。
 
 支持末序列扩展的模拟设备会在 `listen stop` 中声明已发送的 UDP 末序列，网关等该序列到达后再向 Xiaozhi 服务端结束本轮识别，最长等待 3 秒。普通设备未声明末序列时，网关至少等待 500ms，并在 UDP 连续静默 300ms 后结束。服务端手动拾音直接按 WebSocket 接收顺序累计 PCM，避免异步 VAD 队列尚未清空时提前提交 ASR；日志中的 `ASR输入音频` 可核对最终 WAV 时长。
 
