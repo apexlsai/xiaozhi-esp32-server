@@ -1,0 +1,309 @@
+--- a/core/providers/asr/qwen3_asr_flash.py
++++ b/core/providers/asr/qwen3_asr_flash.py
+@@ -1,111 +1,220 @@
++import asyncio
++import base64
+ import os
+-from typing import Optional, Tuple, List
+-import dashscope
++import time
++from pathlib import Path
++from typing import List, Optional, Tuple
++
++import httpx
++
+ from config.logger import setup_logging
+ from core.providers.asr.base import ASRProviderBase
+ from core.providers.asr.dto.dto import InterfaceType
+ 
+-tag = __name__
++TAG = __name__
+ logger = setup_logging()
+ 
+ 
+ class ASRProvider(ASRProviderBase):
++    service_path = "/services/aigc/multimodal-generation/generation"
++    default_url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
++
+     def __init__(self, config: dict, delete_audio_file: bool):
+         super().__init__()
+-        # 音频文件上传类型，流式文本识别输出
+         self.interface_type = InterfaceType.NON_STREAM
+-        """Qwen3-ASR-Flash ASR初始化"""
+-        
+-        # 配置参数
+-        self.api_key = config.get("api_key")
+-        if not self.api_key:
+-            raise ValueError("Qwen3-ASR-Flash 需要配置 api_key")
+-            
+-        self.model_name = config.get("model_name", "qwen3-asr-flash")
+-        self.output_dir = config.get("output_dir", "./audio_output")
++        self.api_key = (
++            config.get("api_key")
++            or os.getenv("QWEN_ASR_API_KEY")
++            or os.getenv("DASHSCOPE_API_KEY")
++        )
++        if not self.api_key or str(self.api_key).startswith("你的"):
++            raise ValueError("Qwen/Fun ASR 需要配置 api_key")
++        self.api_key = str(self.api_key)
++
++        self.api_url = self._normalize_api_url(config.get("base_url"))
++        self.model_name = config.get("model_name") or "qwen3-asr-flash"
++        self.legacy_qwen = self.model_name.startswith("qwen3-asr-flash")
++        self.output_dir = config.get("output_dir") or "./audio_output"
+         self.delete_audio_file = delete_audio_file
+-        
+-        # ASR选项配置
+-        self.enable_lid = config.get("enable_lid", True)  # 自动语种检测
+-        self.enable_itn = config.get("enable_itn", True)  # 逆文本归一化
+-        self.language = config.get("language", None)  # 指定语种，默认自动检测
+-        self.context = config.get("context", "")  # 上下文信息，用于提高识别准确率
+-        
+-        # 确保输出目录存在
++        self.enable_lid = config.get("enable_lid", True)
++        self.enable_itn = config.get("enable_itn", True)
++        self.language = config.get("language")
++        if self.language in (None, "", "auto"):
++            self.language = None
++        self.context = str(config.get("context") or "").strip()
++        self.timeout = float(config.get("timeout", 60))
++        if self.timeout <= 0:
++            raise ValueError("ASR timeout 必须大于0")
++        self.connect_timeout = float(config.get("connect_timeout", 20))
++        self.keepalive_expiry = float(config.get("keepalive_expiry", 300))
++        if self.connect_timeout <= 0 or self.keepalive_expiry <= 0:
++            raise ValueError("ASR connect_timeout 和 keepalive_expiry 必须大于0")
++        self._client = None
++
+         os.makedirs(self.output_dir, exist_ok=True)
++
++    def _get_client(self):
++        if self._client is None or self._client.is_closed:
++            self._client = httpx.AsyncClient(
++                timeout=httpx.Timeout(
++                    self.timeout, connect=min(self.timeout, self.connect_timeout),
++                ),
++                limits=httpx.Limits(
++                    max_connections=10,
++                    max_keepalive_connections=2,
++                    keepalive_expiry=self.keepalive_expiry,
++                ),
++                trust_env=False,
++            )
++        return self._client
++
++    async def close(self):
++        if self._client is not None:
++            await self._client.aclose()
++
++    @classmethod
++    def _normalize_api_url(cls, value: Optional[str]) -> str:
++        url = (value or cls.default_url).strip().rstrip("/")
++        if url.endswith("/generation"):
++            return url
++        if url.endswith("/multimodal-generation"):
++            return f"{url}/generation"
++        if url.endswith("/api/v1"):
++            return f"{url}{cls.service_path}"
++        if url.endswith("/compatible-mode/v1"):
++            return f"{url[:-len('/compatible-mode/v1')]}/api/v1{cls.service_path}"
++        if url.endswith("/v1"):
++            return f"{url[:-len('/v1')]}/api/v1{cls.service_path}"
++        return url
++
++    def requires_file(self) -> bool:
++        return True
+ 
+     def prefers_temp_file(self) -> bool:
+         return True
+ 
+-    def requires_file(self) -> bool:
+-        return True
++    def _audio_data_uri(self, artifacts) -> str:
++        audio_bytes = b""
++        if artifacts.temp_path:
++            audio_bytes = Path(artifacts.temp_path).read_bytes()
++        if not audio_bytes and artifacts.pcm_bytes:
++            audio_bytes = self._pcm_to_wav(artifacts.pcm_bytes)
++        if not audio_bytes:
++            raise ValueError("音频数据为空")
++        encoded = base64.b64encode(audio_bytes).decode("ascii")
++        return f"data:audio/wav;base64,{encoded}"
++
++    def _build_payload(self, audio_data: str) -> dict:
++        if self.legacy_qwen:
++            messages = [{"role": "user", "content": [{"audio": audio_data}]}]
++            if self.context:
++                messages.insert(0, {
++                    "role": "system", "content": [{"text": self.context}],
++                })
++            options = {"enable_lid": self.enable_lid, "enable_itn": self.enable_itn}
++            if self.language:
++                options["language"] = self.language
++            return {
++                "model": self.model_name,
++                "input": {"messages": messages},
++                "parameters": {"asr_options": options, "result_format": "message"},
++            }
++        messages = []
++        if self.context:
++            messages.append(
++                {
++                    "role": "user",
++                    "content": [{"type": "input_text", "text": self.context[:400]}],
++                }
++            )
++        messages.append(
++            {
++                "role": "user",
++                "content": [
++                    {
++                        "type": "input_audio",
++                        "input_audio": {"data": audio_data},
++                    }
++                ],
++            }
++        )
++
++        parameters = {"format": "wav", "sample_rate": "16000"}
++        if self.language:
++            parameters["language_hints"] = [self.language]
++        return {
++            "model": self.model_name,
++            "input": {"messages": messages},
++            "parameters": parameters,
++        }
++
++    @staticmethod
++    def _extract_text(payload: dict) -> str:
++        output = payload.get("output") if isinstance(payload, dict) else None
++        candidates = []
++        if isinstance(output, dict):
++            candidates.extend(
++                [
++                    output.get("text"),
++                    (output.get("sentence") or {}).get("text"),
++                ]
++            )
++            nested_output = output.get("output")
++            if isinstance(nested_output, dict):
++                candidates.extend(
++                    [
++                        nested_output.get("text"),
++                        (nested_output.get("sentence") or {}).get("text"),
++                    ]
++                )
++            choices = output.get("choices")
++            if isinstance(choices, list) and choices:
++                message = choices[0].get("message", {})
++                content = message.get("content", [])
++                if isinstance(content, list):
++                    candidates.extend(
++                        item.get("text")
++                        for item in content
++                        if isinstance(item, dict)
++                    )
++        if isinstance(payload, dict):
++            candidates.append(payload.get("text"))
++        return next(
++            (item.strip() for item in candidates if isinstance(item, str) and item.strip()),
++            "",
++        )
+ 
+     async def speech_to_text(
+         self, opus_data: List[bytes], session_id: str, artifacts=None
+     ) -> Tuple[Optional[str], Optional[str]]:
+-        """将语音数据转换为文本"""
+-        temp_file_path = None
+-        file_path = None
++        if artifacts is None:
++            return "", None
++
+         try:
+-            if artifacts is None:
+-                return "", None
+-            temp_file_path = artifacts.temp_path
+-            file_path = artifacts.file_path
+-            if not temp_file_path:
+-                return "", file_path
+-            # 构造请求消息
+-            messages = [
+-                {
+-                    "role": "user",
+-                    "content": [
+-                        {"audio": temp_file_path}
+-                    ]
+-                }
+-            ]
+-            
+-            # 如果有上下文信息，添加system消息
+-            if self.context:
+-                messages.insert(0, {
+-                    "role": "system", 
+-                    "content": [
+-                        {"text": self.context}
+-                    ]
+-                })
+-            
+-            # 准备ASR选项
+-            asr_options = {
+-                "enable_lid": self.enable_lid,
+-                "enable_itn": self.enable_itn
++            payload = self._build_payload(self._audio_data_uri(artifacts))
++            headers = {
++                "Authorization": f"Bearer {self.api_key}",
++                "Content-Type": "application/json",
++                "X-DashScope-SSE": "disable",
+             }
+-            
+-            # 如果指定了语种，添加到选项中
+-            if self.language:
+-                asr_options["language"] = self.language
+-            
+-            # 设置API密钥
+-            dashscope.api_key = self.api_key
+-            
+-            # 发送流式请求
+-            response = dashscope.MultiModalConversation.call(
+-                model=self.model_name,
+-                messages=messages,
+-                result_format="message",
+-                asr_options=asr_options,
+-                stream=True
+-            )
+-            
+-            # 处理流式响应
+-            full_text = ""
+-            for chunk in response:
+-                try:
+-                    text = chunk["output"]["choices"][0]["message"].content[0]["text"]
+-                    # 更新为最新的完整文本
+-                    full_text = text.strip()
+-                except:
+-                    pass
+-            
+-            return full_text, file_path
+-                
++            started_at = time.monotonic()
++            response = await asyncio.wait_for(
++                self._get_client().post(self.api_url, headers=headers, json=payload),
++                timeout=self.timeout,
++            )
++            if response.status_code >= 400:
++                raise RuntimeError(
++                    f"HTTP {response.status_code}: {response.text[:500]}"
++                )
++            result = response.json()
++            text = self._extract_text(result)
++            logger.bind(tag=TAG).debug(
++                f"语音识别耗时: {time.monotonic() - started_at:.3f}s | 文本长度: {len(text)}"
++            )
++            return text, artifacts.file_path
++        except (asyncio.TimeoutError, httpx.TimeoutException):
++            logger.bind(tag=TAG).error(f"ASR 请求超时（{self.timeout:g}秒）")
++            return "", artifacts.file_path
+         except Exception as e:
+-            logger.bind(tag=tag).error(f"语音识别失败: {e}")
+-            return "", file_path
++            logger.bind(tag=TAG).error(f"语音识别失败: {e}")
++            return "", artifacts.file_path

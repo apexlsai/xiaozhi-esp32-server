@@ -19,7 +19,7 @@
 - 已安装 Docker Engine 和 Docker Compose v2。
 - 保留 `KSZ/Dockerfile-server`、`KSZ/Dockerfile-web`、`KSZ/patches/` 和 `main/` 源码目录。
 - 确保 Docker 可以拉取基础镜像，以及 MySQL、Redis 镜像。
-- 默认使用远程 OpenAI 兼容 ASR，无需下载或挂载本地 SenseVoice 模型。
+- 默认使用远程 ASR（Fun-ASR-Flash 或 OpenAI 兼容接口），无需下载或挂载本地 SenseVoice 模型。
 
 ## 首次构建并启动
 
@@ -309,28 +309,61 @@ KSZ 保留上游完整返回协议：MCP `initialize` 继续下发 `vision.url` 
 
 首句前服务异常统一提示「视觉服务暂时不可用，请稍后再试。」；已有正文下发时仅补一次「识别中断了，请再拍一次。」。取消时不播失败提示，不自动重试 VLM；原始错误仅写服务端日志。
 
-### 配置 FunASR
+### 配置 Fun-ASR-Flash 远程识别
 
-推荐通过智控台【模型配置】→【语音识别模型】修改「OpenAI 语音识别」的 `base_url`、`model_name`。例如，转写接口通常为 `http://<FUNASR_HOST>:15102/v1/audio/transcriptions`。
+当前服务端已支持通义千问多模态 ASR。它把服务端收到的 PCM 音频转为 WAV 的 Base64 Data URI 发送，不需要公开音频文件地址。推荐在智控台【模型配置】→【语音识别模型】选择「Qwen3-ASR-Flash」，填写：
 
-需要直接修改数据库时，执行：
+- `api_key`：百炼 API Key
+- `base_url`：`https://maas.qianwenaiapi.com/api/v1/services/aigc/multimodal-generation/generation`
+- `model_name`：`fun-asr-flash-2026-06-15`
+
+官方预设 `ASR_Qwen3Flash` 的 `qwen3-asr-flash` 同样可用，保持原地址和模型名即可；只有切换 Fun-ASR-Flash 时才需改为上述值。KSZ 适配保留两种请求协议，云端等待采用异步 HTTP，并限制整次请求默认最多60秒，避免识别服务卡住时阻塞所有设备握手。实现位于 `patches/qwen-fun-asr.patch`，由 `Dockerfile-server` 在源码构建阶段检查并应用，上游工作区源码保持原样。
+
+ASR HTTP 客户端在同一设备会话内跨轮复用，连接默认空闲保留300秒，建连超时20秒，设备断开时释放连接池。可在模型配置 JSON 中设置 `keepalive_expiry`、`connect_timeout`、`timeout`（均以秒计）；空闲保留时间受云端主动断开限制，不能保证连接持续存在，也不会自动发送保活识别请求。整次请求超时与连接空闲过期分别控制。
+
+更新适配后，先在 `KSZ/` 重建服务端：
+
+```bash
+docker compose up -d --build xiaozhi-esp32-server
+```
+
+保存后，在【智能体】中把语音识别模型改为该模型。清理 Redis 配置并重启 server：
+
+下面以 Redis 默认端口 `6379` 为例；若 `.env` 使用 `6380`，将命令改为 `redis-cli -p 6380 DEL server:config`。
+
+```bash
+docker compose exec xiaozhi-esp32-server-redis redis-cli DEL server:config
+docker compose restart xiaozhi-esp32-server
+```
+
+不使用智控台时，在私有 `data/.config.yaml` 设置 `selected_module.ASR: Qwen3ASRFlash`，并在 `ASR.Qwen3ASRFlash` 填写 `type: qwen3_asr_flash`、`api_key`、上述 `base_url`、`model_name` 和 `output_dir: tmp/`。私有配置与密钥不提交到 Git。
+
+也可直接修改数据库。将 `<API_KEY>` 换成真实密钥，禁止提交到 Git：
 
 ```bash
 docker compose exec xiaozhi-esp32-server-db \
   mysql -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server -e "
   UPDATE ai_model_config
   SET config_json='{
-    \"type\":\"openai\",
-    \"api_key\":\"none\",
-    \"base_url\":\"http://<FUNASR_HOST>:15102/v1/audio/transcriptions\",
-    \"model_name\":\"fun-asr-nano\",
+    \"type\":\"qwen3_asr_flash\",
+    \"api_key\":\"<API_KEY>\",
+    \"base_url\":\"https://maas.qianwenaiapi.com/api/v1/services/aigc/multimodal-generation/generation\",
+    \"model_name\":\"fun-asr-flash-2026-06-15\",
     \"output_dir\":\"tmp/\"
   }'
-  WHERE id='ASR_OpenaiASR';
-  UPDATE ai_agent_template SET asr_model_id='ASR_OpenaiASR';"
-docker compose exec xiaozhi-esp32-server-redis redis-cli FLUSHALL
+  WHERE id='ASR_Qwen3Flash';
+  UPDATE ai_agent_template SET asr_model_id='ASR_Qwen3Flash';"
+docker compose exec xiaozhi-esp32-server-redis redis-cli DEL server:config
 docker compose restart xiaozhi-esp32-server
 ```
+
+ASR 隔离回归会在临时目录应用同一构建补丁后加载 Provider，无需真实 API Key 或模型服务：
+
+```bash
+uv run --with httpx==0.28.1 python -m unittest discover -s KSZ/server/tests -p test_qwen_asr.py -v
+```
+
+接口说明见[通义千问 Fun-ASR-Flash HTTP API](https://help.aliyun.com/zh/model-studio/fun-asr-flash-recorded-speech-recognition-http-api)。如果使用的是自建 OpenAI 兼容 FunASR 服务，再选择「OpenAI 语音识别」并填写 `/v1/audio/transcriptions` 地址。
 
 ### 配置 OpenAI 兼容 LLM / SLM
 
