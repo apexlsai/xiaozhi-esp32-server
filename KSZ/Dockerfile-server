@@ -21,6 +21,10 @@ COPY KSZ/patches/location-updates.patch /tmp/location-updates.patch
 RUN git apply --check /tmp/location-updates.patch \
     && git apply /tmp/location-updates.patch
 
+COPY KSZ/patches/qwen-fun-asr.patch /tmp/qwen-fun-asr.patch
+RUN git apply --check /tmp/qwen-fun-asr.patch \
+    && git apply /tmp/qwen-fun-asr.patch
+
 FROM ghcr.io/xinnan-tech/xiaozhi-esp32-server:server-base
 
 COPY --from=patched-source /src .
