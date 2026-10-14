@@ -10,9 +10,10 @@ import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from latency_mqtt import encode_audio, ogg_packets, run_request
-from request_latency import analyze
+from request_latency import analyze, main, write_run_log
 
 
 def log(second, message, tag="session"):
@@ -29,6 +30,37 @@ def agent_log(second, query="谢谢。", request_id="req-1", **changes):
 
 
 class LogAnalysisTests(unittest.TestCase):
+    def test_each_run_writes_a_concise_human_log(self):
+        report = {"query": "测试问题", "client": {"submit_to_audio_ms": 12.5},
+                  "warnings": [], "events": [{"event": "tts sentence_start",
+                                               "elapsed_ms": 10, "detail": "测试回复"}]}
+        with tempfile.TemporaryDirectory() as directory:
+            path = write_run_log(report, "request", directory, 0)
+            content = path.read_text()
+        self.assertTrue(path.name.endswith("_request_测试问题.log"))
+        self.assertIn("KSZ request latency diagnostic", content)
+        self.assertIn("提交→首 UDP 音频: 12.50 ms", content)
+        self.assertIn("tts sentence_start 测试回复", content)
+        self.assertNotIn("report_json:", content)
+        self.assertEqual(report["log_file"], str(path))
+
+    def test_no_log_keeps_terminal_results_without_creating_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            server = root / "server.log"
+            empty = root / "empty.log"
+            server.write_text(log(1, "大模型收到用户消息: 谢谢。"))
+            empty.write_text("")
+            argv = ["request_latency.py", "logs", "--query", "谢谢。",
+                    "--server-log", str(server), "--mqtt-log", str(empty),
+                    "--agent-log", str(empty), "--log-dir", str(root / "results"), "--no-log"]
+            output = io.StringIO()
+            with patch("sys.argv", argv), contextlib.redirect_stdout(output):
+                self.assertEqual(main(), 0)
+            self.assertIn("问题：谢谢。", output.getvalue())
+            self.assertNotIn("日志文件：", output.getvalue())
+            self.assertFalse((root / "results").exists())
+
     def test_repeated_query_selects_last_and_deduplicates_agent_records(self):
         server = "\n".join([log(1, "大模型收到用户消息: 谢谢。"), log(2, "发送第一段语音: 不客气。"),
                             log(10, "ASR输入音频: 帧=20, 时长=1.20秒"), log(10.4, "识别文本: 谢谢。"),

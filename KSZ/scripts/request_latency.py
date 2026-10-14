@@ -5,11 +5,15 @@
 
 import argparse
 import datetime as dt
+import io
 import json
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+
+DEFAULT_LOG_DIR = Path("KSZ/logs")
 
 
 def timestamp(value):
@@ -154,24 +158,58 @@ LABELS = {
 }
 
 
-def display(report):
-    print("\n问题：" + report["query"])
+def render_report(report):
+    output = io.StringIO()
+    print("\n问题：" + report["query"], file=output)
     for group in ("client", "stages"):
         for key, value in report.get(group, {}).items():
             label = LABELS.get(key, key)
             print(f"  {label}: {value:.2f} ms" if key.endswith(("_ms", "_estimate")) and isinstance(value, (int, float))
-                  else f"  {label}: {value}")
+                  else f"  {label}: {value}", file=output)
     for i, row in enumerate(report.get("agent_rounds", []), 1):
-        print(f"  Agent 第 {i} 轮 [{row['request_id']}] route={row['route']} status={row['status']}")
+        print(f"  Agent 第 {i} 轮 [{row['request_id']}] route={row['route']} status={row['status']}", file=output)
         for key in ("queue_ms", "router_ms", "rag_ms", "llm_ttft_ms", "llm_ms", "total_ms"):
             value = row.get(key)
-            print(f"    {key}: {value:.2f} ms" if value is not None else f"    {key}: 未知")
+            print(f"    {key}: {value:.2f} ms" if value is not None else f"    {key}: 未知", file=output)
     for tool in report.get("tools", []):
         value = tool["execution_and_resume_ms_estimate"]
         print(f"  工具 {tool['name']} 执行/衔接（估算）: {value:.2f} ms" if value is not None
-              else f"  工具 {tool['name']}: 耗时未知")
+              else f"  工具 {tool['name']}: 耗时未知", file=output)
     for warning in report.get("warnings", []):
-        print("  提示：" + warning)
+        print("  提示：" + warning, file=output)
+    return output.getvalue()
+
+
+def display(report):
+    print(render_report(report), end="")
+
+
+def log_slug(value):
+    slug = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "-", value or "run").strip("-")
+    return (slug or "run")[:48]
+
+
+def write_run_log(report, mode, log_dir, exit_code):
+    directory = Path(log_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    saved_at = dt.datetime.now().astimezone()
+    filename = f"{saved_at.strftime('%Y%m%dT%H%M%S%f%z')}_{mode}_{log_slug(report.get('query'))}.log"
+    path = directory / filename
+    report["log_file"] = str(path)
+    content = [
+        "KSZ request latency diagnostic",
+        f"saved_at: {saved_at.isoformat()}",
+        f"mode: {mode}",
+        f"exit_code: {exit_code}",
+        "",
+        *[f"  +{row['elapsed_ms']:9.2f} ms {row['event']}" +
+          (f" {row['detail']}" if row.get('detail') is not None else "")
+          for row in report.get("events", [])],
+        render_report(report).rstrip(),
+        "",
+    ]
+    path.write_text("\n".join(content), encoding="utf-8")
+    return path
 
 
 def docker_logs(container, since):
@@ -210,6 +248,10 @@ def main():
         mode.add_argument("--mqtt-container", default="ksz-xiaozhi-mqtt-gateway-1")
         mode.add_argument("--agent-container", default="docker-museum-guide-agent-1")
         mode.add_argument("--json-out", type=Path)
+        mode.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR,
+                          help="每次运行的诊断日志目录，默认 KSZ/logs")
+        mode.add_argument("--no-log", dest="write_log", action="store_false", default=True,
+                          help="不写入本次运行的 KSZ/logs 日志文件")
     args = parser.parse_args()
     if args.mode == "request" and args.scenario == "mcp" and not args.mcp:
         parser.error("--scenario mcp 需要 --mcp")
@@ -241,7 +283,10 @@ def main():
         if args.expect_tool and args.expect_tool not in report.get("observed_tools", []):
             report["warnings"].append("未实际调用预期工具：" + args.expect_tool)
             exit_code = 1
+    log_path = write_run_log(report, args.mode, args.log_dir, exit_code) if args.write_log else None
     display(report)
+    if log_path:
+        print(f"\n日志文件：{log_path}")
     if args.json_out:
         args.json_out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     return exit_code
