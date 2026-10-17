@@ -181,3 +181,15 @@ uv run --with httpx==0.28.1 python -m unittest discover -s KSZ/server/tests -p t
 测试分支 `feature/ksz/request-latency` 维护诊断脚本与测试篇，ASR 分支 `feature/ksz/fun-asr-flash` 维护识别补丁、回归测试和构建接入；两类更新分别提交后合入 `dev`。配置方法见 [Fun-ASR-Flash 远程识别](README.md#配置-fun-asr-flash-远程识别)。
 
 其他 KSZ 构建补丁的验证按 [README](README.md) 对应功能节执行；保持在隔离目录应用补丁，不直接改写工作区上游源码。
+
+
+## VLM 直接回答回归（2026-10-17）
+
+实现与后续增强路线见 [视觉路线](vision-roadmap.md)。本次核心改动在独立 Museum Guide Agent 功能分支 `feature/vlm-direct-answer`，KSZ 文档分支为 `feature/ksz/vlm-direct-answer`。
+
+- 默认 `VISION_ANSWER_MODE=direct`，一次多模态 VLM 调用直接输出自然语言；不执行结构化识别、藏品匹配、RAG 或文本 LLM。
+- 新增 20 项直接回答测试：单次调用、首片段早于全文、四语与方言、系统身份与生成参数、API 流式/非流式、空元数据、关闭/取消、预算超时、HTTP 失败、非 SSE 兼容、截断/空结果/错误事件及日志脱敏。
+- 视觉回归 139 项通过；完整 Agent 回归 483 项通过、2 项失败。失败为 `test_image_guide_flow` 与 `test_idle_state` 的旧状态图递归上限问题，在修改前 HEAD 副本同样复现；本次未改状态图。
+- 旧视觉测试显式选择 `structured`，覆盖原有识别、RAG、回答与提示词回退。语法检查及差异空白检查通过。
+- 测试使用 `uv` 将 pytest 安装至 `/tmp`，复用已有 Agent Python 运行依赖，不修改线上环境。API 测试在沙箱外运行；本机 HTTP 流式测试设置 `NO_PROXY=127.0.0.1,localhost`，避免系统代理干扰。
+- 尚未部署或使用真实拍照图片做新链路延迟对比，不能把模拟上游测试耗时当作线上性能。部署后应固定图片，比较首正文、首句和设备首音频。
