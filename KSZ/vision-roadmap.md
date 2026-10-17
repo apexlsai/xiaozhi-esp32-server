@@ -2,7 +2,7 @@
 
 ## 本次：VLM 直接回答
 
-状态：功能分支已实现并完成回归；尚未部署。
+状态：功能分支已推送，2026-10-17 11:52 部署至 Agent 容器并通过健康检查。
 
 链路：图片＋用户问题＋绑定语言＋系统约束 → VLM 流式正文 → 小智分句 TTS。
 
@@ -33,4 +33,13 @@
 
 验收覆盖一次 VLM 调用且无文本 LLM/RAG、首正文早于全文、多语言与系统约束、非流式兼容、取消/超时、异常清理与日志脱敏，以及 structured 回退回归。设备端拍照、上传完成和首音频播放尚需实际复测。
 
-验证结果：Agent 完整测试 483 项通过，2 项旧状态图用例因 `GraphRecursionError` 失败，已在改动前代码复现；本次新增直接回答测试 20 项。视觉相关首轮回归 139 项通过；Python 语法检查与 `git diff --check` 通过。上线后的真实模型响应质量及设备首音频收益尚未测量。
+验证结果：Agent 完整测试 483 项通过，2 项旧状态图用例因 `GraphRecursionError` 失败，已在改动前代码复现；本次新增直接回答测试 20 项。视觉相关首轮回归 139 项通过；Python 语法检查与 `git diff --check` 通过。已用生成的简单形状图完成真实 VLM 冒烟测试；实拍图质量及设备首音频收益尚需复测。
+
+## 部署验证（2026-10-17）
+
+- Agent 分支 `feature/vlm-direct-answer`，提交 `e58b793`，已推送；运行镜像 `museum-guide-agent:vlm-direct-e58b793`，容器 `docker-museum-guide-agent-1`。
+- 使用项目 Dockerfile 从该提交构建，沿用原 Compose、日志挂载和部署环境；仅更新部署 `.env` 的 `MUSEUM_GUIDE_IMAGE` 与 `VISION_ANSWER_MODE=direct`。旧配置备份留在原目录，权限 0600。
+- Agent 两个 worker 启动自检通过，容器 healthy；未重建小智、RAG 或管理端容器。
+- 真实接口请求 `req_7a756128f0714b98` 使用程序生成的红圆/蓝三角测试图：HTTP 200、5 个正文增量、正常 DONE；客户端首正文 911.75 ms、全文 1513.42 ms，VLM 首正文 886.80 ms、生成结束 1489.69 ms。回答正确描述两种形状和颜色。
+- 日志确认 `mode=direct`、RAG skipped、VLM 原生流式完成，没有结构化识别及第二轮文本生成。测试未触发设备播报，不代表拍照上传或首音频耗时；简单图与之前实拍图不同，不能据此计算优化百分比。
+- 回退镜像保留为 `museum-guide-agent:vision-stability-local`；在原部署环境将镜像改回该值、视觉模式设为 `structured`，再按原 Compose 执行 `up -d --no-build museum-guide-agent`。
