@@ -20,8 +20,12 @@ COPY --from=patched-source /source/main/manager-api/src ./src
 RUN mvn clean package -Dmaven.test.skip=true
 
 FROM bellsoft/liberica-runtime-container:jre-21-glibc
-RUN apk update && apk add --no-cache --no-scripts nginx bash fontconfig ttf-dejavu \
+RUN apk upgrade --no-cache --no-scripts \
+    && apk add --no-cache --no-scripts nginx bash fontconfig ttf-dejavu \
     && rm -rf /var/cache/apk/* \
+    && bash --version \
+    && java -version \
+    && nginx -v \
     && mkdir -p /run/nginx /var/log/nginx /var/tmp/nginx /etc/nginx/conf.d
 COPY main/manager-web/public/generator/static/fonts/*.ttf /usr/share/fonts/
 RUN fc-cache -f -v
