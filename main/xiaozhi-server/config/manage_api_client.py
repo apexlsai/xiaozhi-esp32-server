@@ -197,7 +197,15 @@ async def get_correct_words(mac_address: str) -> Optional[Dict]:
 
 
 async def generate_and_save_chat_summary(session_id: str) -> Optional[Dict]:
-    """生成并保存聊天记录总结"""
+    """生成并保存聊天记录总结
+
+    注意：此函数在 _save_and_close 的守护线程中被调用。
+    服务关闭时主线程调用 safe_close() 将 _instance 置为 None，
+    与守护线程存在竞态条件，因此必须先判空，否则会触发：
+    'NoneType' object has no attribute '_execute_async_request'
+    """
+    if not ManageApiClient._instance:
+        return None
     try:
         return await ManageApiClient._instance._execute_async_request(
             "POST",
@@ -209,7 +217,15 @@ async def generate_and_save_chat_summary(session_id: str) -> Optional[Dict]:
 
 
 async def generate_and_save_chat_title(session_id: str) -> Optional[Dict]:
-    """生成并保存聊天标题"""
+    """生成并保存聊天标题
+
+    注意：此函数在 _save_and_close 的守护线程中被调用。
+    服务关闭时主线程调用 safe_close() 将 _instance 置为 None，
+    与守护线程存在竞态条件，因此必须先判空，否则会触发：
+    'NoneType' object has no attribute '_execute_async_request'
+    """
+    if not ManageApiClient._instance:
+        return None
     try:
         return await ManageApiClient._instance._execute_async_request(
             "POST",
