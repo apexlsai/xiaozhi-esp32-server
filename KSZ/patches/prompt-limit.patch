@@ -1,0 +1,92 @@
+diff --git a/main/manager-web/src/views/roleConfig.vue b/main/manager-web/src/views/roleConfig.vue
+--- a/main/manager-web/src/views/roleConfig.vue
++++ b/main/manager-web/src/views/roleConfig.vue
+@@ -132,7 +132,7 @@
+                         resize="none"
+                         :placeholder="$t('roleConfig.pleaseEnterContent')"
+                         v-model="form.systemPrompt"
+-                        maxlength="2000"
++                        maxlength="10000"
+                         show-word-limit
+                         class="form-textarea"
+                       />
+diff --git a/main/manager-web/src/views/AgentTemplateManagement.vue b/main/manager-web/src/views/AgentTemplateManagement.vue
+--- a/main/manager-web/src/views/AgentTemplateManagement.vue
++++ b/main/manager-web/src/views/AgentTemplateManagement.vue
+@@ -91,7 +91,7 @@
+             type="textarea"
+             :placeholder="$t('templateQuickConfig.agentSettings.systemPromptPlaceholder')"
+             show-word-limit
+-            maxlength="2000"
++            maxlength="10000"
+             :rows="16"
+           />
+         </el-form-item>
+diff --git a/main/manager-web/src/views/TemplateQuickConfig.vue b/main/manager-web/src/views/TemplateQuickConfig.vue
+--- a/main/manager-web/src/views/TemplateQuickConfig.vue
++++ b/main/manager-web/src/views/TemplateQuickConfig.vue
+@@ -45,7 +45,7 @@
+                   :placeholder="$t('templateQuickConfig.agentSettings.systemPromptPlaceholder')"
+                   :validate-event="false"
+                   show-word-limit
+-                  maxlength="2000"
++                  maxlength="10000"
+                 />
+               </el-form-item>
+             </el-form>
+diff --git a/main/manager-mobile/src/pages/agent/edit.vue b/main/manager-mobile/src/pages/agent/edit.vue
+--- a/main/manager-mobile/src/pages/agent/edit.vue
++++ b/main/manager-mobile/src/pages/agent/edit.vue
+@@ -1367,12 +1367,12 @@
+         </text>
+         <textarea
+           v-model="formData.systemPrompt"
+-          :maxlength="2000"
++          :maxlength="10000"
+           :placeholder="t('agent.inputRoleDescription')"
+           class="box-border h-[500rpx] w-full resize-none break-words break-all border border-[#eeeeee] rounded-[12rpx] bg-[#f5f7fb] p-[20rpx] text-[26rpx] text-[#232338] leading-[1.6] outline-none focus:border-[#336cff] focus:bg-white placeholder:text-[#9d9ea3]"
+         />
+         <view class="mt-[8rpx] text-right text-[22rpx] text-[#9d9ea3]">
+-          {{ (formData.systemPrompt || '').length }}/2000
++          {{ (formData.systemPrompt || '').length }}/10000
+         </view>
+       </view>
+     </view>
+diff --git a/main/manager-api/src/main/java/xiaozhi/modules/agent/dto/AgentUpdateDTO.java b/main/manager-api/src/main/java/xiaozhi/modules/agent/dto/AgentUpdateDTO.java
+--- a/main/manager-api/src/main/java/xiaozhi/modules/agent/dto/AgentUpdateDTO.java
++++ b/main/manager-api/src/main/java/xiaozhi/modules/agent/dto/AgentUpdateDTO.java
+@@ -8,6 +8,7 @@
+ 
+ import com.fasterxml.jackson.core.type.TypeReference;
+ import io.swagger.v3.oas.annotations.media.Schema;
++import jakarta.validation.constraints.Size;
+ import lombok.Data;
+ import xiaozhi.common.utils.JsonUtils;
+ 
+@@ -70,6 +71,7 @@
+     private List<FunctionInfo> functions;
+ 
+     @Schema(description = "角色设定参数", example = "你是一个专业的客服助手，负责回答用户问题并提供帮助", nullable = true)
++    @Size(max = 10000, message = "角色设定不能超过 {max} 个字符")
+     private String systemPrompt;
+ 
+     @Schema(description = "总结记忆", example = "构建可生长的动态记忆网络，在有限空间内保留关键信息的同时，智能维护信息演变轨迹\n"
+diff --git a/main/manager-api/src/main/java/xiaozhi/modules/agent/entity/AgentTemplateEntity.java b/main/manager-api/src/main/java/xiaozhi/modules/agent/entity/AgentTemplateEntity.java
+--- a/main/manager-api/src/main/java/xiaozhi/modules/agent/entity/AgentTemplateEntity.java
++++ b/main/manager-api/src/main/java/xiaozhi/modules/agent/entity/AgentTemplateEntity.java
+@@ -9,6 +9,7 @@
+ import com.baomidou.mybatisplus.annotation.TableId;
+ import com.baomidou.mybatisplus.annotation.TableName;
+ 
++import jakarta.validation.constraints.Size;
+ import lombok.Data;
+ 
+ /**
+@@ -103,6 +104,7 @@
+     /**
+      * 角色设定参数
+      */
++    @Size(max = 10000, message = "角色设定不能超过 {max} 个字符")
+     private String systemPrompt;
+ 
+     /**

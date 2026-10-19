@@ -1,0 +1,277 @@
+diff --git a/app.js b/app.js
+index 2db412a..1878a22 100644
+--- a/app.js
++++ b/app.js
+@@ -14,6 +14,9 @@ const { MQTTProtocol } = require('./mqtt-protocol');
+ const { ConfigManager } = require('./utils/config-manager');
+ const { CallManager } = require('./utils/call-manager');
+ const { validateMqttCredentials } = require('./utils/mqtt_config_v2');
++const { GuideControl } = require('./guide-control.cjs');
++const { PresenceReporter } = require('./presence.cjs');
++const guidePresence = new PresenceReporter();
+
+ // libopus-wasm 编码器缓存（用于生成静音帧）
+ let opusEncoderPromise = null;
+@@ -95,7 +96,7 @@ class WebSocketBridge extends Emitter {
+         this.chatServer = chatServers[Math.floor(Math.random() * chatServers.length)];
+     }
+
+-    async connect(audio_params, features) {
++    async connect(audio_params, features, guide) {
+         return new Promise((resolve, reject) => {
+             // 生成WebSocket认证token
+             let authorization = "test-token";
+@@ -139,11 +140,13 @@ class WebSocketBridge extends Emitter {
+                     version: 2,
+                     transport: 'websocket',
+                     audio_params,
+-                    features
++                    features,
++                    ...(guide ? { guide } : {})
+                 });
+             });
+
+             this.wsClient.on('message', (data, isBinary) => {
++                if (this.connection.bridge !== this) return;
+                 if (isBinary) {
+                     const timestamp = data.readUInt32BE(8);
+                     const opusLength = data.readUInt32BE(12);
+@@ -155,10 +158,6 @@ class WebSocketBridge extends Emitter {
+                     const message = JSON.parse(data.toString());
+                     if (message.type === 'hello') {
+                         resolve(message);
+-                    } else if (message.type === 'mcp' &&
+-                        this.connection.mcpCachedTools &&
+-                        ['notifications/initialized', 'tools/list'].includes(message.payload.method)) {
+-                        this.connection.onMcpMessageFromBridge(message);
+                     } else {
+                         this.connection.sendMqttMessage(JSON.stringify(message));
+                     }
+@@ -173,6 +172,7 @@ class WebSocketBridge extends Emitter {
+
+             this.wsClient.on('close', () => {
+                 this.emit('close');
++                reject(new Error('WebSocket closed before hello'));
+             });
+         });
+     }
+@@ -207,7 +207,7 @@ class WebSocketBridge extends Emitter {
+     }
+ }
+
+-const MacAddressRegex = /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/;
++const MacAddressRegex = /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i;
+
+ /**
+  * MQTT连接类
+@@ -259,6 +259,7 @@ class MQTTConnection {
+
+         this.protocol.on('close', () => {
+             debug(`${this.clientId} 客户端断开连接`);
++            this.close();
+             this.server.removeConnection(this);
+         });
+
+@@ -276,41 +277,34 @@ class MQTTConnection {
+     handleConnect(connectData) {
++        if (this.closing || this.guideControl) {
++            this.close();
++            return;
++        }
+         this.clientId = connectData.clientId;
+         this.username = connectData.username;
+         this.password = connectData.password;
+
+-        debug('客户端连接:', {
+-            clientId: this.clientId,
+-            username: this.username,
+-            password: this.password,
+-            protocol: connectData.protocol,
+-            protocolLevel: connectData.protocolLevel,
+-            keepAlive: connectData.keepAlive
+-        });
+-
+-        const parts = this.clientId.split('@@@');
+-        if (parts.length === 3) { // GID_test@@@mac_address@@@uuid
++        try {
+             const validated = validateMqttCredentials(this.clientId, this.username, this.password, this.realClientIp);
+             this.groupId = validated.groupId;
+             this.macAddress = validated.macAddress;
+             this.uuid = validated.uuid;
+             this.userData = validated.userData;
+-        } else if (parts.length === 2) { // GID_test@@@mac_address
+-            this.groupId = parts[0];
+-            this.macAddress = parts[1].replace(/_/g, ':');
+-            if (!MacAddressRegex.test(this.macAddress)) {
+-                debug('无效的 macAddress:', this.macAddress);
+-                this.close();
+-                return;
++            if (!MacAddressRegex.test(this.macAddress) || !this.groupId || !this.uuid) {
++                throw new Error('Invalid device identity');
+             }
+-        } else {
+-            debug('无效的 clientId:', this.clientId);
++        } catch (error) {
++            this.protocol.sendConnack(5, false);
+             this.close();
+             return;
+         }
++        this.protocol.isConnected = true;
++        this.protocol.sendConnack(0, false);
++        const parts = this.clientId.split('@@@');
+         this.replyTo = `devices/p2p/${parts[1]}`;
+
+         this.server.addConnection(this);
+-        this.initializeDeviceTools();
++        this.mcpRequestId = 10000;
++        this.guideControl = new GuideControl(this, { presence: guidePresence });
+     }
+
+     handleSubscribe(subscribeData) {
+@@ -331,7 +321,9 @@ class MQTTConnection {
+     }
+
+     close() {
++        if (this.closing) return;
+         this.closing = true;
++        this.guideControl?.close();
+         // 清理所有未完成的 MCP 请求
+         for (const request of Object.values(this.mcpPendingRequests)) {
+             request.reject(new Error('Connection closed'));
+@@ -435,8 +427,16 @@ class MQTTConnection {
+     }
+
+     async parseHelloMessage(json) {
++        return this.guideControl.hello(json, (message) => this.openVoiceSession(message));
++    }
++
++    async openVoiceSession(json) {
+         this.udp = {
+             ...this.udp,
++            remoteAddress: null,
++            utteranceStartSequence: 0,
++            utterancePackets: 0,
++            lastUdpAt: 0,
+             key: crypto.randomBytes(16),
+             nonce: this.generateUdpHeader(0, 0, 0),
+             encryption: 'aes-128-ctr',
+@@ -447,11 +447,14 @@ class MQTTConnection {
+
+         if (this.bridge) {
+             debug(`${this.clientId} 收到重复 hello 消息，关闭之前的 bridge`);
+-            this.bridge.close();
+-            await new Promise(resolve => setTimeout(resolve, 100));
++            const previous = this.bridge;
++            this.bridge = null;
++            previous.close();
+         }
+-        this.bridge = new WebSocketBridge(this, json.version, this.macAddress, this.uuid, this.userData);
+-        this.bridge.on('close', () => {
++        const bridge = new WebSocketBridge(this, json.version, this.macAddress, this.uuid, this.userData);
++        this.bridge = bridge;
++        bridge.on('close', () => {
++            if (this.bridge !== bridge) return;
+             const seconds = (Date.now() - this.udp.startTime) / 1000;
+             console.log(`通话结束: ${this.clientId} Session: ${this.udp.session_id} Duration: ${seconds}s`);
+             // 通话状态下不发送 goodbye 消息
+@@ -480,9 +483,10 @@ class MQTTConnection {
+                 }
+             }
+
+-            const helloReply = await this.bridge.connect(json.audio_params, json.features);
++            const helloReply = await bridge.connect(json.audio_params, json.features, json.guide);
++            if (this.bridge !== bridge) return;
+             this.udp.session_id = helloReply.session_id;
+-            this.sendMqttMessage(JSON.stringify({
++            const reply = {
+                 type: 'hello',
+                 version: json.version,
+                 session_id: this.udp.session_id,
+@@ -495,14 +499,21 @@ class MQTTConnection {
+                     nonce: this.udp.nonce.toString('hex'),
+                 },
+                 audio_params: helloReply.audio_params
+-            }));
++            };
++            this.sendMqttMessage(JSON.stringify(reply));
++            return reply;
+         } catch (error) {
++            if (this.bridge !== bridge) return;
+             this.sendMqttMessage(JSON.stringify({ type: 'error', message: '处理 hello 消息失败' }));
+             console.error(`${this.clientId} 处理 hello 消息失败: ${error}`);
+         }
+     }
+
+     async parseOtherMessage(json) {
++        if (json.type === 'guide_control') {
++            await this.guideControl.handle(json);
++            return;
++        }
+         if (json.type === 'mcp') {
+             const { id, error, result } = json.payload;
+             const request = this.mcpPendingRequests[id];
+@@ -537,6 +548,23 @@ class MQTTConnection {
+             return;
+         }
+
++        if (json.type === 'listen' && json.state === 'start') {
++            this.udp.utteranceStartSequence = this.udp.remoteSequence;
++            this.udp.utterancePackets = 0;
++        } else if (json.type === 'listen' && json.state === 'stop') {
++            const expectedSequence = Number.isSafeInteger(json.audio_sequence_end) ? json.audio_sequence_end : null;
++            const waitStartedAt = Date.now();
++            const deadline = waitStartedAt + 3000;
++            while (Date.now() < deadline) {
++                if (expectedSequence !== null && this.udp.remoteSequence >= expectedSequence) break;
++                if (expectedSequence === null && Date.now() - waitStartedAt >= 500 && Date.now() - this.udp.lastUdpAt >= 300) break;
++                await new Promise(resolve => setTimeout(resolve, 50));
++            }
++            const sequenceSpan = this.udp.remoteSequence - this.udp.utteranceStartSequence;
++            const missing = Math.max(0, sequenceSpan - this.udp.utterancePackets);
++            console.log(`上行音频统计: ${this.clientId} 收到=${this.udp.utterancePackets} 序列跨度=${sequenceSpan} 缺失=${missing} 最后序列=${this.udp.remoteSequence} 设备末序列=${expectedSequence ?? '未提供'}`);
++        }
++
+         this.bridge.sendJson(json);
+     }
+
+@@ -576,7 +604,7 @@ class MQTTConnection {
+         if (this.udp.remoteAddress !== rinfo) {
+             this.udp.remoteAddress = rinfo;
+         }
+-        if (sequence < this.udp.remoteSequence) {
++        if (sequence <= this.udp.remoteSequence) {
+             return;
+         }
+
+@@ -591,6 +619,8 @@ class MQTTConnection {
+             console.log(`收到UDP音频数据从${this.clientId}转发到WebSocket，长度: ${payload.length}, 时间戳: ${timestamp}, 序列号: ${sequence}`);
+             this.bridge.sendAudio(payload, timestamp);
+             this.udp.remoteSequence = sequence;
++            this.udp.utterancePackets++;
++            this.udp.lastUdpAt = Date.now();
+         } catch (decryptionError) {
+             console.error(`UDP 解密失败: ${decryptionError.message}`, {
+                 sequence: sequence,
+@@ -1260,7 +1290,5 @@ function validateSignatureKeyComplexity() {
+ if (validateSignatureKeyComplexity()) {
+     app.listen(adminPort, () => {
+         console.log(`管理API服务启动在端口 ${adminPort}`);
+-        // 计算并打印当天的临时密钥
+-        calculateAndPrintDailyToken();
+     });
+ }
+diff --git a/mqtt-protocol.js b/mqtt-protocol.js
+--- a/mqtt-protocol.js
++++ b/mqtt-protocol.js
+@@ -249,11 +249,5 @@ class MQTTProtocol extends Emitter {
+         this.keepAliveInterval = keepAlive * 1000 * 1.5;
+         
+-        // 发送 CONNACK
+-        this.sendConnack(0, false);
+-        
+-        // 标记为已连接
+-        this.isConnected = true;
+-        
+         // 发出连接事件
+         this.emit('connect', {
+             clientId,

@@ -298,7 +298,9 @@ async def call_mcp_tool(
     mcp_client: MCPClient,
     tool_name: str,
     args: str = "{}",
-    timeout: int = 30,
+    timeout: float = 30,
+    metadata=None,
+    return_raw=False,
 ):
     """
     调用指定的工具，并等待响应
@@ -308,10 +310,6 @@ async def call_mcp_tool(
 
     if not mcp_client.has_tool(tool_name):
         raise ValueError(f"工具 {tool_name} 不存在")
-
-    tool_call_id = await mcp_client.get_next_id()
-    result_future = asyncio.Future()
-    await mcp_client.register_call_result_future(tool_call_id, result_future)
 
     # 处理参数
     try:
@@ -363,6 +361,9 @@ async def call_mcp_tool(
             raise ValueError(f"参数处理失败: {str(e)}")
         raise e
 
+    tool_call_id = await mcp_client.get_next_id()
+    result_future = asyncio.Future()
+    await mcp_client.register_call_result_future(tool_call_id, result_future)
     actual_name = mcp_client.name_mapping.get(tool_name, tool_name)
     payload = {
         "jsonrpc": "2.0",
@@ -370,16 +371,20 @@ async def call_mcp_tool(
         "method": "tools/call",
         "params": {"name": actual_name, "arguments": arguments},
     }
+    if metadata is not None:
+        payload["params"]["_meta"] = metadata
 
     logger.bind(tag=TAG).info(f"发送客户端mcp工具调用请求: {actual_name}，参数: {args}")
-    await send_mcp_message(conn, payload)
-
     try:
+        await send_mcp_message(conn, payload)
         # Wait for response or timeout
         raw_result = await asyncio.wait_for(result_future, timeout=timeout)
         logger.bind(tag=TAG).info(
             f"客户端mcp工具调用 {actual_name} 成功，原始结果: {raw_result}"
         )
+
+        if return_raw:
+            return raw_result
 
         if isinstance(raw_result, dict):
             if raw_result.get("isError") is True:
@@ -396,8 +401,6 @@ async def call_mcp_tool(
         # 如果结果不是预期的格式，将其转换为字符串
         return str(raw_result)
     except asyncio.TimeoutError:
-        await mcp_client.cleanup_call_result(tool_call_id)
         raise TimeoutError("工具调用请求超时")
-    except Exception as e:
+    finally:
         await mcp_client.cleanup_call_result(tool_call_id)
-        raise e

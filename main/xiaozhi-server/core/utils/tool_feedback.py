@@ -63,13 +63,16 @@ class ToolFeedbackScheduler:
                     item for item in self.announced if item[0] == sentence_id
                 }
                 self.announced.add(announced_key)
-
-            self.conn.tts.tts_one_sentence(
-                self.conn,
-                ContentType.TEXT,
-                content_detail=phrase,
-                sentence_id=sentence_id,
-            )
+                feedback = getattr(self.conn.tts, "tts_tool_feedback", None)
+                if callable(feedback):
+                    feedback(self.conn, phrase, sentence_id)
+                else:
+                    self.conn.tts.tts_one_sentence(
+                        self.conn,
+                        ContentType.TEXT,
+                        content_detail=phrase,
+                        sentence_id=sentence_id,
+                    )
             self.conn.logger.bind(tag=TAG).info(
                 f"工具等待反馈已播放: tool={tool_name}, delay_ms={int(delay * 1000)}"
             )

@@ -2,6 +2,7 @@ package xiaozhi.modules.device.controller;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.http.MediaType;
@@ -72,11 +73,17 @@ public class OTAController {
         if (StringUtils.isNotBlank(request.getDeviceId()) && !deviceId.equalsIgnoreCase(request.getDeviceId())) {
             return DeviceReportRespDTO.createError("deviceId 与 Device-Id 请求头不一致");
         }
-        if (!"language_change".equals(request.getEvent())) {
+        boolean languageChange = "language_change".equals(request.getEvent());
+        boolean profileChange = "profile_change".equals(request.getEvent());
+        if (!languageChange && !profileChange) {
             return DeviceReportRespDTO.createError("不支持的连接前事件: " + request.getEvent());
         }
 
         Map<String, Object> payload = request.getPayload();
+        if (profileChange && payload != null
+                && !Set.of("language", "role", "dev").containsAll(payload.keySet())) {
+            return DeviceReportRespDTO.createError("profile_change 只支持 language、role、dev");
+        }
         Object language = payload == null ? null : payload.get("language");
         if (!(language instanceof String) || StringUtils.isBlank((String) language)) {
             return DeviceReportRespDTO.createError("language 不能为空");
@@ -85,11 +92,22 @@ public class OTAController {
         if (payload.containsKey("dev") && !(devValue instanceof Boolean)) {
             return DeviceReportRespDTO.createError("dev 必须是布尔值");
         }
+        Object role = profileChange ? payload.get("role") : null;
+        if (profileChange && (!(role instanceof String) || StringUtils.isBlank((String) role))) {
+            return DeviceReportRespDTO.createError("role 不能为空");
+        }
 
         try {
-            deviceService.rebindDeviceLanguage(deviceId, (String) language, Boolean.TRUE.equals(devValue));
-            log.info("连接前语言智能体已选定: deviceId={}, language={}, dev={}",
-                    deviceId, language, Boolean.TRUE.equals(devValue));
+            if (profileChange) {
+                deviceService.rebindDeviceProfile(
+                        deviceId, (String) language, (String) role, Boolean.TRUE.equals(devValue));
+                log.info("连接前语言角色已选定: deviceId={}, language={}, role={}, dev={}",
+                        deviceId, language, role, Boolean.TRUE.equals(devValue));
+            } else {
+                deviceService.rebindDeviceLanguage(deviceId, (String) language, Boolean.TRUE.equals(devValue));
+                log.info("连接前语言智能体已选定: deviceId={}, language={}, dev={}",
+                        deviceId, language, Boolean.TRUE.equals(devValue));
+            }
             return null;
         } catch (RenException e) {
             return DeviceReportRespDTO.createError(e.getMsg());

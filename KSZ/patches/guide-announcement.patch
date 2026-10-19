@@ -1,0 +1,148 @@
+--- a/core/connection.py
++++ b/core/connection.py
+@@ -1274,14 +1274,15 @@
+                         ),
+                         self.loop,
+                     )
+-            if event.text:
+-                cleaned_parts.append(event.text)
++            text = guide.filter_guide_announcement_text(self, event.text, sentence_id) if guide else event.text
++            if text:
++                cleaned_parts.append(text)
+                 self.tts.tts_text_queue.put(
+                     TTSMessageDTO(
+                         sentence_id=sentence_id,
+                         sentence_type=SentenceType.MIDDLE,
+                         content_type=ContentType.TEXT,
+-                        content_detail=event.text,
++                        content_detail=text,
+                     )
+                 )
+         return "".join(cleaned_parts)
+@@ -1312,6 +1313,8 @@
+                     content_type=ContentType.ACTION,
+                 )
+             )
++            if guide and not guide.start_guide_announcement(self, current_sentence_id):
++                return False
+         else:
+             # 递归调用时，使用当前的sentence_id
+             current_sentence_id = self.sentence_id
+@@ -1381,23 +1384,24 @@
+                 speaker_for_system = cs
+ 
+             llm_extra_body = self._build_llm_extra_body()
++            llm_dialogue = self.dialogue.get_llm_dialogue_with_memory(
++                memory_str, self.config.get("voiceprint", {}), speaker_for_system
++            )
++            if guide:
++                llm_dialogue = guide.guide_announcement_messages(self, llm_dialogue, current_sentence_id)
+ 
+             if self.intent_type == "function_call" and functions is not None:
+                 # 使用支持functions的streaming接口
+                 llm_responses = self.llm.response_with_functions(
+                     self.session_id,
+-                    self.dialogue.get_llm_dialogue_with_memory(
+-                        memory_str, self.config.get("voiceprint", {}), speaker_for_system
+-                    ),
++                    llm_dialogue,
+                     functions=functions,
+                     extra_body=llm_extra_body,
+                 )
+             else:
+                 llm_responses = self.llm.response(
+                     self.session_id,
+-                    self.dialogue.get_llm_dialogue_with_memory(
+-                        memory_str, self.config.get("voiceprint", {}), speaker_for_system
+-                    ),
++                    llm_dialogue,
+                     extra_body=llm_extra_body,
+                 )
+         except Exception as e:
+@@ -1463,15 +1467,16 @@
+                             response_message.append(cleaned_content)
+         except Exception as e:
+             self.logger.bind(tag=TAG).error(f"LLM stream processing error: {e}")
+-            self.tts.tts_text_queue.put(
+-                TTSMessageDTO(
+-                    sentence_id=current_sentence_id,
+-                    sentence_type=SentenceType.MIDDLE,
+-                    content_type=ContentType.TEXT,
+-                    content_detail=get_system_error_response(self.config),
+-                )
+-            )
+-            if depth == 0:
++            if not (guide and guide.is_guide_announcement(self, current_sentence_id)):
++                self.tts.tts_text_queue.put(
++                    TTSMessageDTO(
++                        sentence_id=current_sentence_id,
++                        sentence_type=SentenceType.MIDDLE,
++                        content_type=ContentType.TEXT,
++                        content_detail=get_system_error_response(self.config),
++                    )
++                )
++            if depth == 0 and not (guide and guide.is_guide_announcement(self, current_sentence_id)):
+                 self.tts.tts_text_queue.put(
+                     TTSMessageDTO(
+                         sentence_id=current_sentence_id,
+@@ -1538,11 +1543,12 @@
+                             # 写入对话历史
+                             da_response = self._clean_response_garbage(da_response)
+                             da_response = strip_emotion_markers(da_response)
+-                            self.tts.store_tts_text(current_sentence_id, da_response)
+-                            self.dialogue.put(Message(role="assistant", content=da_response))
++                            if not (guide and guide.is_guide_announcement(self, current_sentence_id)):
++                                self.tts.store_tts_text(current_sentence_id, da_response)
++                                self.dialogue.put(Message(role="assistant", content=da_response))
+ 
+                     if not real_tool_calls:
+-                        if depth == 0:
++                        if depth == 0 and not (guide and guide.is_guide_announcement(self, current_sentence_id)):
+                             self.tts.tts_text_queue.put(
+                                 TTSMessageDTO(
+                                     sentence_id=current_sentence_id,
+@@ -1563,8 +1569,9 @@
+                 streamed_text = ""
+                 if len(response_message) > 0:
+                     streamed_text = "".join(response_message)
+-                    self.tts.store_tts_text(current_sentence_id, streamed_text)
+-                    self.dialogue.put(Message(role="assistant", content=streamed_text))
++                    if not (guide and guide.is_guide_announcement(self, current_sentence_id)):
++                        self.tts.store_tts_text(current_sentence_id, streamed_text)
++                        self.dialogue.put(Message(role="assistant", content=streamed_text))
+                 response_message.clear()
+ 
+                 # 收集所有工具调用的 Future
+@@ -1645,12 +1652,12 @@
+         # 存储对话内容
+         if self.client_abort or current_sentence_id != self.sentence_id:
+             return False
+-        if len(response_message) > 0:
++        if len(response_message) > 0 and not (guide and guide.is_guide_announcement(self, current_sentence_id)):
+             text_buff = "".join(response_message)
+             self.tts.store_tts_text(current_sentence_id, text_buff)
+             self.dialogue.put(Message(role="assistant", content=text_buff))
+ 
+-        if depth == 0:
++        if depth == 0 and not (guide and guide.is_guide_announcement(self, current_sentence_id)):
+             self.tts.tts_text_queue.put(
+                 TTSMessageDTO(
+                     sentence_id=current_sentence_id,
+@@ -1681,6 +1688,8 @@
+                 Action.ERROR,
+             ]:
+                 text = result.response if result.response else result.result
++                if guide and guide.queue_guide_tool_reply(self, text, sentence_id):
++                    continue
+                 if streamed_text and text in streamed_text:
+                     self.logger.bind(tag=TAG).debug(
+                         f"Skipping duplicate TTS for tool {tool_call_data['name']}, already streamed"
+@@ -1739,7 +1748,7 @@
+                 resp = result.response or result.result
+                 if resp:
+                     response_parts.append(resp)
+-            if response_parts:
++            if response_parts and not (guide and guide.is_guide_announcement(self, sentence_id)):
+                 self.dialogue.put(Message(role="assistant", content="，".join(response_parts)))
+ 
+         if need_llm_tools:

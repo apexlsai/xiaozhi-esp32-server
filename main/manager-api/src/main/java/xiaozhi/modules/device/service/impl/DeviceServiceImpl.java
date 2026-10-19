@@ -599,8 +599,18 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
         if (StringUtils.isNotBlank(dto.getLanguage()) && !DeviceLanguageSpec.isSupported(dto.getLanguage())) {
             throw new RenException(ErrorCode.DEVICE_ATTRIBUTE_LANGUAGE_INVALID);
         }
+        if (StringUtils.isNotBlank(dto.getRole()) && !DeviceLanguageSpec.isRoleSupported(dto.getRole())) {
+            throw new RenException("role 必须是 child、youth 或 expert");
+        }
+        if (StringUtils.isNotBlank(dto.getRole())
+                && !DeviceLanguageSpec.isProfileLanguageSupported(dto.getLanguage())) {
+            throw new RenException("profile_change 的 language 必须是 zh-CN、en、ja 或 ko");
+        }
         if (StringUtils.isBlank(dto.getLanguage()) && dto.getDev() != null) {
             throw new RenException("dev 仅可与 language 同时使用");
+        }
+        if (StringUtils.isBlank(dto.getLanguage()) && StringUtils.isNotBlank(dto.getRole())) {
+            throw new RenException("role 仅可与 language 同时使用");
         }
 
         DeviceEntity device = getDeviceByMacAddress(dto.getDeviceId());
@@ -618,10 +628,13 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
 
         String targetAgentName = dto.getTargetAgentName();
         if (StringUtils.isNotBlank(dto.getLanguage())) {
-            targetAgentName = DeviceLanguageSpec.resolveTargetAgentName(
-                    currentAgent.getAgentName(), dto.getLanguage(), Boolean.TRUE.equals(dto.getDev()));
+            targetAgentName = StringUtils.isNotBlank(dto.getRole())
+                    ? DeviceLanguageSpec.resolveProfileAgentName(
+                            dto.getLanguage(), dto.getRole(), Boolean.TRUE.equals(dto.getDev()))
+                    : DeviceLanguageSpec.resolveTargetAgentName(
+                            currentAgent.getAgentName(), dto.getLanguage(), Boolean.TRUE.equals(dto.getDev()));
             if (targetAgentName == null) {
-                throw new RenException("无法从当前智能体名称推导目标语言智能体");
+                throw new RenException("无法推导目标智能体");
             }
             if (!targetAgentName.equals(dto.getTargetAgentName())) {
                 throw new RenException(ErrorCode.DEVICE_REBIND_LANGUAGE_TARGET_MISMATCH, targetAgentName);
@@ -646,7 +659,7 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
             same.setAgentId(currentAgent.getId());
             same.setAgentName(currentAgent.getAgentName());
             same.setConfirmed(true);
-            same.setReconnectRequired(true);
+            same.setReconnectRequired(false);
             return same;
         }
 
@@ -742,6 +755,56 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity> 
             throw new RenException("无法从当前智能体名称推导目标语言智能体");
         }
 
+        QueryWrapper<AgentEntity> targetWrapper = new QueryWrapper<>();
+        targetWrapper.eq("user_id", device.getUserId());
+        targetWrapper.eq("agent_name", targetAgentName);
+        List<AgentEntity> targetAgents = agentDao.selectList(targetWrapper);
+        if (targetAgents == null || targetAgents.isEmpty()) {
+            throw new RenException(ErrorCode.DEVICE_REBIND_TARGET_AGENT_NOT_FOUND, targetAgentName);
+        }
+        if (targetAgents.size() > 1) {
+            throw new RenException(ErrorCode.DEVICE_REBIND_TARGET_AGENT_AMBIGUOUS);
+        }
+        return targetAgentName;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public DeviceRebindVO rebindDeviceProfile(String deviceId, String language, String role, boolean dev) {
+        String targetAgentName = validateProfileTargetAgent(deviceId, language, role, dev);
+        DeviceEntity device = getDeviceByMacAddress(deviceId);
+        AgentEntity currentAgent = agentDao.selectById(device.getAgentId());
+
+        DeviceRebindDTO dto = new DeviceRebindDTO();
+        dto.setDeviceId(deviceId);
+        dto.setCurrentAgentName(currentAgent.getAgentName());
+        dto.setTargetAgentName(targetAgentName);
+        dto.setConfirm(true);
+        dto.setLanguage(language);
+        dto.setRole(role);
+        dto.setDev(dev);
+        return rebindDevice(dto);
+    }
+
+    @Override
+    public String validateProfileTargetAgent(String deviceId, String language, String role, boolean dev) {
+        if (!DeviceLanguageSpec.isProfileLanguageSupported(language)) {
+            throw new RenException("profile_change 的 language 必须是 zh-CN、en、ja 或 ko");
+        }
+        if (!DeviceLanguageSpec.isRoleSupported(role)) {
+            throw new RenException("role 必须是 child、youth 或 expert");
+        }
+
+        DeviceEntity device = getDeviceByMacAddress(deviceId);
+        if (device == null || StringUtils.isBlank(device.getAgentId())) {
+            throw new RenException(ErrorCode.DEVICE_NOT_EXIST);
+        }
+        AgentEntity currentAgent = agentDao.selectById(device.getAgentId());
+        if (currentAgent == null) {
+            throw new RenException(ErrorCode.DEVICE_REBIND_CURRENT_AGENT_MISMATCH);
+        }
+
+        String targetAgentName = DeviceLanguageSpec.resolveProfileAgentName(language, role, dev);
         QueryWrapper<AgentEntity> targetWrapper = new QueryWrapper<>();
         targetWrapper.eq("user_id", device.getUserId());
         targetWrapper.eq("agent_name", targetAgentName);

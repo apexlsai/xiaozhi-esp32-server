@@ -1,0 +1,38 @@
+FROM node:18 AS patched-source
+WORKDIR /source
+COPY main/manager-web ./main/manager-web
+COPY main/manager-api ./main/manager-api
+COPY main/manager-mobile/src/pages/agent/edit.vue ./main/manager-mobile/src/pages/agent/edit.vue
+COPY KSZ/patches/prompt-limit.patch /tmp/prompt-limit.patch
+RUN git apply --check /tmp/prompt-limit.patch && git apply /tmp/prompt-limit.patch
+
+FROM node:18 AS web-builder
+WORKDIR /app
+COPY --from=patched-source /source/main/manager-web/package*.json ./
+RUN npm ci --no-audit --no-fund
+COPY --from=patched-source /source/main/manager-web .
+RUN npm run build
+
+FROM maven:3.9.4-eclipse-temurin-21 AS api-builder
+WORKDIR /app
+COPY --from=patched-source /source/main/manager-api/pom.xml .
+COPY --from=patched-source /source/main/manager-api/src ./src
+RUN mvn clean package -Dmaven.test.skip=true
+
+FROM bellsoft/liberica-runtime-container:jre-21-glibc
+RUN apk upgrade --no-cache --no-scripts \
+    && apk add --no-cache --no-scripts nginx bash fontconfig ttf-dejavu \
+    && rm -rf /var/cache/apk/* \
+    && bash --version \
+    && java -version \
+    && nginx -v \
+    && mkdir -p /run/nginx /var/log/nginx /var/tmp/nginx /etc/nginx/conf.d
+COPY main/manager-web/public/generator/static/fonts/*.ttf /usr/share/fonts/
+RUN fc-cache -f -v
+COPY docs/docker/nginx.conf /etc/nginx/nginx.conf
+COPY --from=web-builder /app/dist /usr/share/nginx/html
+COPY --from=api-builder /app/target/xiaozhi-esp32-api.jar /app/xiaozhi-esp32-api.jar
+EXPOSE 8002
+COPY docs/docker/start.sh /start.sh
+RUN chmod +x /start.sh
+CMD ["/start.sh"]

@@ -1,0 +1,104 @@
+--- a/core/providers/tts/base.py
++++ b/core/providers/tts/base.py
+@@ -425,6 +425,8 @@
+                     self.is_first_sentence = True
+                     self.tts_audio_first_sentence = True
+                     self.current_emotion_context = None
++                    from ksz_guide.prompt import response_language
++                    self.ksz_response_language = response_language(self.conn)
+                 elif getattr(message, "ksz_complete_sentence", False):
+                     from ksz_guide.tts import consume_complete_sentence
+                     consume_complete_sentence(self, message)
+@@ -433,13 +435,8 @@
+                     self.current_emotion_context = message.emotion_context
+                 elif ContentType.TEXT == message.content_type:
+                     self.tts_text_buff.append(message.content_detail)
+-                    segment_text = self._get_segment_text()
+-                    if segment_text:
+-                        self.to_tts_stream(
+-                            segment_text,
+-                            opus_handler=self.handle_opus,
+-                            emotion_context=self.current_emotion_context,
+-                        )
++                    from ksz_guide.sentences import synthesize_pending
++                    synthesize_pending(self)
+                 elif ContentType.FILE == message.content_type:
+                     self._process_remaining_text_stream(opus_handler=self.handle_opus)
+                     tts_file = message.content_file
+@@ -626,19 +623,8 @@
+         Returns:
+             bool: 是否成功处理了文本
+         """
+-        full_text = "".join(self.tts_text_buff)
+-        remaining_text = full_text[self.processed_chars :]
+-        if remaining_text:
+-            segment_text = textUtils.get_string_no_punctuation_or_emoji(remaining_text)
+-            if segment_text:
+-                self.to_tts_stream(
+-                    segment_text,
+-                    opus_handler=opus_handler,
+-                    emotion_context=self.current_emotion_context,
+-                )
+-                self.processed_chars += len(full_text)
+-                return True
+-        return False
++        from ksz_guide.sentences import synthesize_pending
++        return synthesize_pending(self, final=True, opus_handler=opus_handler)
+ 
+     def _apply_percentage_params(self, config):
+         """根据子类定义的 TTS_PARAM_CONFIG 批量应用百分比参数"""
+--- a/core/utils/vision_stream.py
++++ b/core/utils/vision_stream.py
+@@ -9,6 +9,7 @@
+ from core.utils.dialogue import Message
+ from core.utils.ksz_extension import guide
+ from plugins_func.register import Action, ActionResponse
++from ksz_guide.sentences import SentenceBuffer
+ 
+ 
+ VISION_TOOL_NAMES = {"self_camera_take_photo", "self.camera.take_photo"}
+@@ -53,33 +54,6 @@
+             sessions.fail(request)
+         return ActionResponse(Action.NONE)
+     return ActionResponse(Action.RESPONSE, response=vision_failure_message(conn))
+-
+-
+-class SentenceBuffer:
+-    def __init__(self):
+-        self.pending = ""
+-
+-    def feed(self, text, final=False):
+-        self.pending += text
+-        parts = []
+-        start = 0
+-        for index, char in enumerate(self.pending):
+-            boundary = char in "。！？!?；;\n"
+-            if char == ".":
+-                following = self.pending[index + 1:index + 2]
+-                boundary = bool(following and not following.isalnum()) or (
+-                    final and not following
+-                )
+-            if boundary:
+-                sentence = self.pending[start:index + 1].strip()
+-                if sentence:
+-                    parts.append(sentence)
+-                start = index + 1
+-        self.pending = self.pending[start:]
+-        if final and self.pending.strip():
+-            parts.append(self.pending.strip())
+-            self.pending = ""
+-        return parts
+ 
+ 
+ @dataclass
+--- a/core/api/vision_handler.py
++++ b/core/api/vision_handler.py
+@@ -395,7 +395,7 @@
+         }
+         if guide:
+             kwargs = guide.vision_context(getattr(self, "websocket_server", None), device_id, kwargs)
+-        buffer = SentenceBuffer()
++        buffer = SentenceBuffer(language=language)
+         if vision_request is not None and getattr(vllm, "supports_streaming", False) is True:
+             fragments = []
+             async for text in vllm.response_stream(
