@@ -90,8 +90,7 @@ class GuideAnnouncement:
         self.language = response_language(conn)
         self.location = "，".join(part.strip() for part in (beacon.floor, beacon.area, beacon.location_description)
                                  if part.strip())
-        suffix = {"en": "en", "ja": "ja", "ko": "ko"}.get(self.language, "zh_cn")
-        template = getattr(settings, f"location_template_{suffix}")
+        template = settings.location_template(self.language)
         self.prefix = template.format(location=self.location)
         self.filter = OpeningFilter(self.location, self.prefix)
         self.sentence_id = None

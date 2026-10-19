@@ -1,0 +1,6 @@
+# 信标固定位置开场，按绑定语言选择。
+# 每项必须且只能包含一个 {location} 占位符。
+zh-CN: 您现在位于{location}。
+en: You are now at {location}.
+ja: 現在、{location}にいます。
+ko: 현재 {location}에 계십니다.

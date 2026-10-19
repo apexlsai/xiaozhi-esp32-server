@@ -44,10 +44,7 @@ docker compose --env-file .env --profile mqtt up -d --build xiaozhi-esp32-server
 | `KSZ_GUIDE_POSITION_TTL_MS` | `15000` | 最后一次有效信标确认后的可信位置有效期，必须大于 `0` |
 | `KSZ_GUIDE_PENDING_TTL_MS` | `15000` | 信标变化后待播任务的有效期，必须大于 `0` |
 | `KSZ_GUIDE_USER_QUIET_MS` | `15000` | `listen stop/detect` 后的额外静默时间，`0` 关闭额外静默 |
-| `KSZ_GUIDE_LOCATION_TEMPLATE_ZH_CN` | `您现在位于{location}。` | 中文及中文方言的位置开场 |
-| `KSZ_GUIDE_LOCATION_TEMPLATE_EN` | `You are now at {location}.` | 英语位置开场 |
-| `KSZ_GUIDE_LOCATION_TEMPLATE_JA` | `現在、{location}にいます。` | 日语位置开场 |
-| `KSZ_GUIDE_LOCATION_TEMPLATE_KO` | `현재 {location}에 계십니다.` | 韩语位置开场 |
+| 位置开场模板 | `server/ksz_guide/guide-templates.yaml` | 四语固定开场，环境变量 `KSZ_GUIDE_LOCATION_TEMPLATE_*` 可临时覆盖 |
 
 自动讲解需同时满足总开关、设备策略 `auto_announce` 和资产授权。环境变量不能放开禁用设备或越过场馆范围；用户正在录音、对话或使用视觉时仍优先处理用户交互。全局自动讲解开关和冷却时间会同步到新协议的有效策略及校验摘要，不改写 management 原始策略。
 
@@ -57,11 +54,11 @@ RSSI 门槛、扫描窗口、稳定判定、蓝牙发射功率及固件自身冷
 
 自动讲解先由服务端填充并播报固定位置句，再接模型生成的简短介绍。例如：“您现在位于3F，当代萍乡规划展，出口。”开场不经过模型改写，也不等待模型首字。`{location}` 由已校验信标的楼层、区域和位置说明组成，空字段跳过；地点名称保留登记值，语言按本轮绑定语言选择。
 
-模板必须且只能包含一个 `{location}`，不支持其他字段、格式说明或转换符；空值采用默认模板。模型仅生成后续介绍，导览专用流式过滤会移除开头的问候、自我介绍和重复位置句；正文中的正常引用不做全局替换。普通对话的人设和回复方式保持原样。
+模板内置在 `server/ksz_guide/guide-templates.yaml`，每项必须且只能包含一个 `{location}`，不支持其他字段、格式说明或转换符；环境变量可临时覆盖，空值回退到 YAML 中的内置模板。模型仅生成后续介绍，导览专用流式过滤会移除开头的问候、自我介绍和重复位置句；正文中的正常引用不做全局替换。普通对话的人设和回复方式保持原样。
 
 固定开场与正文共用本轮字幕、音频和取消状态；切换信标或用户打断时一起取消，迟到内容不会恢复播放。模型失败、没有正文或只返回被过滤的开场时，结束当前播报，不补造介绍。最终记录与实际提交到 TTS 的文本一致。
 
-修改 `.env` 后，在 `KSZ/` 执行以下命令重建并更新 server；仅修改已有镜像支持的环境变量时可去掉 `--build`，不能只执行 `restart`：
+修改 `.env` 或 `server/ksz_guide/guide-templates.yaml` 后，在 `KSZ/` 执行以下命令重建并更新 server；仅修改已有镜像支持的环境变量时可去掉 `--build`，不能只执行 `restart`：
 
 ```bash
 docker compose --env-file .env -f compose.yml up -d --build --no-deps xiaozhi-esp32-server

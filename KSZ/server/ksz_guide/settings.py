@@ -1,6 +1,19 @@
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from string import Formatter
+
+from ruamel.yaml import YAML
+
+
+_DEFAULT_TEMPLATES_PATH = Path(__file__).with_name("guide-templates.yaml")
+_YAML = YAML(typ="safe")
+
+
+def _load_templates(path=None):
+    with open(path or _DEFAULT_TEMPLATES_PATH, encoding="utf-8") as file:
+        data = _YAML.load(file) or {}
+    return {str(key).strip(): str(value).strip() for key, value in data.items()}
 
 
 def _boolean(env, name, default):
@@ -43,15 +56,26 @@ class GuideSettings:
     position_ttl_ms: int = 15000
     pending_ttl_ms: int = 15000
     user_quiet_ms: int = 15000
-    location_template_zh_cn: str = "您现在位于{location}。"
-    location_template_en: str = "You are now at {location}."
-    location_template_ja: str = "現在、{location}にいます。"
-    location_template_ko: str = "현재 {location}에 계십니다."
+    location_templates: dict = None
+
+    def __post_init__(self):
+        if self.location_templates is None:
+            object.__setattr__(self, "location_templates", _load_templates())
+
+    def location_template(self, language):
+        family = language.split("-", 1)[0].lower()
+        return self.location_templates.get(language) or self.location_templates.get(family) or self.location_templates["zh-CN"]
 
     @classmethod
     def from_env(cls, env=None):
         env = os.environ if env is None else env
-        defaults = cls()
+        templates = _load_templates()
+        for key, value in list(templates.items()):
+            env_name = f"KSZ_GUIDE_LOCATION_TEMPLATE_{key.upper().replace('-', '_')}"
+            override = _location_template(env, env_name, value)
+            if override != value:
+                templates[key] = override
+        defaults = cls(location_templates=templates)
         return cls(
             auto_announce_enabled=_boolean(env, "KSZ_GUIDE_AUTO_ANNOUNCE_ENABLED", defaults.auto_announce_enabled),
             announce_on_first_beacon=_boolean(env, "KSZ_GUIDE_ANNOUNCE_ON_FIRST_BEACON", defaults.announce_on_first_beacon),
@@ -60,8 +84,5 @@ class GuideSettings:
             position_ttl_ms=_milliseconds(env, "KSZ_GUIDE_POSITION_TTL_MS", defaults.position_ttl_ms, 1),
             pending_ttl_ms=_milliseconds(env, "KSZ_GUIDE_PENDING_TTL_MS", defaults.pending_ttl_ms, 1),
             user_quiet_ms=_milliseconds(env, "KSZ_GUIDE_USER_QUIET_MS", defaults.user_quiet_ms),
-            location_template_zh_cn=_location_template(env, "KSZ_GUIDE_LOCATION_TEMPLATE_ZH_CN", defaults.location_template_zh_cn),
-            location_template_en=_location_template(env, "KSZ_GUIDE_LOCATION_TEMPLATE_EN", defaults.location_template_en),
-            location_template_ja=_location_template(env, "KSZ_GUIDE_LOCATION_TEMPLATE_JA", defaults.location_template_ja),
-            location_template_ko=_location_template(env, "KSZ_GUIDE_LOCATION_TEMPLATE_KO", defaults.location_template_ko),
+            location_templates=templates,
         )

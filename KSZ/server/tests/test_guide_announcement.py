@@ -103,6 +103,21 @@ def test_invalid_location_template_fails_at_startup(template):
         GuideSettings.from_env({"KSZ_GUIDE_LOCATION_TEMPLATE_ZH_CN": template})
 
 
+def test_builtin_templates_are_used_when_no_env_override():
+    settings = GuideSettings.from_env({})
+    assert settings.location_template("zh-CN") == "您现在位于{location}。"
+    assert settings.location_template("en") == "You are now at {location}."
+    assert settings.location_template("ja") == "現在、{location}にいます。"
+    assert settings.location_template("ko") == "현재 {location}에 계십니다."
+    assert settings.location_template("zh-CN-yue") == "您现在位于{location}。"
+
+
+def test_env_template_overrides_builtin_yaml():
+    settings = GuideSettings.from_env({"KSZ_GUIDE_LOCATION_TEMPLATE_ZH_CN": "当前位置：{location}。"})
+    assert settings.location_template("zh-CN") == "当前位置：{location}。"
+    assert settings.location_template("en") == "You are now at {location}."
+
+
 @pytest.mark.parametrize("language,expected", [
     ("zh-CN", "您现在位于1F，展区1，展柜旁。"),
     ("en", "You are now at 1F，展区1，展柜旁."),
@@ -204,7 +219,7 @@ def test_custom_template_and_empty_fields_are_rendered_once(conn):
     settings = GuideSettings.from_env({"KSZ_GUIDE_LOCATION_TEMPLATE_ZH_CN": "当前位置：{location}。"})
     narrate(conn, settings=settings, item=beacon(floor="", area="展区", location_description=" "))
     assert spoken(conn) == "当前位置：展区。"
-    assert GuideSettings.from_env({"KSZ_GUIDE_LOCATION_TEMPLATE_ZH_CN": ""}) == GuideSettings()
+    assert GuideSettings.from_env({"KSZ_GUIDE_LOCATION_TEMPLATE_ZH_CN": ""}).location_template("zh-CN") == "您现在位于{location}。"
 
 
 def test_following_user_chat_keeps_greetings_and_its_original_prompt(conn):
