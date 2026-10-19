@@ -19,7 +19,7 @@ diff --git a/main/manager-web/src/views/AgentTemplateManagement.vue b/main/manag
              show-word-limit
 -            maxlength="2000"
 +            maxlength="10000"
-             :rows="16"
+             :autosize="{ minRows: 16 }"
            />
          </el-form-item>
 diff --git a/main/manager-web/src/views/TemplateQuickConfig.vue b/main/manager-web/src/views/TemplateQuickConfig.vue

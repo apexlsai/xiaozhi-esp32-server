@@ -44,3 +44,30 @@ select:-webkit-autofill:focus {
     border-radius: 3px;
   }
 }
+
+// 大弹框宽度档位（表格档使用）
+:root {
+  --dialog-table-max: 1280px;
+}
+
+/* 全局弹框遮罩 */
+.v-modal {
+  background: rgba(15, 23, 42, 0.55) !important;
+  backdrop-filter: blur(2px);
+}
+
+/* 全局弹框 wrapper 居中 */
+.el-dialog__wrapper.custom-dialog {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+}
+
+/* 首页删除智能体确认弹框 wrapper 居中（非 CustomDialog，需单独命中） */
+.el-dialog__wrapper.delete-agent-dialog {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+}

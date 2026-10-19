@@ -3,7 +3,7 @@ import RequestService from '../httpRequest';
 
 export default {
     // 已绑设备
-    getAgentBindDevices(agentId, callback) {
+    getAgentBindDevices(agentId, callback, failCallback) {
         RequestService.sendRequest()
             .url(`${getServiceUrl()}/device/bind/${agentId}`)
             .method('GET')
@@ -11,15 +11,21 @@ export default {
                 RequestService.clearRequestTime();
                 callback(res);
             })
+            .fail((err) => {
+                RequestService.clearRequestTime();
+                if (failCallback) {
+                    failCallback(err);
+                }
+            })
             .networkFail((err) => {
                 console.error('获取设备列表失败:', err);
                 RequestService.reAjaxFun(() => {
-                    this.getAgentBindDevices(agentId, callback);
+                    this.getAgentBindDevices(agentId, callback, failCallback);
                 });
             }).send();
     },
     // 解绑设备
-    unbindDevice(device_id, callback) {
+    unbindDevice(device_id, callback, failCallback) {
         RequestService.sendRequest()
             .url(`${getServiceUrl()}/device/unbind`)
             .method('POST')
@@ -28,15 +34,21 @@ export default {
                 RequestService.clearRequestTime();
                 callback(res);
             })
+            .fail((err) => {
+                RequestService.clearRequestTime();
+                if (failCallback) {
+                    failCallback(err);
+                }
+            })
             .networkFail((err) => {
                 console.error('解绑设备失败:', err);
                 RequestService.reAjaxFun(() => {
-                    this.unbindDevice(device_id, callback);
+                    this.unbindDevice(device_id, callback, failCallback);
                 });
             }).send();
     },
     // 绑定设备
-    bindDevice(agentId, deviceCode, callback) {
+    bindDevice(agentId, deviceCode, callback, failCallback) {
         RequestService.sendRequest()
             .url(`${getServiceUrl()}/device/bind/${agentId}/${deviceCode}`)
             .method('POST')
@@ -44,14 +56,20 @@ export default {
                 RequestService.clearRequestTime();
                 callback(res);
             })
+            .fail((err) => {
+                RequestService.clearRequestTime();
+                if (failCallback) {
+                    failCallback(err);
+                }
+            })
             .networkFail((err) => {
                 console.error('绑定设备失败:', err);
                 RequestService.reAjaxFun(() => {
-                    this.bindDevice(agentId, deviceCode, callback);
+                    this.bindDevice(agentId, deviceCode, callback, failCallback);
                 });
             }).send();
     },
-    updateDeviceInfo(id, payload, callback) {
+    updateDeviceInfo(id, payload, callback, failCallback) {
         RequestService.sendRequest()
             .url(`${getServiceUrl()}/device/update/${id}`)
             .method('PUT')
@@ -60,16 +78,22 @@ export default {
                 RequestService.clearRequestTime()
                 callback(res)
             })
+            .fail((err) => {
+                RequestService.clearRequestTime();
+                if (failCallback) {
+                    failCallback(err);
+                }
+            })
             .networkFail((err) => {
                 console.error('更新OTA状态失败:', err)
                 this.$message.error(err.msg || '更新OTA状态失败')
                 RequestService.reAjaxFun(() => {
-                    this.updateDeviceInfo(id, payload, callback)
+                    this.updateDeviceInfo(id, payload, callback, failCallback)
                 })
             }).send()
     },
     // 手动添加设备
-    manualAddDevice(params, callback) {
+    manualAddDevice(params, callback, failCallback) {
         RequestService.sendRequest()
             .url(`${getServiceUrl()}/device/manual-add`)
             .method('POST')
@@ -78,15 +102,21 @@ export default {
                 RequestService.clearRequestTime();
                 callback(res);
             })
+            .fail((err) => {
+                RequestService.clearRequestTime();
+                if (failCallback) {
+                    failCallback(err);
+                }
+            })
             .networkFail((err) => {
                 console.error('手动添加设备失败:', err);
                 RequestService.reAjaxFun(() => {
-                    this.manualAddDevice(params, callback);
+                    this.manualAddDevice(params, callback, failCallback);
                 });
             }).send();
     },
     // 获取设备状态
-    getDeviceStatus(agentId, callback) {
+    getDeviceStatus(agentId, callback, failCallback) {
         RequestService.sendRequest()
             .url(`${getServiceUrl()}/device/bind/${agentId}`)
             .method('POST')
@@ -95,13 +125,16 @@ export default {
                 RequestService.clearRequestTime();
                 callback(res);
             })
-            .fail((res) => {
-                callback(res);
+            .fail((err) => {
+                RequestService.clearRequestTime();
+                if (failCallback) {
+                    failCallback(err);
+                }
             })
             .networkFail((err) => {
                 console.error('获取设备状态失败:', err);
                 RequestService.reAjaxFun(() => {
-                    this.getDeviceStatus(agentId, callback);
+                    this.getDeviceStatus(agentId, callback, failCallback);
                 });
             }).send();
     },
