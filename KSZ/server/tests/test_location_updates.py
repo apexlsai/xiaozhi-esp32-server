@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from ksz_guide.integration import on_hello, on_hello_complete
+from ksz_guide.settings import GuideSettings
 from test_guide import DEVICE, Harness, beacon
 
 
@@ -189,7 +190,7 @@ async def test_old_devices_receive_no_location_events(features):
 
 @pytest.mark.asyncio
 async def test_slow_or_failed_location_delivery_does_not_block_observation_or_announce():
-    h = Harness()
+    h = Harness(settings=GuideSettings(announce_on_first_beacon=False))
     release = asyncio.Event()
     try:
         conn = await subscribe(h)

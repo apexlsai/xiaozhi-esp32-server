@@ -50,7 +50,7 @@ def _location_template(env, name, default):
 @dataclass(frozen=True)
 class GuideSettings:
     auto_announce_enabled: bool = True
-    announce_on_first_beacon: bool = False
+    announce_on_first_beacon: bool = True
     interrupt_on_beacon_change: bool = True
     min_announce_interval_ms: int = 15000
     position_ttl_ms: int = 15000

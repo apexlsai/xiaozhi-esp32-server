@@ -62,12 +62,16 @@ async def test_environment_configures_runtime_and_effective_device_policy(monkey
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("transport", ["legacy", "v1"])
+@pytest.mark.parametrize("first_beacon", [None, "0", "1"])
 @pytest.mark.parametrize("global_enabled,device_enabled", [(True, True), (False, True), (True, False)])
-async def test_first_beacon_respects_global_and_device_switches(transport, global_enabled, device_enabled):
-    h = Harness(settings=GuideSettings(auto_announce_enabled=global_enabled, announce_on_first_beacon=True),
-                auto_announce=device_enabled)
+async def test_first_beacon_respects_global_and_device_switches(transport, first_beacon, global_enabled, device_enabled):
+    env = {"KSZ_GUIDE_AUTO_ANNOUNCE_ENABLED": str(int(global_enabled))}
+    if first_beacon is not None:
+        env["KSZ_GUIDE_ANNOUNCE_ON_FIRST_BEACON"] = first_beacon
+    h = Harness(settings=GuideSettings.from_env(env), auto_announce=device_enabled)
     conn = h.conn()
     enabled = global_enabled and device_enabled
+    first_enabled = enabled and first_beacon != "0"
     if transport == "v1":
         await h.sync()
 
@@ -83,19 +87,20 @@ async def test_first_beacon_respects_global_and_device_switches(transport, globa
                              session_id=conn.session_id, udp_ready=True)
 
     await observe(1)
-    assert h.announce.await_count == int(enabled)
+    assert h.announce.await_count == int(first_enabled)
     await observe(1)
-    assert h.announce.await_count == int(enabled)
+    assert h.announce.await_count == int(first_enabled)
     h.clock.now += 15
     await observe(2)
-    assert [call.args[1] for call in h.announce.await_args_list] == ([beacon(1), beacon(2)] if enabled else [])
+    expected = ([beacon(1)] if first_enabled else []) + ([beacon(2)] if enabled else [])
+    assert [call.args[1] for call in h.announce.await_args_list] == expected
     assert h.runtime.context(DEVICE)["beacon_mac"] == beacon(2).mac
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("interval_ms", [0, 5000])
 async def test_configured_cooldown_controls_active_session(interval_ms):
-    h = Harness(settings=GuideSettings(min_announce_interval_ms=interval_ms),
+    h = Harness(settings=GuideSettings(announce_on_first_beacon=False, min_announce_interval_ms=interval_ms),
                 items=[beacon(1), beacon(2), beacon(3)])
     conn = h.conn()
     for number in (1, 2):
@@ -112,7 +117,7 @@ async def test_configured_cooldown_controls_active_session(interval_ms):
 
 @pytest.mark.asyncio
 async def test_configured_cooldown_also_controls_idle_wakeup():
-    h = Harness(settings=GuideSettings(min_announce_interval_ms=5000),
+    h = Harness(settings=GuideSettings(announce_on_first_beacon=False, min_announce_interval_ms=5000),
                 items=[beacon(1), beacon(2), beacon(3)])
     await h.sync()
     conn = h.conn()
@@ -132,7 +137,7 @@ async def test_configured_cooldown_also_controls_idle_wakeup():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("expires", ["position", "pending"])
 async def test_configured_expiry_prevents_stale_wakeup(expires):
-    settings = GuideSettings(position_ttl_ms=3000 if expires == "position" else 30000,
+    settings = GuideSettings(announce_on_first_beacon=False, position_ttl_ms=3000 if expires == "position" else 30000,
                              pending_ttl_ms=3000 if expires == "pending" else 30000)
     h = Harness(settings=settings)
     await h.sync()
@@ -155,7 +160,7 @@ async def test_configured_expiry_prevents_stale_wakeup(expires):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("quiet_ms", [0, 2000])
 async def test_configured_user_quiet_period_defers_announcement(quiet_ms):
-    h = Harness(settings=GuideSettings(user_quiet_ms=quiet_ms))
+    h = Harness(settings=GuideSettings(announce_on_first_beacon=False, user_quiet_ms=quiet_ms))
     conn = h.conn()
     await h.runtime.legacy(conn, {"beacon_id": beacon(1).mac})
     h.runtime.activity(conn, {"type": "listen", "state": "stop"})
@@ -169,7 +174,7 @@ async def test_configured_user_quiet_period_defers_announcement(quiet_ms):
 
 @pytest.mark.asyncio
 async def test_disabled_interruption_waits_for_current_guide(monkeypatch):
-    h = Harness(settings=GuideSettings(interrupt_on_beacon_change=False, min_announce_interval_ms=0),
+    h = Harness(settings=GuideSettings(announce_on_first_beacon=False, interrupt_on_beacon_change=False, min_announce_interval_ms=0),
                 items=[beacon(1), beacon(2), beacon(3)])
     conn = h.conn()
     finish = asyncio.Event()

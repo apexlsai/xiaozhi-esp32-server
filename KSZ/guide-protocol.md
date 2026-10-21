@@ -109,7 +109,7 @@ UTF8(manifest.manifest_json + "\n" + chunk_json[0] + "\n" + ... + chunk_json[N-1
 
 每5秒发送 `action=heartbeat`，其他信封字段一致，并携带当前仍稳定观测到的 `beacon`。仅设备在线但未观测到信标时，不得补报历史信标。确认丢失发送 `action=lost`（不带beacon）；服务端默认15秒未获得有效位置确认也会失位，可通过 `KSZ_GUIDE_POSITION_TTL_MS` 调整。
 
-默认首次有效位置只建立基准，`KSZ_GUIDE_ANNOUNCE_ON_FIRST_BEACON=1` 时首次也触发讲解；后续有效信标 MAC 变化且自动讲解开启时触发，即使两枚信标属于同一导览区域。同一信标的重复上报、位置心跳和重连不重复播报；切换到其他信标后再返回原信标属于新的变化。位置变化不会修改设备固定归属。
+默认首次有效定位即触发讲解，`KSZ_GUIDE_ANNOUNCE_ON_FIRST_BEACON=0` 时首次只建立基准；后续有效信标 MAC 变化且自动讲解开启时触发，即使两枚信标属于同一导览区域。同一信标的重复上报、位置心跳和同一 `boot_id` 下的语音重连不重复播报；切换到其他信标后再返回原信标属于新的变化。服务端重启、设备更换 `boot_id` 或策略版本重置会重新建立基准，首个有效信标可再次触发。位置变化不会修改设备固定归属。
 
 新协议策略中的 `auto_announce` 同时受设备授权与 `KSZ_GUIDE_AUTO_ANNOUNCE_ENABLED` 约束；`filter.min_announce_interval_ms` 为服务端 `KSZ_GUIDE_MIN_ANNOUNCE_INTERVAL_MS` 的有效值，参与策略摘要。其他服务器端讲解规则见[配置说明](guide-management.md#信标讲解规则)，RSSI 与扫描判定仍按原策略执行。
 
@@ -213,4 +213,4 @@ UTF8(manifest.manifest_json + "\n" + chunk_json[0] + "\n" + ... + chunk_json[N-1
 - 边界RSSI抖动不反复上报；丢失信标后停止位置心跳并发lost。
 - MQTT待机可同步策略和上报位置，只有授权唤醒任务才建立语音会话。
 - 重复hello不生成双会话；UDP就绪前不开始播音；降级后旧会话不得重复播报。
-- 默认首次只建基准，开启首次播报时也讲解；同信标不重播，不同信标即使属于同一区域也触发讲解，仅在策略有效且自动讲解开启时播报。
+- 默认首次有效定位即讲解，关闭首次播报时只建基准；同信标不重播，不同信标即使属于同一区域也触发讲解，仅在策略有效且自动讲解开启时播报。

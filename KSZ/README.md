@@ -706,7 +706,9 @@ HTTP 层恒为 `200`，业务成败看 JSON 的 `code`（`0` 成功，非 `0` �
 
 ### 信标位置语音导览
 
-设备应通过 WebSocket 上报 `device_event` 的 `beacon_change`。信标以 MAC 地址作为 `beacon_mac.beacon_id` 传递，server 会使用该 MAC 查询固定位置接口：
+启用 management 联动时，首次有效定位默认讲解，同信标重复上报不重播；设 `KSZ_GUIDE_ANNOUNCE_ON_FIRST_BEACON=0` 可恢复首次只建立基准。联动模式的校验、有效期和新固件协议见[场馆与设备联动](guide-management.md)及[导览控制协议](guide-protocol.md)。
+
+设备可通过 WebSocket 上报 `device_event` 的 `beacon_change`。信标以 MAC 地址作为 `beacon_mac.beacon_id` 传递；未启用 management 联动时，旧逻辑使用该 MAC 查询固定位置接口：
 
 ```json
 {
@@ -724,7 +726,7 @@ HTTP 层恒为 `200`，业务成败看 JSON 的 `code`（`0` 成功，非 `0` �
 - `beacon_mac.rssi`：可选，随事件持久化，当前不参与服务端导览触发判断。
 - `timestamp`：可选事件时间戳，用于事件记录。
 
-首个有效 MAC 仅建立当前位置上下文；同一设备后续上报不同 MAC 时，才会触发当前位置和附近展品的自动语音导览。原有 `payload.beacon_id` 报文仍兼容，但新接入设备应统一使用 `beacon_mac.beacon_id`。
+未启用 management 联动的旧逻辑中，首个有效 MAC 仅建立当前位置上下文；同一设备后续上报不同 MAC 时，才会触发当前位置和附近展品的自动语音导览。原有 `payload.beacon_id` 报文仍兼容，但新接入设备应统一使用 `beacon_mac.beacon_id`。
 
 位置查询接口：
 
@@ -743,7 +745,7 @@ GET http://127.0.0.1:14000/api/v1/beacons/by-beacon-id/{beaconId}
 }
 ```
 
-KSZ Compose 使用 Host 网络，故 `127.0.0.1:14000` 指向宿主机的位置服务。首个信标仅建立当前位置；后续实际变更会自动发起“当前位置与附近展品”的对话，并沿用现有 TTS 输出。用户随后询问当前位置或附近展品时，会使用当前信标位置上下文。
+KSZ Compose 使用 Host 网络，故 `127.0.0.1:14000` 指向宿主机的位置服务。上述旧逻辑中首个信标仅建立当前位置；后续实际变更会自动发起“当前位置与附近展品”的对话，并沿用现有 TTS 输出。用户随后询问当前位置或附近展品时，会使用当前信标位置上下文。
 
 位置服务在 2 秒内未响应、返回 404 或响应无效时，设备属性仍会持久化；自动播报仅提示已进入新区域，不会编造具体位置或展品。每个连接对成功结果缓存 60 秒，失败结果 5 秒后允许重试。
 

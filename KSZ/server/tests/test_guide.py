@@ -18,6 +18,7 @@ from ksz_guide.integration import (
 )
 from ksz_guide.models import Beacon, GuideError, Policy, beacon_identity
 from ksz_guide.runtime import GuideRuntime
+from ksz_guide.settings import GuideSettings
 
 
 DEVICE = "AA:BB:CC:DD:EE:FF"
@@ -143,11 +144,10 @@ async def test_unknown_cross_venue_and_disabled_never_mutate_or_announce():
 
 
 @pytest.mark.asyncio
-async def test_idle_transition_waits_for_udp_and_tts_readiness():
+async def test_idle_first_beacon_waits_for_udp_and_tts_readiness():
     h = Harness()
     await h.sync()
-    assert not any(item["action"] == "request_hello" for item in await h.observe(1))
-    messages = await h.observe(2)
+    messages = await h.observe(1)
     wake = next(item for item in messages if item["action"] == "request_hello")
     h.announce.assert_not_awaited()
     conn = h.conn()
@@ -161,7 +161,7 @@ async def test_idle_transition_waits_for_udp_and_tts_readiness():
     h.announce.assert_not_awaited()
     conn.tts = object()
     await h.runtime.tick()
-    h.announce.assert_awaited_once_with(conn, beacon(2))
+    h.announce.assert_awaited_once_with(conn, beacon(1))
     await h.runtime.tick()
     h.announce.assert_awaited_once()
 
@@ -170,8 +170,7 @@ async def test_idle_transition_waits_for_udp_and_tts_readiness():
 async def test_fallback_owner_and_late_disconnect_do_not_duplicate_announcement():
     h = Harness()
     await h.sync()
-    await h.observe(1)
-    wake = next(item for item in await h.observe(2) if item["action"] == "request_hello")
+    wake = next(item for item in await h.observe(1) if item["action"] == "request_hello")
     first = h.conn()
     second = h.conn("session2")
     metadata = {"activation_id": wake["activation_id"], "boot_id": "boot1", "connection_id": "connection1"}
@@ -186,7 +185,7 @@ async def test_fallback_owner_and_late_disconnect_do_not_duplicate_announcement(
            "session_id": "session2", "session_attempt": 2}
     await h.runtime.process(DEVICE, "ws:session2", msg, transport="websocket", conn=second)
     await h.runtime.process(DEVICE, "ws:session2", msg, transport="websocket", conn=second)
-    h.announce.assert_awaited_once_with(second, beacon(2))
+    h.announce.assert_awaited_once_with(second, beacon(1))
 
 
 @pytest.mark.asyncio
@@ -194,8 +193,7 @@ async def test_fallback_owner_and_late_disconnect_do_not_duplicate_announcement(
 async def test_stale_pending_activation_cannot_restore_position(failure):
     h = Harness()
     await h.sync()
-    await h.observe(1)
-    wake = next(item for item in await h.observe(2) if item["action"] == "request_hello")
+    wake = next(item for item in await h.observe(1) if item["action"] == "request_hello")
     if failure == "lost":
         await h.send("lost")
     elif failure == "expired":
@@ -212,21 +210,31 @@ async def test_stale_pending_activation_cannot_restore_position(failure):
 async def test_same_beacon_heartbeat_and_reconnect_do_not_count_as_movement():
     h = Harness()
     await h.sync()
-    await h.observe(1)
+    wake = next(item for item in await h.observe(1) if item["action"] == "request_hello")
+    conn = h.conn()
+    metadata = {"activation_id": wake["activation_id"], "session_attempt": 1,
+                "boot_id": "boot1", "connection_id": "connection1"}
+    assert await h.runtime.bind(conn, metadata)
+    await h.send("ready", activation_id=wake["activation_id"], session_attempt=1,
+                 session_id=conn.session_id, udp_ready=True)
+    h.announce.assert_awaited_once_with(conn, beacon(1))
+    assert await h.runtime.bind(conn, {**metadata, "activation_id": None})
+    await h.runtime.tick()
+    h.announce.assert_awaited_once()
     for _ in range(4):
         h.clock.now += 5
         messages = await h.send("heartbeat", beacon={"mac": beacon(1).mac})
         assert all(item["action"] != "request_hello" for item in messages)
     await h.observe(1)
     assert h.runtime.state(DEVICE).pending is None
-    conn = h.conn()
-    await h.runtime.bind(conn)
     h.runtime.unbind(conn)
-    await h.runtime.bind(h.conn("session2"))
+    reconnected = h.conn("session2")
+    assert await h.runtime.bind(reconnected, {**metadata, "activation_id": None, "session_attempt": 2})
+    await h.send("ready", session_attempt=2, session_id=reconnected.session_id, udp_ready=True)
     await h.observe(1)
     await h.runtime.tick()
     assert h.runtime.state(DEVICE).pending is None
-    h.announce.assert_not_awaited()
+    h.announce.assert_awaited_once_with(conn, beacon(1))
 
 
 @pytest.mark.asyncio
@@ -235,7 +243,7 @@ async def test_same_beacon_heartbeat_and_reconnect_do_not_count_as_movement():
 async def test_different_beacons_in_same_area_announce_each_transition(transport, area_id):
     first = beacon(1, area_id=area_id)
     second = beacon(2, area_id=area_id, area=first.area)
-    h = Harness(items=[first, second])
+    h = Harness(settings=GuideSettings(announce_on_first_beacon=False), items=[first, second])
     if transport != "legacy":
         await h.sync()
     conn = h.conn()
@@ -313,7 +321,7 @@ async def test_active_conversation_is_not_interrupted(busy):
 @pytest.mark.parametrize("same_area", [False, True])
 async def test_new_beacon_preempts_active_guide_announcement(monkeypatch, same_area):
     items = [beacon(number, area_id="area1") if same_area else beacon(number) for number in (1, 2, 3)]
-    h = Harness(items=items)
+    h = Harness(settings=GuideSettings(announce_on_first_beacon=False), items=items)
     await h.sync()
     conn = h.conn()
     conn.sentence_id = "guide-turn"
