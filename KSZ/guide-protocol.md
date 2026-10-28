@@ -153,6 +153,8 @@ UTF8(manifest.manifest_json + "\n" + chunk_json[0] + "\n" + ... + chunk_json[N-1
 
 ## 待机唤醒与播放就绪
 
+固件也可在空闲时主动建链，完成本节 hello/UDP/ready 握手后发送 `device_event/idle_greeting`，由后端生成角色问候；请求、回执及固件计时规则见[主动招呼接口](idle-greeting.md)。
+
 服务端决定需要待机播报时发送：
 
 ```json

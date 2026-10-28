@@ -21,6 +21,10 @@ from .feedback import (
     finish_camera_feedback,
 )
 from .models import GuideError, mac_address
+from .idle_greeting import (
+    cancel_idle_greeting, close_idle_greeting, greeting_session,
+    handle_idle_greeting, interrupt_idle_greeting,
+)
 from .prompt import prepare_system_prompt, prompt_template_path, response_language
 from .role_patch import handle_profile_change, handle_role_rebind, on_hello as role_on_hello
 from .runtime import GuideRuntime
@@ -133,18 +137,21 @@ async def on_hello(conn, message):
 
 
 def on_connect(conn):
+    greeting_session(conn)
     runtime = runtime_for(conn, guide_only=False)
     if runtime:
         runtime.connection_opened(conn)
 
 
 def on_hello_complete(conn):
+    greeting_session(conn).ready = True
     runtime = runtime_for(conn)
     if runtime:
         runtime.location_updates.start(conn)
 
 
 def on_disconnect(conn):
+    close_idle_greeting(conn)
     runtime = runtime_for(conn, guide_only=False)
     if runtime:
         runtime.connection_closed(conn)
@@ -153,6 +160,7 @@ def on_disconnect(conn):
 
 
 async def handle_control_message(conn, message):
+    await interrupt_idle_greeting(conn, message)
     runtime = runtime_for(conn)
     if runtime is None:
         return False
@@ -175,6 +183,8 @@ async def handle_control_message(conn, message):
 
 
 async def handle_legacy_event(conn, message):
+    if await handle_idle_greeting(conn, message, runtime_for(conn)):
+        return True
     if await handle_profile_change(conn, message):
         return True
     if await handle_role_rebind(conn, message):
@@ -232,6 +242,7 @@ def extend_vision_payload(payload, kwargs):
 def track_chat(function):
     @functools.wraps(function)
     def tracked(conn, *args, **kwargs):
+        cancel_idle_greeting(conn)
         if runtime_for(conn) is None:
             return function(conn, *args, **kwargs)
         with chat_lock:
