@@ -25,6 +25,10 @@ COPY KSZ/patches/qwen-fun-asr.patch /tmp/qwen-fun-asr.patch
 RUN git apply --check /tmp/qwen-fun-asr.patch \
     && git apply /tmp/qwen-fun-asr.patch
 
+COPY KSZ/patches/vision-context.patch /tmp/vision-context.patch
+RUN git apply --check /tmp/vision-context.patch \
+    && git apply /tmp/vision-context.patch
+
 FROM ghcr.io/xinnan-tech/xiaozhi-esp32-server:server-base
 
 COPY --from=patched-source /src .

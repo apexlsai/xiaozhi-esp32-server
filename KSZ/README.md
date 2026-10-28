@@ -278,6 +278,8 @@ Museum Guide Agent 接入使用智控台现有的 OpenAI VLLM，无需新增 Pro
 
 KSZ 保留上游完整返回协议：MCP `initialize` 继续下发 `vision.url` 与 `vision.token`，官方固件通过 `file` 字段上传，服务端返回 `success`、`action` 与 `response`；同时兼容旧客户端的 `image` 字段。旧端无需修改即可继续使用完整返回，启用逐句播报需要下述可选适配。
 
+KSZ 向 Agent 的语音与拍照请求统一传递 `session_id`，拍照增加 `image_id`、`image_seq` 和 `captured_at`，成功后供后续追问引用；视觉请求携带最近文字上下文。默认图片引用有效期 180 秒，换图、失败和重连受隔离保护。Agent 需配套实现共享图片缓存、指代解析与身份核验；字段、失效语义、开关和联调要求见[图片会话关联](vision-context.md)。
+
 兼容模式的手动拍照由 KSZ 向原在线连接直推播报，顺序为 `tts:start → sentence_start → 音频帧 → tts:stop`。服务端先完成启动通知并设置播放状态，再提交语音；识别或启动期间换轮、打断、断线，或者出现待处理 MCP 调用时不追加旧结果。MCP 拍照仍沿用已有工具播报链路，不重复直推。此修复无需修改固件上传接口，也不要求启用视觉流式能力。
 
 若“测试网页有声、固件按键无声”，先核对固件收到音频前是否有 `tts:start`；旧版 KSZ 手动直推缺少此通知，应重建并更新 server 后验证。HTTP `success=true` 仅说明识别成功，不保证音频已经送达设备；可使用测试器的严格播放模式检查启停顺序，再进行实机联调。

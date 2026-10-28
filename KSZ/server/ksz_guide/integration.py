@@ -26,6 +26,11 @@ from .role_patch import handle_profile_change, handle_role_rebind, on_hello as r
 from .runtime import GuideRuntime
 from .settings import GuideSettings
 from .vision import vision_message, vision_read_timeout
+from .visual_context import (
+    begin_visual_request, close_visual_context, finish_visual_request,
+    ensure_visual_request, prepare_visual_request, visual_chat_context,
+    visual_request_payload, visual_state,
+)
 from .tts import tts_complete_sentence
 
 
@@ -133,6 +138,7 @@ async def on_hello(conn, message):
 
 
 def on_connect(conn):
+    visual_state(conn)
     runtime = runtime_for(conn, guide_only=False)
     if runtime:
         runtime.connection_opened(conn)
@@ -145,6 +151,7 @@ def on_hello_complete(conn):
 
 
 def on_disconnect(conn):
+    close_visual_context(conn)
     runtime = runtime_for(conn, guide_only=False)
     if runtime:
         runtime.connection_closed(conn)
@@ -203,6 +210,7 @@ def refresh_location(conn):
 
 
 def filter_context(conn, values):
+    values = visual_chat_context(conn, values)
     runtime = runtime_for(conn)
     if runtime is None:
         return values
@@ -223,9 +231,12 @@ def vision_context(server, device_mac, values):
 
 
 def extend_vision_payload(payload, kwargs):
-    for key in ("venue_id", "beacon_mac", "guide_policy_revision"):
+    for key in ("venue_id", "beacon_mac", "guide_policy_revision",
+                "session_id", "image_id", "image_seq", "captured_at"):
         if kwargs.get(key) is not None:
             payload[key] = kwargs[key]
+    if kwargs.get("history"):
+        payload["messages"] = [*kwargs["history"], *payload["messages"]]
     return payload
 
 

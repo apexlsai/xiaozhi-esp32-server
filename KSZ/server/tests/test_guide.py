@@ -379,8 +379,8 @@ async def test_text_and_vision_strip_untrusted_persisted_attributes():
     h = Harness()
     conn = h.conn()
     raw = {"device_id": DEVICE, "language": "zh-CN", "last_beacon_id": "untrusted", "venue_id": "wrong"}
-    assert filter_context(conn, raw) == {"device_id": DEVICE, "language": "zh-CN"}
-    assert vision_context(conn.server, DEVICE, raw) == filter_context(conn, raw)
+    assert filter_context(conn, raw) == {"device_id": DEVICE, "language": "zh-CN", "session_id": conn.session_id}
+    assert vision_context(conn.server, DEVICE, raw) == {"device_id": DEVICE, "language": "zh-CN"}
     await h.sync()
     await h.observe(1)
     safe = filter_context(conn, raw)
