@@ -321,7 +321,8 @@ async def test_active_conversation_is_not_interrupted(busy):
 @pytest.mark.parametrize("same_area", [False, True])
 async def test_new_beacon_preempts_active_guide_announcement(monkeypatch, same_area):
     items = [beacon(number, area_id="area1") if same_area else beacon(number) for number in (1, 2, 3)]
-    h = Harness(settings=GuideSettings(announce_on_first_beacon=False), items=items)
+    h = Harness(settings=GuideSettings(announce_on_first_beacon=False, interrupt_on_beacon_change=True,
+                                      min_announce_interval_ms=0), items=items)
     await h.sync()
     conn = h.conn()
     conn.sentence_id = "guide-turn"

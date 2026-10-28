@@ -53,6 +53,7 @@ class GuideSettings:
     announce_on_first_beacon: bool = True
     interrupt_on_beacon_change: bool = True
     min_announce_interval_ms: int = 15000
+    same_beacon_cooldown_ms: int = 60000
     position_ttl_ms: int = 15000
     pending_ttl_ms: int = 15000
     user_quiet_ms: int = 15000
@@ -81,6 +82,7 @@ class GuideSettings:
             announce_on_first_beacon=_boolean(env, "KSZ_GUIDE_ANNOUNCE_ON_FIRST_BEACON", defaults.announce_on_first_beacon),
             interrupt_on_beacon_change=_boolean(env, "KSZ_GUIDE_INTERRUPT_ON_BEACON_CHANGE", defaults.interrupt_on_beacon_change),
             min_announce_interval_ms=_milliseconds(env, "KSZ_GUIDE_MIN_ANNOUNCE_INTERVAL_MS", defaults.min_announce_interval_ms),
+            same_beacon_cooldown_ms=_milliseconds(env, "KSZ_GUIDE_SAME_BEACON_COOLDOWN_MS", defaults.same_beacon_cooldown_ms),
             position_ttl_ms=_milliseconds(env, "KSZ_GUIDE_POSITION_TTL_MS", defaults.position_ttl_ms, 1),
             pending_ttl_ms=_milliseconds(env, "KSZ_GUIDE_PENDING_TTL_MS", defaults.pending_ttl_ms, 1),
             user_quiet_ms=_milliseconds(env, "KSZ_GUIDE_USER_QUIET_MS", defaults.user_quiet_ms),
