@@ -10,9 +10,11 @@
 
 活动会话可通过 `hello.features.location_updates=true` 订阅服务端确认的位置，屏幕按独立 `guide_control/location` 消息显示楼层、区域及位置描述，并在失位、断线或有效期到达时清空；WS 与 MQTT+UDP 使用同一消息契约，详见[位置显示协议](guide-protocol.md#活动会话的位置显示)。部署时同步更新 KSZ server 和 MQTT 网关镜像：网关沿用 JSON 透传，并保证先发送设备 `hello`、后发送位置快照。未声明能力的设备保持原协议。
 
-信标自动讲解、首次播报、切换打断、冷却、位置/待播有效期和交互静默时间统一在 `KSZ/.env` 配置，变量及默认值见[信标讲解规则](guide-management.md#信标讲解规则)。修改后通过 `KSZ/compose.yml` 重新创建 server 容器；单独 `restart` 不会更新环境变量。
+信标自动讲解、首次播报、切换打断、冷却、位置/待播有效期和交互静默时间统一在 `KSZ/.env` 配置，变量及默认值见[信标讲解规则](guide-management.md#信标讲解规则)。按位置启用信标数选择单信标触发或成员跳变确认，同位置共享60秒冷却，保留15秒最小间隔；默认允许冷却结束后切换打断，兼容现有固件上报。修改后通过 `KSZ/compose.yml` 重新创建 server 容器；单独 `restart` 不会更新环境变量。
 
 信标播报采用固定位置开场加模型正文，中文默认“您现在位于{location}。”；四语模板同样放在 `KSZ/.env`。专用 `guide-announcement.patch` 将开场接入同一轮 TTS，并过滤模型正文开头的问候、自我介绍和重复位置，普通聊天不受影响。
+
+固件可在空闲后通过 `device_event/idle_greeting` 请求绑定角色主动招呼；计时、建链、去重及用户打断约定见[主动招呼协议](idle-greeting.md)。
 
 ## 前置条件
 
@@ -277,6 +279,8 @@ Museum Guide Agent 接入使用智控台现有的 OpenAI VLLM，无需新增 Pro
 `server.vision_explain` 始终填写本 xiaozhi-server 的 `/mcp/vision/explain`，不能填写 Museum Agent 地址。小智会把图片、问题、`device_id`、规范语言码和最近 Beacon ID 转发给 `museum-guide-vision`，Museum Agent 返回最终可播报文本。
 
 KSZ 保留上游完整返回协议：MCP `initialize` 继续下发 `vision.url` 与 `vision.token`，官方固件通过 `file` 字段上传，服务端返回 `success`、`action` 与 `response`；同时兼容旧客户端的 `image` 字段。旧端无需修改即可继续使用完整返回，启用逐句播报需要下述可选适配。
+
+KSZ 向 Agent 的语音与拍照请求统一传递 `session_id`，拍照增加 `image_id`、`image_seq` 和 `captured_at`，成功后供后续追问引用；视觉请求携带最近文字上下文。默认图片引用有效期 180 秒，换图、失败和重连受隔离保护。Agent 需配套实现共享图片缓存、指代解析与身份核验；字段、失效语义、开关和联调要求见[图片会话关联](vision-context.md)。
 
 兼容模式的手动拍照由 KSZ 向原在线连接直推播报，顺序为 `tts:start → sentence_start → 音频帧 → tts:stop`。服务端先完成启动通知并设置播放状态，再提交语音；识别或启动期间换轮、打断、断线，或者出现待处理 MCP 调用时不追加旧结果。MCP 拍照仍沿用已有工具播报链路，不重复直推。此修复无需修改固件上传接口，也不要求启用视觉流式能力。
 

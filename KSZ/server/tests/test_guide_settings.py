@@ -14,6 +14,8 @@ from test_guide import DEVICE, Harness, beacon
     ("ANNOUNCE_ON_FIRST_BEACON", ""),
     ("INTERRUPT_ON_BEACON_CHANGE", "2"),
     ("MIN_ANNOUNCE_INTERVAL_MS", "-1"),
+    ("SAME_BEACON_COOLDOWN_MS", "-1"),
+    ("SAME_BEACON_COOLDOWN_MS", "86400001"),
     ("POSITION_TTL_MS", "0"),
     ("PENDING_TTL_MS", "0"),
     ("USER_QUIET_MS", "1.5"),
@@ -35,6 +37,7 @@ async def test_environment_configures_runtime_and_effective_device_policy(monkey
         "KSZ_GUIDE_ANNOUNCE_ON_FIRST_BEACON": "yes",
         "KSZ_GUIDE_INTERRUPT_ON_BEACON_CHANGE": "false",
         "KSZ_GUIDE_MIN_ANNOUNCE_INTERVAL_MS": "2500",
+        "KSZ_GUIDE_SAME_BEACON_COOLDOWN_MS": "45000",
         "KSZ_GUIDE_POSITION_TTL_MS": "25000",
         "KSZ_GUIDE_PENDING_TTL_MS": "7500",
         "KSZ_GUIDE_USER_QUIET_MS": "1000",
@@ -45,7 +48,7 @@ async def test_environment_configures_runtime_and_effective_device_policy(monkey
     try:
         assert runtime.settings == GuideSettings(
             auto_announce_enabled=False, announce_on_first_beacon=True,
-            interrupt_on_beacon_change=False, min_announce_interval_ms=2500,
+            interrupt_on_beacon_change=False, min_announce_interval_ms=2500, same_beacon_cooldown_ms=45000,
             position_ttl_ms=25000, pending_ttl_ms=7500, user_quiet_ms=1000,
         )
         h = Harness(settings=runtime.settings)

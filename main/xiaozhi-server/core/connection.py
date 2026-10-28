@@ -949,9 +949,26 @@ class ConnectionHandler:
             self.config["selected_module"]["Intent"] = model_intent
             # 加载插件配置
             if model_intent != "Intent_nointent":
-                plugin_from_server = private_config.get("plugins", {})
-                for plugin, config_str in plugin_from_server.items():
-                    plugin_from_server[plugin] = json.loads(config_str)
+                plugin_from_server = private_config.get("plugins", {}) or {}
+                if not isinstance(plugin_from_server, dict):
+                    self.logger.bind(tag=TAG).error(
+                        f"智能体插件配置格式错误: {type(plugin_from_server).__name__}"
+                    )
+                    plugin_from_server = {}
+                else:
+                    normalized_plugins = {}
+                    for plugin, config_value in plugin_from_server.items():
+                        if isinstance(config_value, str):
+                            try:
+                                config_value = json.loads(config_value)
+                            except json.JSONDecodeError:
+                                self.logger.bind(tag=TAG).warning(
+                                    f"插件配置不是有效 JSON，已跳过: {plugin}"
+                                )
+                                continue
+                        if isinstance(config_value, dict):
+                            normalized_plugins[plugin] = config_value
+                    plugin_from_server = normalized_plugins
                 # 将模块级别的插件配置复制到各具体函数名，
                 # 方便后续 per-function 查找描述、news_sources 等配置
                 for module_name, func_names in module_func_map.items():

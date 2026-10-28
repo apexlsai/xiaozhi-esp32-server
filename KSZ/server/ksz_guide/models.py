@@ -86,18 +86,28 @@ class Beacon:
     uuid: str | None = None
     major: int | None = None
     minor: int | None = None
+    place_id: str | None = None
+    place_name: str | None = None
+    place_beacon_count: int = 1
 
     @classmethod
     def parse(cls, item):
         if not isinstance(item, dict) or not all(isinstance(item.get(key), str) and item[key] for key in ("id", "venue_id", "beacon_id")):
             raise GuideError("invalid_catalog")
         identity = beacon_identity({key: item.get(key) for key in ("mac", "uuid", "major", "minor")})
+        count = item.get("place_beacon_count", 1)
+        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+            raise GuideError("invalid_catalog_place_count")
+        for key in ("place_id", "place_name"):
+            if item.get(key) is not None and (not isinstance(item[key], str) or not item[key]):
+                raise GuideError("invalid_catalog_place")
         return cls(
             id=item["id"], mac=identity["mac"], beacon_id=item["beacon_id"],
             venue_id=item["venue_id"], area_id=item.get("area_id"),
             floor=str(item.get("floor") or ""), area=str(item.get("area") or ""),
             location_description=str(item.get("location_description") or ""),
             uuid=identity.get("uuid"), major=identity.get("major"), minor=identity.get("minor"),
+            place_id=item.get("place_id"), place_name=item.get("place_name"), place_beacon_count=count,
         )
 
     def matches(self, observed):
@@ -109,10 +119,10 @@ class Beacon:
 
     @property
     def zone(self):
-        return (self.venue_id, self.area_id or ((self.floor, self.area) if self.area else self.id))
+        return (self.venue_id, self.place_id or self.id)
 
     def to_prompt_context(self):
-        return "，".join(part for part in (self.floor, self.area, self.location_description) if part)
+        return "，".join(part for part in (self.floor, self.area, self.place_name or self.location_description) if part)
 
     def wire(self):
         return {key: value for key, value in vars(self).items() if value is not None}
