@@ -720,8 +720,11 @@ class GuideRuntime:
                     and not conn.client_abort and connection_is_open(conn))
 
         def valid_position(state):
-            return (state is not None and state.owner is conn and self.location(state.mac) is not None
-                    and state.policy.allows(beacon))
+            current = self.location(state.mac) if state is not None else None
+            return (state is not None and state.owner is conn and current is not None
+                    and current.zone == beacon.zone
+                    and current.to_prompt_context() == beacon.to_prompt_context()
+                    and state.policy.allows(current))
 
         def chat():
             state = self.devices.get(mac_address(conn.device_id))
@@ -733,7 +736,7 @@ class GuideRuntime:
                     return not cancelled and valid_position(state)
 
                 with guide_announcement(conn, beacon, self.settings, valid):
-                    result = conn.chat(f"[位置变化] 用户当前位于{beacon.to_prompt_context()}。设备已播报位置，请只生成后续简短介绍，不要问候、自我介绍或重复位置；没有可靠资料时不补充，不要编造。")
+                    result = conn.chat(f"[位置变化] 用户当前位于{beacon.to_prompt_context()}。设备已播报位置，请进入讲解模式，完整讲解此处有依据的展项、用途、特点与背景，不受默认字数和一两句限制。不要问候、自我介绍或重复位置；没有可靠资料时不补充，不要编造。")
                 state = self.devices.get(mac_address(conn.device_id))
                 if (result is not False and state and state.owner is conn
                         and getattr(conn, "client_is_speaking", False)):

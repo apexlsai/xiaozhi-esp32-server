@@ -2,6 +2,8 @@
 
 本协议用于 management 与 xiaozhi 联动版本，须部署服务并开启 `KSZ_GUIDE_ENABLED=1`。固件由独立团队实现；本文定义接入契约，不表示设备或线上服务已经升级。现有语言、MCP、视觉与音频协议保持原约定。
 
+讲解被用户打断后的播放确认使用独立的 `hello.features.playback_progress` 与 `playback_progress` 消息，段号和确认时机见[讲解模式与播放进度](narration-playback.md#固件播放回执)。未声明能力时沿用原有 TTS 消息。
+
 ## 连接与身份
 
 MQTT 完成认证和订阅后可发送导览控制消息，不需要先建立语音会话。主题仍为 OTA 返回的发布及订阅主题。WebSocket 降级通过已有认证连接发送同类消息。固件不能直接访问 management、控制 HTTP 接口或持有服务间令牌。

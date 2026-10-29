@@ -9,6 +9,7 @@ from core.utils.tts_emotion import strip_emotion_markers
 
 from .presence import connection_is_open
 from .prompt import LANGUAGE_NAMES, response_language
+from .playback import record_response_text
 from .tts import tts_complete_sentence
 
 
@@ -88,8 +89,7 @@ class GuideAnnouncement:
         self.socket = conn.websocket
         self.valid = valid
         self.language = response_language(conn)
-        self.location = "，".join(part.strip() for part in (beacon.floor, beacon.area, beacon.location_description)
-                                 if part.strip())
+        self.location = beacon.to_prompt_context()
         template = settings.location_template(self.language)
         self.prefix = template.format(location=self.location)
         self.filter = OpeningFilter(self.location, self.prefix)
@@ -106,6 +106,7 @@ class GuideAnnouncement:
         if not self.owns_turn() or not self.valid() or not self.location:
             return False
         self.parts.append(self.prefix)
+        record_response_text(self.conn, self.prefix, sentence_id)
         self.conn.tts.store_tts_text(sentence_id, self.prefix)
         tts_complete_sentence(self.conn, self.prefix, sentence_id)
         return True
@@ -118,6 +119,7 @@ class GuideAnnouncement:
             if len(self.parts) == 1 and self.language in {"en", "ko"}:
                 output = " " + output
             self.parts.append(output)
+            record_response_text(self.conn, "".join(self.parts), self.sentence_id)
             self.conn.tts.store_tts_text(self.sentence_id, "".join(self.parts))
         return output
 
@@ -177,7 +179,8 @@ def guide_announcement_messages(conn, messages, sentence_id):
         f"This is an automatic beacon narration in {LANGUAGE_NAMES[turn.language]}. "
         "The device already speaks this exact location introduction: "
         f"{json.dumps(turn.prefix, ensure_ascii=False)}. "
-        "Generate only the continuation: one or two short factual sentences about this location or nearby exhibits. "
+        "Use narration mode. Generate a complete, coherent explanation about this location or nearby exhibits. "
+        "Default word counts and one-or-two-sentence limits do not apply; let reliable evidence determine length. "
         "Do not greet, welcome, introduce yourself, repeat the visitor's location, or ask a follow-up question. "
         "Use available evidence and tools when needed; never invent exhibits or facts. "
         "If no relevant facts are available, return no additional narration."

@@ -7,7 +7,7 @@ from jinja2 import Template
 
 from core.connection import ConnectionHandler
 from core.utils.prompt_manager import PromptManager
-from ksz_guide.prompt import LANGUAGE_NAMES, prepare_system_prompt, prompt_template_path, response_language
+from ksz_guide.prompt import LANGUAGE_NAMES, MODE_SCOPE, prepare_system_prompt, prompt_template_path, response_language
 
 
 def connection(**attributes):
@@ -29,7 +29,7 @@ def test_each_supported_language_has_a_single_policy_and_preserves_the_role(lang
     conn = connection(language=language)
     role = "A carefully configured museum role, including its name and expertise."
     prompt = prepare_system_prompt(conn, role)
-    assert prompt.startswith(role + "\n\n")
+    assert prompt.startswith(MODE_SCOPE + role + "\n\n")
     assert f"Write every spoken reply in {LANGUAGE_NAMES[language]}" in prompt
     assert prepare_system_prompt(conn, prompt) == prompt
 
@@ -39,7 +39,7 @@ def test_rebinding_replaces_previous_language_policy_without_repeating_or_removi
     prompt = prepare_system_prompt(conn, "Configured museum role.")
     conn.device_attributes = {"agent_name": "青年-日语", "language": "en"}
     updated = prepare_system_prompt(conn, prompt)
-    assert updated.startswith("Configured museum role.")
+    assert updated.startswith(MODE_SCOPE + "Configured museum role.")
     assert updated.count("<ksz_response_policy>") == 1
     assert "Write every spoken reply in Japanese" in updated
     assert "Write every spoken reply in English" not in updated

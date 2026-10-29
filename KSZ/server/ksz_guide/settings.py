@@ -47,8 +47,20 @@ def _location_template(env, name, default):
     return value
 
 
+def _narration_tokens(env):
+    name = "KSZ_NARRATION_MAX_TOKENS"
+    try:
+        value = int(env.get(name, "4096"))
+    except ValueError:
+        raise ValueError(f"{name} must be an integer") from None
+    if not 1 <= value <= 131072:
+        raise ValueError(f"{name} must be between 1 and 131072")
+    return value
+
+
 @dataclass(frozen=True)
 class GuideSettings:
+    narration_max_tokens: int = 4096
     auto_announce_enabled: bool = True
     announce_on_first_beacon: bool = True
     interrupt_on_beacon_change: bool = True
@@ -78,6 +90,7 @@ class GuideSettings:
                 templates[key] = override
         defaults = cls(location_templates=templates)
         return cls(
+            narration_max_tokens=_narration_tokens(env),
             auto_announce_enabled=_boolean(env, "KSZ_GUIDE_AUTO_ANNOUNCE_ENABLED", defaults.auto_announce_enabled),
             announce_on_first_beacon=_boolean(env, "KSZ_GUIDE_ANNOUNCE_ON_FIRST_BEACON", defaults.announce_on_first_beacon),
             interrupt_on_beacon_change=_boolean(env, "KSZ_GUIDE_INTERRUPT_ON_BEACON_CHANGE", defaults.interrupt_on_beacon_change),

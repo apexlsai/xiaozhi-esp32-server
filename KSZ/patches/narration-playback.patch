@@ -1,0 +1,138 @@
+diff --git a/core/connection.py b/core/connection.py
+--- a/core/connection.py
++++ b/core/connection.py
+@@ -1297,6 +1297,8 @@
+                     )
+             text = guide.filter_guide_announcement_text(self, event.text, sentence_id) if guide else event.text
+             if text:
++                if guide and not guide.is_guide_announcement(self, sentence_id):
++                    guide.record_response_delta(self, text, sentence_id)
+                 cleaned_parts.append(text)
+                 self.tts.tts_text_queue.put(
+                     TTSMessageDTO(
+@@ -1320,6 +1322,8 @@
+         if depth == 0:
+             current_sentence_id = str(uuid.uuid4().hex)
+             self.sentence_id = current_sentence_id  # 更新共享属性
++            if guide:
++                guide.begin_response(self, current_sentence_id, query)
+             sessions = getattr(self, "vision_sessions", None)
+             if sessions is not None and self.loop is not None:
+                 def cancel_previous_vision():
+@@ -1410,6 +1414,7 @@
+             )
+             if guide:
+                 llm_dialogue = guide.guide_announcement_messages(self, llm_dialogue, current_sentence_id)
++                llm_dialogue = guide.playback_context_messages(self, llm_dialogue, current_sentence_id)
+ 
+             if self.intent_type == "function_call" and functions is not None:
+                 # 使用支持functions的streaming接口
+@@ -1418,12 +1423,14 @@
+                     llm_dialogue,
+                     functions=functions,
+                     extra_body=llm_extra_body,
++                    **(guide.response_options(self) if guide else {}),
+                 )
+             else:
+                 llm_responses = self.llm.response(
+                     self.session_id,
+                     llm_dialogue,
+                     extra_body=llm_extra_body,
++                    **(guide.response_options(self) if guide else {}),
+                 )
+         except Exception as e:
+             self.logger.bind(tag=TAG).error(f"LLM 处理出错 {query}: {e}")
+diff --git a/core/handle/abortHandle.py b/core/handle/abortHandle.py
+--- a/core/handle/abortHandle.py
++++ b/core/handle/abortHandle.py
+@@ -1,5 +1,6 @@
+ import json
+ from typing import TYPE_CHECKING
++from core.utils.ksz_extension import guide
+ 
+ if TYPE_CHECKING:
+     from core.connection import ConnectionHandler
+@@ -9,6 +10,8 @@
+ async def handleAbortMessage(conn: "ConnectionHandler"):
+     conn.logger.bind(tag=TAG).info("Abort message received")
+     sentence_id = conn.sentence_id
++    if guide:
++        guide.interrupt_response(conn)
+     # 设置成打断状态，会自动打断llm、tts任务
+     conn.close_after_chat = False
+     conn.client_abort = True
+@@ -20,9 +23,10 @@
+         feedback.cancel_all()
+     conn.clear_queues()
+     # 打断客户端说话状态
+-    await conn.websocket.send(
+-        json.dumps({"type": "tts", "state": "stop", "session_id": conn.session_id})
+-    )
++    stop_message = {"type": "tts", "state": "stop", "session_id": conn.session_id}
++    if guide:
++        guide.prepare_playback_message(conn, stop_message)
++    await conn.websocket.send(json.dumps(stop_message))
+     if conn.sentence_id == sentence_id:
+         conn.clearSpeakStatus()
+     conn.logger.bind(tag=TAG).info("Abort message received-end")
+diff --git a/core/handle/sendAudioHandle.py b/core/handle/sendAudioHandle.py
+--- a/core/handle/sendAudioHandle.py
++++ b/core/handle/sendAudioHandle.py
+@@ -10,6 +10,7 @@
+ from core.utils.util import audio_to_data
+ from core.providers.tts.dto.dto import SentenceType
+ from core.utils.audioRateController import AudioRateController
++from core.utils.ksz_extension import guide
+ 
+ TAG = __name__
+ # 音频帧时长（毫秒）
+@@ -24,6 +25,8 @@
+     sentence_id=None,
+     emotion_context=None,
+ ):
++    if sentence_id is not None and (sentence_id != conn.sentence_id or conn.client_abort):
++        return
+     emotion_marker = (sentence_id, emotion_context)
+     if (
+         emotion_context is not None
+@@ -36,6 +39,8 @@
+             emotion_context.emotion,
+         )
+         conn.last_tts_emotion_marker = emotion_marker
++        if sentence_id is not None and (sentence_id != conn.sentence_id or conn.client_abort):
++            return
+     await send_tts_message(conn, "sentence_start", text)
+ 
+ 
+@@ -351,8 +356,11 @@
+             conn.audio_rate_controller.stop_sending()
+         conn.clearSpeakStatus()
+ 
++    delivery = guide.prepare_playback_message(conn, message) if guide else None
+     # 发送消息到客户端
+     await conn.websocket.send(json.dumps(message))
++    if guide:
++        guide.commit_playback_message(conn, delivery)
+ 
+ 
+ async def send_stt_message(conn: "ConnectionHandler", text):
+diff --git a/core/providers/tts/base.py b/core/providers/tts/base.py
+--- a/core/providers/tts/base.py
++++ b/core/providers/tts/base.py
+@@ -18,6 +18,7 @@
+ from core.utils.output_counter import add_device_output
+ from core.handle.reportHandle import enqueue_tts_report
+ from core.handle.sendAudioHandle import sendAudioMessage
++from core.utils.ksz_extension import guide
+ from core.utils.util import audio_bytes_to_data_stream, audio_to_data_stream
+ from core.providers.tts.dto.dto import (
+     TTSMessageDTO,
+@@ -371,6 +372,8 @@
+             text: 要存储的文本
+         """
+         if sentence_id and text:
++            if guide and self.conn is not None:
++                guide.record_response_text(self.conn, text, sentence_id)
+             self._sentence_text_map[sentence_id] = text
+             # 只保留最近 5 个，防止内存泄漏
+             if len(self._sentence_text_map) > 5:

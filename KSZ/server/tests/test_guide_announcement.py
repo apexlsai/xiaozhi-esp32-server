@@ -1,6 +1,7 @@
 import asyncio
 import json
 import queue
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -12,7 +13,7 @@ from core.utils.dialogue import Dialogue
 from ksz_guide.announcement import OpeningFilter, guide_announcement
 from ksz_guide.settings import GuideSettings
 from plugins_func.register import Action, ActionResponse
-from test_guide import Harness, beacon
+from test_guide import DEVICE, Harness, beacon
 
 
 class RecordingTTS:
@@ -220,6 +221,73 @@ def test_custom_template_and_empty_fields_are_rendered_once(conn):
     narrate(conn, settings=settings, item=beacon(floor="", area="展区", location_description=" "))
     assert spoken(conn) == "当前位置：展区。"
     assert GuideSettings.from_env({"KSZ_GUIDE_LOCATION_TEMPLATE_ZH_CN": ""}).location_template("zh-CN") == "您现在位于{location}。"
+
+
+@pytest.mark.parametrize("language,expected", [
+    ("zh-CN", "您现在位于1F，主展示区，赛车游戏屏幕体验区。"),
+    ("en", "You are now at 1F，主展示区，赛车游戏屏幕体验区."),
+    ("ja", "現在、1F，主展示区，赛车游戏屏幕体验区にいます。"),
+    ("ko", "현재 1F，主展示区，赛车游戏屏幕体验区에 계십니다."),
+])
+def test_opening_and_model_use_current_place_instead_of_old_beacon_description(conn, language, expected):
+    conn.device_attributes["language"] = language
+    item = beacon(area="主展示区", place_id="racing", place_name="赛车游戏屏幕体验区",
+                  location_description="地砖屏展示区")
+    turn = narrate(conn, item=item)
+    assert spoken(conn) == expected
+    assert assistant_text(conn) == [expected]
+    assert turn.location == item.to_prompt_context()
+    system = conn.llm.response.call_args.args[1][0]["content"]
+    assert expected in system
+    assert "地砖屏展示区" not in system
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["before_model", "during_stream"])
+@pytest.mark.parametrize("change", ["new_place", "renamed_place", "same_place_member"])
+async def test_runtime_rejects_stale_place_without_interrupting_same_place_member(conn, monkeypatch, phase, change):
+    h = Harness()
+    current = beacon(place_id="place1", place_name="当前位置", location_description="旧信标描述")
+    if change == "new_place":
+        latest = beacon(2, place_id="place2", place_name="新位置")
+    elif change == "renamed_place":
+        latest = beacon(place_id="place1", place_name="更新的位置名称")
+    else:
+        latest = beacon(2, area=current.area, place_id=current.place_id, place_name=current.place_name,
+                        location_description="另一枚信标的旧描述")
+    state = h.runtime.state(DEVICE)
+    state.owner = conn
+    state.policy = h.client.policies[DEVICE]
+    state.current = current
+    state.last_position_at = h.clock()
+
+    async def send(_, action):
+        if phase == "before_model" and action == "start":
+            state.current = latest
+
+    def response():
+        yield "这里展示"
+        if phase == "during_stream":
+            state.current = latest
+        yield "当前展项。"
+
+    monkeypatch.setattr("core.handle.sendAudioHandle.send_tts_message", send)
+    conn.llm.response.return_value = response()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        conn.executor = executor
+        try:
+            await h.runtime._announce(conn, current)
+        finally:
+            await h.runtime.close()
+    if change == "same_place_member":
+        assert spoken(conn) == "您现在位于1F，展区1，当前位置。这里展示当前展项。"
+        assert assistant_text(conn) == [spoken(conn)]
+    elif phase == "before_model":
+        conn.llm.response.assert_not_called()
+        assert spoken(conn) == ""
+    else:
+        assert spoken(conn) == "您现在位于1F，展区1，当前位置。"
+        assert assistant_text(conn) == []
 
 
 def test_following_user_chat_keeps_greetings_and_its_original_prompt(conn):

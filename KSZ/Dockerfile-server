@@ -33,6 +33,10 @@ COPY KSZ/patches/cell-location-server.patch /tmp/cell-location-server.patch
 RUN git apply --check /tmp/cell-location-server.patch \
     && git apply /tmp/cell-location-server.patch
 
+COPY KSZ/patches/narration-playback.patch /tmp/narration-playback.patch
+RUN git apply --check /tmp/narration-playback.patch \
+    && git apply /tmp/narration-playback.patch
+
 FROM ghcr.io/xinnan-tech/xiaozhi-esp32-server:server-base
 
 COPY --from=patched-source /src .

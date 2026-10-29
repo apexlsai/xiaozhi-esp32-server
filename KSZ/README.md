@@ -14,6 +14,8 @@
 
 信标播报采用固定位置开场加模型正文，中文默认“您现在位于{location}。”；四语模板同样放在 `KSZ/.env`。专用 `guide-announcement.patch` 将开场接入同一轮 TTS，并过滤模型正文开头的问候、自我介绍和重复位置，普通聊天不受影响。
 
+模型按本轮意图选择讲解或简答，讲解解除默认字数限制。打断状态和播放进度可传入下一轮上下文；精确区分用户听过哪些段落需固件回执，接入及 `KSZ_NARRATION_MAX_TOKENS` 配置见[讲解模式与播放进度](narration-playback.md)。
+
 固件可在空闲后通过 `device_event/idle_greeting` 请求绑定角色主动招呼；计时、建链、去重及用户打断约定见[主动招呼协议](idle-greeting.md)。
 
 ## 前置条件

@@ -150,7 +150,7 @@ async def test_location_invalidated_during_start_does_not_reach_llm(playback):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("change", ["switch", "lost"])
-async def test_active_guide_body_survives_beacon_switch_but_stops_on_position_loss(playback, change):
+async def test_active_guide_body_stops_on_position_change_or_loss(playback, change):
     from ksz_guide.announcement import filter_guide_announcement_text, start_guide_announcement
 
     h, conn = playback.h, playback.conn
@@ -167,7 +167,7 @@ async def test_active_guide_body_survives_beacon_switch_but_stops_on_position_lo
         assert filter_guide_announcement_text(conn, "第一段讲解。", conn.sentence_id) == "第一段讲解。"
         state.current = beacon(2) if change == "switch" else None
         text = filter_guide_announcement_text(conn, "第二段讲解。", conn.sentence_id)
-        assert text == ("第二段讲解。" if change == "switch" else "")
+        assert text == ""
 
     conn.chat.side_effect = chat
     await h.runtime._announce(conn, playback.beacon)

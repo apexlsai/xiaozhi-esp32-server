@@ -122,7 +122,8 @@ class Beacon:
         return (self.venue_id, self.place_id or self.id)
 
     def to_prompt_context(self):
-        return "，".join(part for part in (self.floor, self.area, self.place_name or self.location_description) if part)
+        location = (self.place_name or "").strip() or self.location_description.strip()
+        return "，".join(part.strip() for part in (self.floor, self.area, location) if part.strip())
 
     def wire(self):
         return {key: value for key, value in vars(self).items() if value is not None}

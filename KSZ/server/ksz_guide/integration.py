@@ -37,6 +37,10 @@ from .visual_context import (
 )
 from .tts import tts_complete_sentence
 from .geographic_location import close_location, location_context, start_location
+from .playback import (
+    begin_response, commit_playback_message, handle_playback_progress, interrupt_response,
+    playback_context_messages, prepare_playback_message, record_response_delta, record_response_text,
+)
 
 
 log = logging.getLogger(__name__)
@@ -159,6 +163,7 @@ def on_hello_complete(conn):
 
 
 def on_disconnect(conn):
+    interrupt_response(conn, "disconnected")
     close_location(conn)
     close_idle_greeting(conn)
     close_visual_context(conn)
@@ -170,6 +175,8 @@ def on_disconnect(conn):
 
 
 async def handle_control_message(conn, message):
+    if handle_playback_progress(conn, message):
+        return True
     await interrupt_idle_greeting(conn, message)
     runtime = runtime_for(conn)
     if runtime is None:
@@ -190,6 +197,12 @@ async def handle_control_message(conn, message):
     except GuideError as error:
         await conn.websocket.send(json.dumps(runtime._result(message, False, str(error))))
     return True
+
+
+def response_options(conn):
+    runtime = runtime_for(conn)
+    settings = runtime.settings if runtime else GuideSettings.from_env()
+    return {"max_tokens": settings.narration_max_tokens}
 
 
 async def handle_legacy_event(conn, message):
