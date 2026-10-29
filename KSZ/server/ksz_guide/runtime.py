@@ -42,6 +42,7 @@ class DeviceState:
     baseline_mac: str | None = None
     baseline_beacon: Beacon | None = None
     confirmed_zone: tuple | None = None
+    place_observations: dict[tuple, dict[str, float]] = field(default_factory=dict)
     last_announced_zone: tuple | None = None
     location_revision: int = 0
     pending: Pending | None = None
@@ -248,12 +249,14 @@ class GuideRuntime:
             state.baseline_mac = None
             state.baseline_beacon = None
             state.confirmed_zone = None
+            state.place_observations.clear()
         if state.owner is not None:
             state.owner.beacon_location = None
         self.location_updates.notify(state)
 
     def _expire(self, state):
         now = self.clock()
+        self._expire_place_observations(state, now)
         if state.current is not None and (not state.policy or not state.policy.valid(now)
                                           or now - state.last_position_at >= self.settings.position_ttl_ms / 1000):
             self._announcement_status(state, "position_expired")
@@ -421,6 +424,12 @@ class GuideRuntime:
         return (self.clock() - state.location_announce_times.get(beacon.zone, float("-inf"))
                 < self.settings.same_beacon_cooldown_ms / 1000)
 
+    def _expire_place_observations(self, state, now):
+        cutoff = now - self.settings.place_confirmation_window_ms / 1000
+        recent = {zone: {mac: at for mac, at in observations.items() if at >= cutoff}
+                  for zone, observations in state.place_observations.items()}
+        state.place_observations = {zone: observations for zone, observations in recent.items() if observations}
+
     async def _observe(self, state, data, *, legacy=False):
         observed = beacon_identity(data)
         if legacy:
@@ -435,15 +444,24 @@ class GuideRuntime:
             raise GuideError("beacon_not_allowed")
         previous = state.baseline_beacon
         same_place = previous is not None and previous.zone == beacon.zone
-        if not same_place:
-            state.confirmed_zone = None
-            state.pending = None
         multiple = beacon.place_id is not None and beacon.place_beacon_count > 1
+        observations = {}
         if multiple:
-            confirmed = same_place and previous.mac != beacon.mac
+            now = self.clock()
+            self._expire_place_observations(state, now)
+            observations = state.place_observations.setdefault(beacon.zone, {})
+            observations[beacon.mac] = now
+            confirmed = len(observations) >= 2
+            if not same_place and not confirmed:
+                self._announcement_status(state, "waiting_for_place_transition")
+                return
         else:
             confirmed = ((previous is not None and previous.mac != beacon.mac)
                          or (previous is None and self.settings.announce_on_first_beacon))
+        if not same_place:
+            state.confirmed_zone = None
+            state.pending = None
+            state.place_observations = {beacon.zone: observations} if multiple else {}
         if confirmed:
             state.confirmed_zone = beacon.zone
         state.current = beacon

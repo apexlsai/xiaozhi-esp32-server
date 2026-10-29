@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -92,7 +93,7 @@ async def test_same_position_switch_keeps_one_pending_and_other_position_rearms(
 
 
 @pytest.mark.asyncio
-async def test_transition_survives_sparse_reports_but_cannot_cross_another_position():
+async def test_expired_member_evidence_requires_a_fresh_pair():
     h = Harness(items=[*members(), beacon(3, place_id="place2", place_beacon_count=2)])
     observe = await observer(h, "legacy")
     try:
@@ -102,11 +103,16 @@ async def test_transition_survives_sparse_reports_but_cannot_cross_another_posit
         assert h.runtime.location(DEVICE) is None
         h.clock.now = 130
         await observe(2)
+        h.announce.assert_not_awaited()
+        assert h.runtime.location(DEVICE) is None
+        h.clock.now = 131
+        await observe(1)
         h.announce.assert_awaited_once()
         await observe(3)
-        await observe(1)
         assert h.runtime.state(DEVICE).pending is None
         assert h.runtime.state(DEVICE).announcement_status == "waiting_for_place_transition"
+        assert h.runtime.location(DEVICE).place_id == "place1"
+        await observe(2)
         h.announce.assert_awaited_once()
     finally:
         await h.runtime.close()
@@ -196,6 +202,204 @@ async def test_returning_to_a_different_member_still_respects_shared_position_co
         await h.runtime.tick(refresh=True)
         assert h.announce.await_count == 2
         await observe(first_member)
+        assert h.announce.await_count == 2
+        await observe(3 - first_member)
         assert h.announce.await_count == 3
+    finally:
+        await h.runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["legacy", "v1"])
+async def test_interleaved_neighbor_does_not_break_position_confirmation(transport):
+    h = Harness(items=[*members(), beacon(3, place_id="place2", place_beacon_count=2)])
+    observe = await observer(h, transport)
+    try:
+        await observe(1)
+        h.clock.now = 104
+        await observe(3)
+        assert h.runtime.context(DEVICE) == {}
+        h.clock.now = 110
+        await observe(2)
+        h.announce.assert_awaited_once()
+        assert h.runtime.location(DEVICE).place_id == "place1"
+    finally:
+        await h.runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("window_ms", [10000, 15000])
+@pytest.mark.parametrize("offset,expected", [(-0.001, 1), (0, 1), (0.001, 0)])
+async def test_confirmation_window_expires_each_member_independently(window_ms, offset, expected):
+    h = Harness(items=members(), settings=GuideSettings(place_confirmation_window_ms=window_ms))
+    observe = await observer(h, "legacy")
+    try:
+        await observe(1)
+        h.clock.now += window_ms / 1000 + offset
+        await observe(2)
+        assert h.announce.await_count == expected
+    finally:
+        await h.runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_repeated_same_member_cannot_confirm_or_extend_an_old_pair():
+    h = Harness(items=members())
+    observe = await observer(h, "legacy")
+    try:
+        for now in (100, 104, 115, 119):
+            h.clock.now = now
+            await observe(1)
+        h.announce.assert_not_awaited()
+        h.clock.now = 135
+        await observe(2)
+        h.announce.assert_not_awaited()
+        await observe(1)
+        h.announce.assert_awaited_once()
+    finally:
+        await h.runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["legacy", "v1"])
+async def test_neighbor_preserves_confirmed_position_and_pending_deadline(transport):
+    h = Harness(items=[*members(), beacon(3, place_id="place2", place_beacon_count=2),
+                       beacon(4, place_id="place3")])
+    observe = await observer(h, transport)
+    try:
+        await observe(4)
+        h.clock.now = 101
+        await observe(1)
+        await observe(2)
+        state = h.runtime.state(DEVICE)
+        pending = state.pending
+        revision, observed = state.location_revision, state.last_position_at
+        h.clock.now = 105
+        await observe(3)
+        assert state.pending is pending
+        assert pending.deadline == 116
+        assert state.location_revision == revision
+        assert state.last_position_at == observed
+        assert state.confirmed_zone == ("venue1", "place1")
+        assert h.runtime.context(DEVICE)["beacon_mac"] == beacon(2).mac
+        h.clock.now = 115
+        await h.runtime.tick()
+        assert [call.args[1].place_id for call in h.announce.await_args_list] == ["place3", "place1"]
+    finally:
+        await h.runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_neighbor_does_not_renew_position_or_rearm_its_announcement():
+    h = Harness(items=[*members(), beacon(3, place_id="place2", place_beacon_count=2)])
+    observe = await observer(h, "legacy")
+    try:
+        await observe(1)
+        await observe(2)
+        h.clock.now = 114
+        await observe(3)
+        h.clock.now = 115
+        await h.runtime.tick()
+        assert h.runtime.location(DEVICE) is None
+        h.clock.now = 180
+        await h.runtime.tick(refresh=True)
+        await observe(3)
+        await observe(1)
+        assert h.runtime.location(DEVICE).place_id == "place1"
+        h.announce.assert_awaited_once()
+    finally:
+        await h.runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_confirmed_position_switch_discards_previous_position_evidence():
+    h = Harness(items=[*members(), beacon(3, place_id="place2", place_beacon_count=2),
+                       beacon(4, place_id="place2", place_beacon_count=2)],
+                settings=GuideSettings(min_announce_interval_ms=0, same_beacon_cooldown_ms=0))
+    observe = await observer(h, "legacy")
+    try:
+        await observe(1)
+        await observe(3)
+        await observe(2)
+        h.announce.assert_awaited_once()
+        await observe(4)
+        assert h.runtime.location(DEVICE).place_id == "place1"
+        await observe(3)
+        assert h.runtime.location(DEVICE).place_id == "place2"
+        assert h.announce.await_count == 2
+        await observe(1)
+        assert h.runtime.location(DEVICE).place_id == "place2"
+        await observe(2)
+        assert h.announce.await_count == 3
+    finally:
+        await h.runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reset", ["boot", "policy"])
+async def test_member_evidence_cannot_cross_boot_or_policy_changes(reset):
+    h = Harness(items=members())
+    observe = await observer(h, "v1")
+    try:
+        await observe(1)
+        boot_id = "boot1"
+        if reset == "boot":
+            boot_id = "boot2"
+            await h.send("sync", boot_id=boot_id)
+        else:
+            h.client.data["revision"] = "2:1"
+            await h.runtime.tick(refresh=True)
+        state = h.runtime.state(DEVICE)
+        state.owner_ready = True
+        assert (await h.observe(2, boot_id=boot_id))[0]["accepted"] is True
+        assert state.current is None
+        assert state.pending is None
+        h.announce.assert_not_awaited()
+        assert (await h.observe(1, boot_id=boot_id))[0]["accepted"] is True
+        h.announce.assert_awaited_once()
+    finally:
+        await h.runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["legacy", "v1"])
+async def test_unconfirmed_neighbor_keeps_running_announcement(transport):
+    h = Harness(items=[*members(), beacon(3, place_id="place2", place_beacon_count=2)])
+    observe = await observer(h, transport)
+    finished = asyncio.Event()
+
+    async def announce(*_):
+        await finished.wait()
+
+    h.announce.side_effect = announce
+    try:
+        await observe(1)
+        await observe(2)
+        state = h.runtime.state(DEVICE)
+        task = state.announcement_task
+        h.clock.now = 110
+        await observe(3)
+        assert state.announcement_task is task
+        assert not task.done()
+        assert state.last_announced_zone == ("venue1", "place1")
+        assert state.pending is None
+        finished.set()
+        await task
+        h.announce.assert_awaited_once()
+    finally:
+        await h.runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_members_from_different_venues_cannot_confirm_a_position():
+    h = Harness(items=[beacon(1, place_id="place1", place_beacon_count=2),
+                       beacon(2, venue_id="venue2", place_id="place1", place_beacon_count=2)],
+                mode="consumer", venue_ids=[])
+    observe = await observer(h, "legacy")
+    try:
+        await observe(1)
+        await observe(2)
+        assert h.runtime.context(DEVICE) == {}
+        h.announce.assert_not_awaited()
     finally:
         await h.runtime.close()
