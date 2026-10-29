@@ -1,0 +1,54 @@
+--- a/core/connection.py
++++ b/core/connection.py
+@@ -715,6 +715,7 @@
+             emoji_enabled=(self.features or {}).get("emoji", True),
+             device_language=self.device_language,
+             beacon_location=beacon_location,
++            device_location=guide.location_context(self) if guide else None,
+         )
+         if enhanced_prompt:
+             self.change_system_prompt(enhanced_prompt)
+--- a/core/utils/prompt_manager.py
++++ b/core/utils/prompt_manager.py
+@@ -214,9 +214,10 @@
+     def update_context_info(self, conn, client_ip: str):
+         """同步更新上下文信息"""
+         try:
+-            local_address = ""
++            from core.utils.ksz_extension import guide
++            handled, local_address = guide.location_context(conn) if guide else (False, "")
+             if (
+-                client_ip
++                not handled and client_ip
+                 and self.base_prompt_template
+                 and (
+                     "local_address" in self.base_prompt_template
+@@ -264,7 +265,10 @@
+             local_address = ""
+             weather_info = ""
+ 
+-            if client_ip:
++            device_location = kwargs.pop("device_location", None)
++            if device_location and device_location[0]:
++                local_address = device_location[1]
++            elif client_ip:
+                 # 获取位置信息（从全局缓存）
+                 local_address = (
+                     self.cache_manager.get(self.CacheType.LOCATION, client_ip) or ""
+--- a/plugins_func/functions/get_weather.py
++++ b/plugins_func/functions/get_weather.py
+@@ -252,6 +252,14 @@
+     default_location = weather_config.get("default_location", "广州")
+     client_ip = conn.client_ip
+ 
++    if not location:
++        from core.utils.ksz_extension import guide
++        handled, city = guide.location_context(conn) if guide else (False, "")
++        if handled:
++            if not city:
++                return ActionResponse(Action.REQLLM, "当前没有可靠的城市位置，请询问用户要查询哪个城市。", None)
++            location = city
++
+     # 优先使用用户提供的location参数
+     if not location:
+         # 通过客户端IP解析城市

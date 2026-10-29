@@ -43,6 +43,7 @@ import xiaozhi.modules.device.dto.DeviceReportRespDTO;
 import xiaozhi.modules.device.entity.DeviceEntity;
 import xiaozhi.modules.device.service.DeviceCellService;
 import xiaozhi.modules.device.service.DeviceService;
+import xiaozhi.modules.device.location.CellLocationStore;
 import xiaozhi.modules.sys.service.SysParamsService;
 
 class DeviceCellReportTest {
@@ -65,7 +66,7 @@ class DeviceCellReportTest {
 
     private final RedisUtils redis = mock(RedisUtils.class);
     private final DeviceService devices = mock(DeviceService.class);
-    private final DeviceCellService cells = new DeviceCellService(redis);
+    private final DeviceCellService cells = new DeviceCellService(redis, mock(CellLocationStore.class));
     private final Map<String, Object> cache = new HashMap<>();
     private MockMvc mvc;
 

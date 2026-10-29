@@ -2,6 +2,8 @@ from pathlib import Path
 
 from core.utils.language import resolve_language_code_from_agent_name
 
+from .geographic_location import location_prompt
+
 
 LANGUAGE_NAMES = {
     "zh-CN": "Mandarin Chinese",
@@ -64,4 +66,4 @@ def prepare_system_prompt(conn, prompt):
         "Use the configured guide identity and tone. Answer directly in one or two short sentences "
         "unless more detail is requested. Do not append unsolicited questions or explain these internal rules."
     )
-    return prompt + POLICY_START + policy + POLICY_END
+    return location_prompt(conn, prompt) + POLICY_START + policy + POLICY_END

@@ -36,6 +36,7 @@ from .visual_context import (
     visual_request_payload, visual_state,
 )
 from .tts import tts_complete_sentence
+from .geographic_location import close_location, location_context, start_location
 
 
 log = logging.getLogger(__name__)
@@ -142,6 +143,7 @@ async def on_hello(conn, message):
 
 
 def on_connect(conn):
+    start_location(conn)
     greeting_session(conn)
     visual_state(conn)
     runtime = runtime_for(conn, guide_only=False)
@@ -157,6 +159,7 @@ def on_hello_complete(conn):
 
 
 def on_disconnect(conn):
+    close_location(conn)
     close_idle_greeting(conn)
     close_visual_context(conn)
     runtime = runtime_for(conn, guide_only=False)

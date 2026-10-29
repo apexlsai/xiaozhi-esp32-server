@@ -29,6 +29,10 @@ COPY KSZ/patches/vision-context.patch /tmp/vision-context.patch
 RUN git apply --check /tmp/vision-context.patch \
     && git apply /tmp/vision-context.patch
 
+COPY KSZ/patches/cell-location-server.patch /tmp/cell-location-server.patch
+RUN git apply --check /tmp/cell-location-server.patch \
+    && git apply /tmp/cell-location-server.patch
+
 FROM ghcr.io/xinnan-tech/xiaozhi-esp32-server:server-base
 
 COPY --from=patched-source /src .

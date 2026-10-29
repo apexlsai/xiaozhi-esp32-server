@@ -500,12 +500,32 @@ curl 'http://127.0.0.1:8002/xiaozhi/device/80:f1:b2:d4:ce:64/cell' \
 
 成功结果的 `data` 包含 `deviceId`、`boardType`、`reportedAt` 和原始 `cell`。接口仅允许设备所属用户读取，`valid`、`stat` 按设备原值返回。
 
-改动由 `KSZ/Dockerfile-web` 应用补丁并覆盖 `KSZ/manager-api/src`，无需数据库迁移。重建管理端后，设备下次 OTA 上报即可接收：
+改动由 `KSZ/Dockerfile-web` 应用补丁并覆盖 `KSZ/manager-api/src`。基站定位同时启用下节的数据库迁移；重建管理端后，设备下次 OTA 上报即可接收：
 
 ```bash
 docker compose -f KSZ/compose.yml up -d --build xiaozhi-esp32-server-web
 docker compose -f KSZ/compose.yml logs -f --tail=100 xiaozhi-esp32-server-web | rg '80:f1:b2:d4:ce:64.*board.cell'
 ```
+
+### 基站定位、数据库缓存与城市兜底
+
+小智使用设备实际上报的 `board.cell` 查询[探数基站接口](https://www.tanshuapi.com/market/detail-80)。密钥只配置在服务端 `KSZ/.env` 的 `KSZ_TANSHU_API_KEY`，不放入固件、提示词或日志。设置 `KSZ_CELL_LOCATION_ENABLED=1` 后重建管理端和 Python 服务端；默认关闭外部查询。配置项见 `.env.example`。
+
+管理端启动时由 Liquibase 创建 `ksz_device_location` 和 `ksz_cell_location_cache`。前者按设备保存最新 cell 上报、定位模式及配置城市，后者按 MCC、MNC、接入制式、LAC 和 Cell ID 保存基站结果。多个设备连接同一基站时共用结果，服务重启和断线重连不触发重复外部查询。基站缓存默认30天，设备上报默认24小时有效；缓存过期才重查，基站变化先查对应缓存。数据库中的查询租约避免并发重复请求，失败默认60秒后重试。旧 Redis 上报在首次解析时可导入 MySQL，Redis 故障不影响已持久化的有效上报。
+
+Python 服务端每次连接后异步读取管理端位置，不阻塞 hello 或普通对话，并每分钟检查一次更新。位置到达后替换现有 system 中的城市，不新增历史消息；首次尚未取得城市时先按未知位置处理。设备定位过期、无效或查询失败时使用该设备的配置城市，再使用显式配置的 `KSZ_LOCATION_DEFAULT_CITY`，均不回退到4G出口 IP。默认城市仅用于本地查询，不声称是实际定位；没有兜底城市时询问用户。没有 cell 上报、使用 `cell` 模式且未配置单设备城市的 WiFi 设备保留原 IP 定位。用户明确指定的查询城市始终优先。
+
+`POST /xiaozhi/config/device-location` 使用小智现有 `server.secret` 服务间鉴权，Body 为 `{"deviceId":"80:f1:b2:d4:ce:64"}`。返回 `source`（`cell`、`fixed`、`default`、`unknown` 或 `ip`）、`city`、`position`、`locatedAt`、`expiresAt`、`cellReported`、`status` 和 `retryAt`；时间均为 Unix 毫秒。城市、位置状态和天气工具共用该结果。
+
+同样鉴权的 `POST /xiaozhi/config/device-location/settings` 可保存单设备配置：
+
+```json
+{"deviceId":"80:f1:b2:d4:ce:64","mode":"cell","city":"深圳市"}
+```
+
+`cell` 表示优先基站定位、失败以 `city` 兜底；`fixed` 表示固定场馆城市且不调用基站 API；`disabled` 表示不调用基站 API并使用配置城市或未知位置。`fixed` 必须填写城市。关闭全局查询开关后，蜂窝设备仍遵循兜底规则。清空单设备城市传 `null`，显式传空字符串可禁用全局默认城市对该设备的兜底。模式和城市变更最迟一分钟作用于已连接会话。
+
+当前按已确认的中国移动/联通 MCC/MNC 映射适配探数 `mnc=0/1`，注册状态仅接受 `stat=1/5` 且 `valid=1`；中国电信、其他国家或不支持的制式走配置兜底，不把 LTE MNC 误作电信 SID。`mcc/mnc` 保留原始字符串，API 参数按接口定义转换。返回坐标为 WGS84，`radius` 是基站覆盖半径，不能作为设备精确道路、楼层或房间定位；室内信标定位继续独立使用。移动设备应在小区变化时重新上报，避免持续使用开机位置。
 
 ### 记忆模式选择
 

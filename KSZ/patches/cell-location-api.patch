@@ -1,0 +1,27 @@
+--- a/main/manager-api/src/main/resources/db/changelog/db.changelog-master.yaml
++++ b/main/manager-api/src/main/resources/db/changelog/db.changelog-master.yaml
+@@ -816,3 +816,10 @@
+         - sqlFile:
+             encoding: utf8
+             path: classpath:db/changelog/202609172100.sql
++  - changeSet:
++      id: ksz-cell-location
++      author: Jacob
++      changes:
++        - sqlFile:
++            encoding: utf8
++            path: classpath:db/changelog/ksz-cell-location.sql
+--- a/main/manager-api/pom.xml
++++ b/main/manager-api/pom.xml
+@@ -37,6 +37,11 @@
+     </properties>
+ 
+     <dependencies>
++        <dependency>
++            <groupId>com.h2database</groupId>
++            <artifactId>h2</artifactId>
++            <scope>test</scope>
++        </dependency>
+         <dependency>
+             <groupId>org.apache.shiro</groupId>
+             <artifactId>shiro-core</artifactId>
