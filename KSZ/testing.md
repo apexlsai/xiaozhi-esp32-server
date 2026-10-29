@@ -2,6 +2,23 @@
 
 以下命令在仓库根目录 `/apps/xiaozhi-esp32-server` 执行。推荐使用 `uv`，当前 Conda `(base)` 无需退出；依赖在隔离环境安装。
 
+## 蜂窝小区上报回归
+
+通过管理端实际 `patched-source` 构建阶段检查补丁和源码覆盖后，在隔离 Maven 容器编译全部管理端源码与测试，执行 `DeviceCellReportTest`、`OTAControllerTest`：11项通过。
+
+覆盖完整 ML307 `board.cell` 请求、运营商码前导零、可选十六进制字段、32位以上小区 ID、24小时缓存参数、缺失字段不覆盖、不续期、无效状态覆盖、Redis 写入异常不阻断 OTA、非法请求不入缓存，以及设备所属用户读取和越权拒绝。
+
+```bash
+docker build -f KSZ/Dockerfile-web --target patched-source -t xiaozhi-esp32-server:cell-test-source .
+docker build --progress=plain -f - . <<'DOCKERFILE'
+FROM xiaozhi-esp32-server:cell-test-source AS patched-source
+FROM maven:3.9.4-eclipse-temurin-21
+WORKDIR /app
+COPY --from=patched-source /source/main/manager-api/ ./
+RUN --mount=type=cache,id=ksz-manager-api-m2,target=/root/.m2 mvn -B -ntp test -DskipTests=false -Dtest=DeviceCellReportTest,OTAControllerTest
+DOCKERFILE
+```
+
 ## 单信标触发回退回归
 
 独立源码副本按 `Dockerfile-server` 检查并应用全部8个补丁后，在无网络临时容器运行导览、位置、冷却、音频、开场、配置、在线状态、位置推送、图片上下文、视觉、等待提示、完整 TTS 和主动招呼回归：352项通过。容器没有 git，排除1项自行应用 hello 补丁的构建测试；8个补丁已在宿主机检查并应用成功。

@@ -2,6 +2,9 @@
 !KSZ/
 !KSZ/patches/
 !KSZ/patches/prompt-limit.patch
+!KSZ/patches/cell-report.patch
+!KSZ/manager-api/
+!KSZ/manager-api/**
 !main/
 !main/manager-web/
 !main/manager-web/**

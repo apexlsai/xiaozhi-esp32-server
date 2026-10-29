@@ -479,6 +479,34 @@ Body: beacon-abc-123
 
 兼容的通用接口仍可用：`GET /xiaozhi/device/attribute/{deviceId}` 与 `PUT /xiaozhi/device/attribute/{deviceId}/{attrKey}`。
 
+### 蜂窝小区上报与读取
+
+设备启动时向 `POST /xiaozhi/ota/` 上报，使用 `Device-Id` 请求头关联设备，蜂窝信息放在请求体的 `board.cell` 中：
+
+```json
+{"board":{"type":"ksz-traveler-esp32p4","cell":{"valid":1,"stat":1,"op":1,"mcc":"460","mnc":"00","act":7,"lac":10158,"cellid":88090510}}}
+```
+
+上述片段合并到原有 OTA 请求，继续携带 `application` 等字段。`mcc`、`mnc` 保留字符串及前导零，`lac`、`cellid` 使用长整数；兼容小区信息中的可选十六进制字符串 `tac`、`ci`。
+
+最近一次明确携带 `cell` 的上报按设备保存在 Redis 中，有效期24小时；缺少 `cell` 时不覆盖或续期，`valid=0` 会更新为无效状态。查询结果中的 `reportedAt` 是服务端接收时间（Unix 毫秒），表示上报快照；未上报或已过期返回 `data: null`。日志记录 MAC 和 `board.cell`，缓存写入失败不会阻断 OTA。
+
+使用设备所属用户的智控台登录令牌查询：
+
+```bash
+curl 'http://127.0.0.1:8002/xiaozhi/device/80:f1:b2:d4:ce:64/cell' \
+  -H 'Authorization: Bearer <TOKEN>'
+```
+
+成功结果的 `data` 包含 `deviceId`、`boardType`、`reportedAt` 和原始 `cell`。接口仅允许设备所属用户读取，`valid`、`stat` 按设备原值返回。
+
+改动由 `KSZ/Dockerfile-web` 应用补丁并覆盖 `KSZ/manager-api/src`，无需数据库迁移。重建管理端后，设备下次 OTA 上报即可接收：
+
+```bash
+docker compose -f KSZ/compose.yml up -d --build xiaozhi-esp32-server-web
+docker compose -f KSZ/compose.yml logs -f --tail=100 xiaozhi-esp32-server-web | rg '80:f1:b2:d4:ce:64.*board.cell'
+```
+
 ### 记忆模式选择
 
 本场景下设备端为公用硬件，用户选定智能体（语言）后通常会持续使用同一智能体完成一次完整服务，服务结束后再由后端归档对话记录。因此推荐以下配置：
