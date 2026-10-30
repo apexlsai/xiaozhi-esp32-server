@@ -2,6 +2,10 @@
 
 以下命令在仓库根目录 `/apps/xiaozhi-esp32-server_showroom` 执行。推荐使用 `uv`，当前 Conda `(base)` 无需退出；依赖在隔离环境安装。
 
+## Showroom 本地构建回归
+
+通过 Compose 配置解析核对 server、web、MQTT 的构建目录、Dockerfile 与独立镜像标签；MySQL、Redis 沿用本地镜像。实际执行 `cd KSZ && docker compose --progress plain build`，三个 `xiaozhi-esp32-server_showroom:{server_local,web_local,mqtt_local}` 镜像均构建成功，包含 server 全部补丁和管理端韩语语言修复补丁。构建上下文排除运行数据，差异空白检查通过。本次仅构建镜像，容器更新由 `docker compose up -d --build` 执行。
+
 ## Showroom 韩语识别与回复回归
 
 隔离 Maven 容器执行 `BoundAgentLanguageTest`、`ConfigServiceImplTest`、`DeviceServiceImplRebindTest`、`DeviceLanguageSpecTest`：21项通过，覆盖扩展属性缺失、残留中文语言与旧智能体名称时，配置仍使用实际绑定智能体，并保留其他属性。ASR 补丁隔离回归 `test_qwen_asr.py`：9项通过。

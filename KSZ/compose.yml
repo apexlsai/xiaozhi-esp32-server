@@ -1,12 +1,14 @@
-# 小智服务端全模块部署 - Showroom 复用现有镜像（Host 网络模式）
-# 在本目录执行：docker compose up -d --no-build --pull never
+# 小智服务端全模块部署 - Showroom 本地构建（Host 网络模式）
+# 在本目录执行：docker compose up -d --build
 
 name: xiaozhi-esp32-server_showroom
 
 services:
   xiaozhi-mqtt-gateway:
     profiles: [mqtt]
-    image: xiaozhi-esp32-server:mqtt_local
+    image: xiaozhi-esp32-server_showroom:mqtt_local
+    build:
+      context: ./mqtt
     pull_policy: never
     restart: always
     init: true
@@ -29,7 +31,10 @@ services:
       KSZ_GUIDE_CONTROL_TOKEN: ${KSZ_GUIDE_CONTROL_TOKEN:-}
 
   xiaozhi-esp32-server:
-    image: xiaozhi-esp32-server:server_local
+    image: xiaozhi-esp32-server_showroom:server_local
+    build:
+      context: ..
+      dockerfile: KSZ/Dockerfile-server
     pull_policy: never
     container_name: xiaozhi-esp32-server_showroom
     depends_on:
@@ -66,7 +71,10 @@ services:
       # 启用本地 FunASR 时，再恢复 model.pt 文件挂载。
 
   xiaozhi-esp32-server-web:
-    image: ${KSZ_WEB_IMAGE:-xiaozhi-esp32-server:web_local}
+    image: ${KSZ_WEB_IMAGE:-xiaozhi-esp32-server_showroom:web_local}
+    build:
+      context: ..
+      dockerfile: KSZ/Dockerfile-web
     pull_policy: never
     container_name: xiaozhi-esp32-server_showroom-web
     command: ["bash", "/start.sh"]

@@ -1,8 +1,8 @@
 # KSZ Showroom 部署
 
-本目录是 showroom 副本的部署与运维入口，使用 `KSZ/compose.yml`。项目名、容器名、数据目录及监听端口均与原环境隔离。直接引用原项目的本地镜像，不设置 `build:`，并通过 `pull_policy: never` 禁止拉取。Nginx 配置和 web 启动脚本以只读挂载覆盖，修改端口无需重新构建；普通 `docker compose up -d` 也不会触发构建。
+本目录是 showroom 副本的部署与运维入口，使用 `KSZ/compose.yml`。项目名、容器名、数据目录及监听端口均与原环境隔离。server、web 和 MQTT 网关均支持本地构建，镜像使用独立的 `xiaozhi-esp32-server_showroom` 名称。Nginx 配置和 web 启动脚本以只读挂载覆盖，修改端口无需重新构建。
 
-`KSZ_WEB_IMAGE` 可指定已有的独立管理端修复镜像，默认仍为 `xiaozhi-esp32-server:web_local`。当前韩语修复使用本地 `xiaozhi-esp32-server_showroom:web-language-fix-20261030`，仅替换配置下发实现，不修改原环境镜像。后续常规管理端构建通过 `patches/bound-agent-language.patch` 包含相同修复。
+默认构建标签为 `server_local`、`web_local` 和 `mqtt_local`；`KSZ_WEB_IMAGE` 可覆盖管理端镜像标签。管理端本地构建通过 `patches/bound-agent-language.patch` 包含韩语回复语言修复。
 
 副本已包含原环境的 `.env`、server 配置、上传文件及 MySQL 一致性快照，无需覆盖 `.env`。首次启动在空数据库中自动导入 `mysql/initdb/00-snapshot.sql`，随后执行 [showroom 端口修正](mysql-init/99-showroom-ports.sql)；已有数据目录不会重复导入。快照保存在权限为 `700` 的目录中且被 Git 忽略，包含原账号、设备、智能体及模型配置。模型服务地址与设备绑定沿用快照中的选择。
 
@@ -28,16 +28,15 @@
 
 - 已安装 Docker Engine 和 Docker Compose v2。
 - 保留 `KSZ/Dockerfile-server`、`KSZ/Dockerfile-web`、`KSZ/patches/` 和 `main/` 源码目录。
-- 本机已有原环境的 `xiaozhi-esp32-server:server_local`、`xiaozhi-esp32-server:web_local`、`xiaozhi-esp32-server:mqtt_local`、`mysql:latest` 和 `redis:8.0` 镜像。
+- 本机已有 `mysql:latest` 和 `redis:8.0` 镜像；首次构建需能下载 Dockerfile 的基础镜像、npm/Maven 依赖及 MQTT 固定版本源码。
 - 默认使用远程 ASR（Fun-ASR-Flash 或 OpenAI 兼容接口），无需下载或挂载本地 SenseVoice 模型。
 
-## 首次启动（复用已有镜像）
+## 构建并启动
 
 ```bash
 cd /apps/xiaozhi-esp32-server_showroom/KSZ
 
-# 使用现有镜像启动全部服务
-docker compose up -d --no-build --pull never
+docker compose up -d --build
 ```
 
 Compose 会在 `KSZ/` 下创建并使用以下默认持久化目录：
@@ -52,7 +51,7 @@ Compose 会在 `KSZ/` 下创建并使用以下默认持久化目录：
 export DATA_DIR=/srv/xiaozhi/data
 export UPLOAD_DIR=/srv/xiaozhi/uploadfile
 export MYSQL_DATA_DIR=/srv/xiaozhi/mysql
-docker compose up -d --no-build --pull never
+docker compose up -d --build
 ```
 
 ## 依赖服务端口
@@ -117,12 +116,12 @@ docker compose exec xiaozhi-esp32-server-db \
 SPRING_DATASOURCE_DRUID_EXTRA_ARGS=allowPublicKeyRetrieval=true&useSSL=false
 ```
 
-### 更新镜像后的部署
+### 更新代码后的部署
 
-源码或补丁的构建由原项目的开发流程完成。Showroom 不构建镜像；仅修改本副本源码不会改变运行程序。原镜像更新或本副本配置变更后，使用现有镜像重新创建容器：
+修改本副本源码或补丁后，在 `KSZ/` 中构建并更新容器：
 
 ```bash
-docker compose up -d --no-build --pull never
+docker compose up -d --build
 docker compose exec xiaozhi-esp32-server-redis redis-cli -p 36380 DEL server:config
 docker compose restart xiaozhi-esp32-server
 ```
@@ -135,10 +134,10 @@ KSZ 将角色设定上限统一为 10,000 字符，覆盖角色配置、模板�
 
 “无需迁移”仅指此 prompt 补丁。旧部署升级整个分支时仍会执行该分支已有的历史迁移；单独发布此补丁时，应在与当前部署匹配的源码副本中使用 KSZ 构建文件和补丁，并核对数据库资源保持一致。
 
-原项目完成镜像构建后，在 `KSZ/` 中更新管理端容器：
+修改管理端源码或补丁后，在 `KSZ/` 中构建并更新管理端容器：
 
 ```bash
-docker compose up -d --no-build --pull never --no-deps xiaozhi-esp32-server-web
+docker compose up -d --build --no-deps xiaozhi-esp32-server-web
 ```
 
 网页部署后刷新浏览器即可使用新上限，无需重启语音服务。此镜像不包含移动端安装包；移动端补丁也经过构建阶段校验，单独发布移动端时，在临时源码副本的仓库根目录应用对应部分后按移动端原有流程构建：
@@ -166,7 +165,7 @@ docker compose logs -f xiaozhi-esp32-server | grep "发送给LLM的请求"
 
 ### 常见问题
 
-- 镜像缺失：确认原项目本地镜像存在。Showroom 部署配置禁止拉取且没有构建入口，缺少镜像时会直接报错。
+- 应用镜像缺失或源码更新未生效：执行 `docker compose up -d --build`；MySQL、Redis 仍使用预先准备的本地镜像。
 - server 报缺少 `TTS` 或设备无法识别语音：重建 web，清 Redis 的 `server:config`，再重启 server。
 - 数据库已迁移但 web 报 `Unknown column 'attr_key'`：web 镜像与数据库结构不一致，按“更新代码后的部署”重建 web。
 - 容器启动失败或端口无法监听：检查 `38000`、`38002`、`38003`、`38004`、`${MYSQL_PORT}`、`${REDIS_PORT}` 是否已被宿主机进程占用。
@@ -332,7 +331,7 @@ ASR HTTP 客户端在同一设备会话内跨轮复用，连接默认空闲保�
 更新适配后，先在 `KSZ/` 重建服务端：
 
 ```bash
-docker compose up -d --no-build --pull never xiaozhi-esp32-server
+docker compose up -d --build xiaozhi-esp32-server
 ```
 
 保存后，在【智能体】中把语音识别模型改为该模型。清理 Redis 配置并重启 server：
@@ -465,7 +464,7 @@ docker compose exec -T xiaozhi-esp32-server-db \
 迁移后重建 web 并检查表结构：
 
 ```bash
-docker compose up -d --no-build --pull never xiaozhi-esp32-server-web
+docker compose up -d --build xiaozhi-esp32-server-web
 docker compose exec xiaozhi-esp32-server-db \
   mysql -P33307 -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" -D xiaozhi_esp32_server \
   -e "DESC ai_device_attribute;"
@@ -507,7 +506,7 @@ curl 'http://127.0.0.1:38002/xiaozhi/device/80:f1:b2:d4:ce:64/cell' \
 改动由 `KSZ/Dockerfile-web` 应用补丁并覆盖 `KSZ/manager-api/src`。基站定位同时启用下节的数据库迁移；重建管理端后，设备下次 OTA 上报即可接收：
 
 ```bash
-docker compose -f KSZ/compose.yml up -d --no-build --pull never xiaozhi-esp32-server-web
+docker compose -f KSZ/compose.yml up -d --build xiaozhi-esp32-server-web
 docker compose -f KSZ/compose.yml logs -f --tail=100 xiaozhi-esp32-server-web | rg '80:f1:b2:d4:ce:64.*board.cell'
 ```
 
@@ -919,7 +918,7 @@ wss://<WorkspaceId>.ap-southeast-1.maas.aliyuncs.com/api-ws/v1/inference
 
 ```bash
 cd /apps/xiaozhi-esp32-server_showroom/KSZ
-docker compose --profile mqtt up -d --no-build --pull never xiaozhi-mqtt-gateway
+docker compose --profile mqtt up -d --build xiaozhi-mqtt-gateway
 docker compose --profile mqtt ps xiaozhi-mqtt-gateway
 docker compose --profile mqtt logs --tail=100 xiaozhi-mqtt-gateway
 ```
@@ -928,7 +927,7 @@ docker compose --profile mqtt logs --tail=100 xiaozhi-mqtt-gateway
 
 镜像固定使用上游 [xiaozhi-mqtt-gateway](https://github.com/xinnan-tech/xiaozhi-mqtt-gateway/tree/93f026ad3a9a5572c9cf6ce651dd8fcf46fd2419) 提交 `93f026ad3a9a5572c9cf6ce651dd8fcf46fd2419`，校验源码归档 SHA256，通过 `npm ci` 使用提交的依赖锁。`qs` 使用兼容修复版本覆盖。构建文件、依赖及补丁均位于 `mqtt/`；升级网关时须同步更新提交、校验和、补丁及锁文件，并重新运行协议测试。
 
-网关源码构建在原项目的开发流程完成，showroom 直接复用本地 `xiaozhi-esp32-server:mqtt_local` 镜像。
+网关通过 `KSZ/mqtt/Dockerfile` 本地构建，镜像为 `xiaozhi-esp32-server_showroom:mqtt_local`。更新源码或补丁后执行上述带 `--build` 的命令。
 
 ### 智控台参数与 OTA
 
