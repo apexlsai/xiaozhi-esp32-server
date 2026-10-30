@@ -1,6 +1,6 @@
 # KSZ 测试篇
 
-以下命令在仓库根目录 `/apps/xiaozhi-esp32-server` 执行。推荐使用 `uv`，当前 Conda `(base)` 无需退出；依赖在隔离环境安装。
+以下命令在仓库根目录 `/apps/xiaozhi-esp32-server_showroom` 执行。推荐使用 `uv`，当前 Conda `(base)` 无需退出；依赖在隔离环境安装。
 
 ## 讲解模式与播放进度回归
 
@@ -33,9 +33,9 @@ Python 在现有 server 镜像的无网络临时容器执行 KSZ 回归：461项
 覆盖完整 ML307 `board.cell` 请求、运营商码前导零、可选十六进制字段、32位以上小区 ID、24小时缓存参数、缺失字段不覆盖、不续期、无效状态覆盖、Redis 写入异常不阻断 OTA、非法请求不入缓存，以及设备所属用户读取和越权拒绝。
 
 ```bash
-docker build -f KSZ/Dockerfile-web --target patched-source -t xiaozhi-esp32-server:cell-test-source .
+docker build -f KSZ/Dockerfile-web --target patched-source -t xiaozhi-esp32-server_showroom:cell-test-source .
 docker build --progress=plain -f - . <<'DOCKERFILE'
-FROM xiaozhi-esp32-server:cell-test-source AS patched-source
+FROM xiaozhi-esp32-server_showroom:cell-test-source AS patched-source
 FROM maven:3.9.4-eclipse-temurin-21
 WORKDIR /app
 COPY --from=patched-source /source/main/manager-api/ ./
@@ -138,13 +138,13 @@ uv run KSZ/scripts/request_latency.py logs --query '今天天气怎么样？' --
 天气：
 
 ```bash
-uv run KSZ/scripts/request_latency.py request --ota http://127.0.0.1:8002/xiaozhi/ota/ --device aa:bb:cc:dd:ee:ff --scenario weather --expect-tool get_weather --with-logs --json-out /tmp/weather-latency.json
+uv run KSZ/scripts/request_latency.py request --ota http://127.0.0.1:38002/xiaozhi/ota/ --device aa:bb:cc:dd:ee:ff --scenario weather --expect-tool get_weather --with-logs --json-out /tmp/weather-latency.json
 ```
 
 普通问答：
 
 ```bash
-uv run KSZ/scripts/request_latency.py request --ota http://127.0.0.1:8002/xiaozhi/ota/ --device aa:bb:cc:dd:ee:ff --text '给我说一声谢谢' --with-logs --json-out /tmp/chat-latency.json
+uv run KSZ/scripts/request_latency.py request --ota http://127.0.0.1:38002/xiaozhi/ota/ --device aa:bb:cc:dd:ee:ff --text '给我说一声谢谢' --with-logs --json-out /tmp/chat-latency.json
 ```
 
 其他测试使用相同入口，更换输入或场景参数：

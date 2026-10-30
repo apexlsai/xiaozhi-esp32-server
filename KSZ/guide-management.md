@@ -13,19 +13,19 @@ KSZ_GUIDE_ENABLED=1
 KSZ_GUIDE_PRESENCE_ENABLED=1
 KSZ_MANAGEMENT_API_URL=http://127.0.0.1:14000/api/v1/integration
 KSZ_MANAGEMENT_API_TOKEN=<与management的INTEGRATION_API_KEY一致>
-KSZ_GUIDE_CONTROL_URL=http://host.docker.internal:8004/internal/ksz/guide/control
+KSZ_GUIDE_CONTROL_URL=http://host.docker.internal:38004/internal/ksz/guide/control
 KSZ_GUIDE_CONTROL_TOKEN=<单独生成的至少32字符令牌>
 ```
 
-两个令牌使用不同的随机值。management 的服务凭据不能供浏览器或固件使用。控制令牌只用于 MQTT 网关调用小智 HTTP 服务。KSZ Host 部署的 HTTP 端口为 `8004`，`8003` 是 Java manager-api。
+两个令牌使用不同的随机值。management 的服务凭据不能供浏览器或固件使用。控制令牌只用于 MQTT 网关调用小智 HTTP 服务。KSZ Host 部署的 HTTP 端口为 `38004`，`38003` 是 Java manager-api。
 
 ```bash
-docker compose --env-file .env --profile mqtt up -d --build xiaozhi-esp32-server xiaozhi-mqtt-gateway
+docker compose --env-file .env --profile mqtt up -d --no-build --pull never xiaozhi-esp32-server xiaozhi-mqtt-gateway
 ```
 
 此命令是部署操作，会重启对应服务。仓库默认 `KSZ_GUIDE_ENABLED=0`，便于先完成资产登记及固件联调后再启用。启用时不得关闭现有设备接入鉴权。源码运行时将 `KSZ/server` 加入 `PYTHONPATH`；专用 Dockerfile 已打包 `ksz_guide`。
 
-仅同步设备在线状态时，设置 `KSZ_GUIDE_PRESENCE_ENABLED=1`、`KSZ_GUIDE_ENABLED=0`。开启导览会同时开启在线同步。两种模式均需配置上述服务地址和令牌；management 还需设置 `REDIS_URL`。管理端在容器中访问宿主机 Redis 时使用 `host.docker.internal` 和实际 Redis 端口，例如 `redis://host.docker.internal:6380/2`。
+仅同步设备在线状态时，设置 `KSZ_GUIDE_PRESENCE_ENABLED=1`、`KSZ_GUIDE_ENABLED=0`。开启导览会同时开启在线同步。两种模式均需配置上述服务地址和令牌；management 还需设置 `REDIS_URL`。管理端在容器中访问宿主机 Redis 时使用 `host.docker.internal` 和实际 Redis 端口，例如 `redis://host.docker.internal:36380/2`。
 
 更新源码后必须重新构建 server 和 MQTT 网关镜像；单独 `restart` 不会更新代码或容器环境变量。management 修改环境变量后也需要通过其 Compose 重新创建 API 容器。
 
@@ -69,10 +69,10 @@ RSSI 门槛、扫描窗口、稳定判定、蓝牙发射功率及固件自身冷
 
 开场、模型位置上下文与播报记录使用同一位置文本，优先采用当前绑定位置的名称；信标旧 `location_description` 只供没有位置名称的目录回退。生成期间切换到另一位置或收到更新的位置名称时，旧讲解后续内容失效；同位置不同成员的旧说明不会覆盖当前位置名称。
 
-修改 `.env` 或 `server/ksz_guide/guide-templates.yaml` 后，在 `KSZ/` 执行以下命令重建并更新 server；仅修改已有镜像支持的环境变量时可去掉 `--build`，不能只执行 `restart`：
+修改 `.env` 或 `server/ksz_guide/guide-templates.yaml` 后，在 `KSZ/` 执行以下命令重建并更新 server；仅修改已有镜像支持的环境变量时可去掉 `--no-build --pull never`，不能只执行 `restart`：
 
 ```bash
-docker compose --env-file .env -f compose.yml up -d --build --no-deps xiaozhi-esp32-server
+docker compose --env-file .env -f compose.yml up -d --no-build --pull never --no-deps xiaozhi-esp32-server
 ```
 
 ## 管理操作

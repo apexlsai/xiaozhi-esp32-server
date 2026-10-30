@@ -1,6 +1,10 @@
-# KSZ 本地构建部署
+# KSZ Showroom 部署
 
-本目录是 KSZ 定制开发、部署与运维的唯一入口。`compose.yml` 从项目根目录构建本地 server 和 web 镜像，不依赖不存在的 `xiaozhi-esp32-server:*_local` 远程镜像。上游通用部署请使用项目根目录的 `docker-compose.yml`。
+本目录是 showroom 副本的部署与运维入口，使用 `KSZ/compose.yml`。项目名、容器名、数据目录及监听端口均与原环境隔离。直接引用原项目的本地镜像，不设置 `build:`，并通过 `pull_policy: never` 禁止拉取。Nginx 配置和 web 启动脚本以只读挂载覆盖，修改端口无需重新构建；普通 `docker compose up -d` 也不会触发构建。
+
+副本已包含原环境的 `.env`、server 配置、上传文件及 MySQL 一致性快照，无需覆盖 `.env`。首次启动在空数据库中自动导入 `mysql/initdb/00-snapshot.sql`，随后执行 [showroom 端口修正](mysql-init/99-showroom-ports.sql)；已有数据目录不会重复导入。快照保存在权限为 `700` 的目录中且被 Git 忽略，包含原账号、设备、智能体及模型配置。模型服务地址与设备绑定沿用快照中的选择。
+
+固件 OTA 地址为 `http://8.138.182.36:38002/xiaozhi/ota/`。支持 OTA 配置下发的固件只需修改此入口并重新获取配置；设备网络仍需可达下发的 WebSocket `38000/TCP`，或 MQTT `31883/TCP` 与音频 `38884/UDP`，拍照还需访问视觉接口 `38004/TCP`。网关管理 API `38007` 映射到宿主机回环地址。
 
 测试命令、单次请求延时诊断、天气缓存对比及验收口径见 [KSZ 测试篇](testing.md)。
 
@@ -10,7 +14,7 @@
 
 活动会话可通过 `hello.features.location_updates=true` 订阅服务端确认的位置，屏幕按独立 `guide_control/location` 消息显示楼层、区域及位置描述，并在失位、断线或有效期到达时清空；WS 与 MQTT+UDP 使用同一消息契约，详见[位置显示协议](guide-protocol.md#活动会话的位置显示)。部署时同步更新 KSZ server 和 MQTT 网关镜像：网关沿用 JSON 透传，并保证先发送设备 `hello`、后发送位置快照。未声明能力的设备保持原协议。
 
-信标自动讲解、首次播报、切换打断、冷却、位置/待播有效期和交互静默时间统一在 `KSZ/.env` 配置，变量及默认值见[信标讲解规则](guide-management.md#信标讲解规则)。统一由一枚有效信标触发，不再按同位置绑定数量要求双信标确认；位置关系用于名称、资产查看与同位置防重。同位置共享60秒冷却，保留15秒最小间隔及固件1分钟上报冷却。修改后通过 `KSZ/compose.yml` 构建并重新创建 server 容器；单独 `restart` 不会更新代码和环境变量。
+信标自动讲解、首次播报、切换打断、冷却、位置/待播有效期和交互静默时间统一在 `KSZ/.env` 配置，变量及默认值见[信标讲解规则](guide-management.md#信标讲解规则)。统一由一枚有效信标触发，不再按同位置绑定数量要求双信标确认；位置关系用于名称、资产查看与同位置防重。同位置共享60秒冷却，保留15秒最小间隔及固件1分钟上报冷却。修改后通过 `KSZ/compose.yml` 重新创建 server 容器；单独 `restart` 不会更新环境变量。
 
 信标播报采用固定位置开场加模型正文，中文默认“您现在位于{location}。”；四语模板同样放在 `KSZ/.env`。专用 `guide-announcement.patch` 将开场接入同一轮 TTS，并过滤模型正文开头的问候、自我介绍和重复位置，普通聊天不受影响。
 
@@ -22,20 +26,16 @@
 
 - 已安装 Docker Engine 和 Docker Compose v2。
 - 保留 `KSZ/Dockerfile-server`、`KSZ/Dockerfile-web`、`KSZ/patches/` 和 `main/` 源码目录。
-- 确保 Docker 可以拉取基础镜像，以及 MySQL、Redis 镜像。
+- 本机已有原环境的 `xiaozhi-esp32-server:server_local`、`xiaozhi-esp32-server:web_local`、`xiaozhi-esp32-server:mqtt_local`、`mysql:latest` 和 `redis:8.0` 镜像。
 - 默认使用远程 ASR（Fun-ASR-Flash 或 OpenAI 兼容接口），无需下载或挂载本地 SenseVoice 模型。
 
-## 首次构建并启动
+## 首次启动（复用已有镜像）
 
 ```bash
-cd /apps/xiaozhi-esp32-server/KSZ
+cd /apps/xiaozhi-esp32-server_showroom/KSZ
 
-# 可单独构建指定镜像
-docker compose build xiaozhi-esp32-server-web
-docker compose build xiaozhi-esp32-server
-
-# 构建并启动全部服务
-docker compose up -d --build
+# 使用现有镜像启动全部服务
+docker compose up -d --no-build --pull never
 ```
 
 Compose 会在 `KSZ/` 下创建并使用以下默认持久化目录：
@@ -50,18 +50,12 @@ Compose 会在 `KSZ/` 下创建并使用以下默认持久化目录：
 export DATA_DIR=/srv/xiaozhi/data
 export UPLOAD_DIR=/srv/xiaozhi/uploadfile
 export MYSQL_DATA_DIR=/srv/xiaozhi/mysql
-docker compose up -d --build
+docker compose up -d --no-build --pull never
 ```
 
 ## 依赖服务端口
 
-Bridge 网络模式下，MySQL、Redis 仅在 Compose 内网暴露，不占用宿主机自定义端口。信标位置服务在宿主机运行时，server 容器经 `host.docker.internal` 访问，可在 `KSZ/.env` 中配置 `BEACON_LOCATION_API`：
-
-```bash
-cp .env.example .env
-```
-
-`8000`、`8002`、`8003` 分别是 server WebSocket、智控台、server HTTP 端口，与上游全模块 Docker 一致。
+MySQL、Redis 使用 Host 网络，分别监听 `33307`、`36380`。场馆 management 地址沿用 `KSZ/.env` 中的 `KSZ_MANAGEMENT_API_URL`。下节列出各服务端口。
 
 ## 常用操作
 
@@ -71,14 +65,14 @@ docker compose ps
 docker compose logs -f xiaozhi-esp32-server
 docker compose logs -f xiaozhi-esp32-server-web
 
-# 仅重建并更新一个服务
-docker compose up -d --build xiaozhi-esp32-server-web
+# 使用现有镜像重新创建一个服务
+docker compose up -d --no-build --pull never --force-recreate xiaozhi-esp32-server-web
 
 # 停止服务（保留数据目录）
 docker compose down
 
 # 清除服务端配置缓存后重启 server
-docker compose exec xiaozhi-esp32-server-redis redis-cli DEL server:config
+docker compose exec xiaozhi-esp32-server-redis redis-cli -p 36380 DEL server:config
 docker compose restart xiaozhi-esp32-server
 ```
 
@@ -86,12 +80,12 @@ docker compose restart xiaozhi-esp32-server
 
 配置采用 Host 网络模式，服务直接占用宿主机端口：
 
-- `8000`：WebSocket 服务
-- `8002`：智控台（Nginx）与 OTA 接口
-- `8003`：manager-api Java（仅本机，由 `8002` 反代，勿当作 server HTTP）
-- `8004`：xiaozhi-server HTTP / 视觉与内部回调（`server.internal_api`）
-- `${MYSQL_PORT}`：MySQL（默认 `3307`）
-- `${REDIS_PORT}`：Redis（默认 `6379`）
+- `38000`：WebSocket 服务
+- `38002`：智控台（Nginx）与 OTA 接口
+- `38003`：manager-api Java（仅本机，由 `38002` 反代，勿当作 server HTTP）
+- `38004`：xiaozhi-server HTTP / 视觉与内部回调（`server.internal_api`）
+- `${MYSQL_PORT}`：MySQL（默认 `33307`）
+- `${REDIS_PORT}`：Redis（默认 `36380`）
 
 启动前请确认这些端口没有被其他进程占用。
 
@@ -102,7 +96,7 @@ docker compose restart xiaozhi-esp32-server
 优先在智控台的【模型配置】中修改 ASR、LLM 或 SLM 地址；保存后清除 Redis 配置缓存并重启 server：
 
 ```bash
-docker compose exec xiaozhi-esp32-server-redis redis-cli FLUSHALL
+docker compose exec xiaozhi-esp32-server-redis redis-cli -p 36380 FLUSHALL
 docker compose restart xiaozhi-esp32-server
 ```
 
@@ -110,10 +104,10 @@ docker compose restart xiaozhi-esp32-server
 
 ```bash
 docker compose exec xiaozhi-esp32-server-db \
-  mysql -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server
+  mysql -P33307 -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server
 ```
 
-首次部署前，复制 `.env.example` 为 `.env` 并按需修改 `MYSQL_ROOT_PASSWORD` 与 `SPRING_DATASOURCE_DRUID_PASSWORD`。默认账号和密码仅用于首次本地部署；若数据库已初始化，修改密码后需同步更新 MySQL root 密码及已有连接配置。
+本副本已复制 `.env`。另建部署时可参考 `.env.example`，并按需修改 `MYSQL_ROOT_PASSWORD` 与 `SPRING_DATASOURCE_DRUID_PASSWORD`。若数据库已初始化，修改密码后需同步更新 MySQL root 密码及已有连接配置。
 
 若后端启动时报 `Public Key Retrieval is not allowed` 或 SSL 相关错误，在 `.env` 中设置：
 
@@ -121,21 +115,14 @@ docker compose exec xiaozhi-esp32-server-db \
 SPRING_DATASOURCE_DRUID_EXTRA_ARGS=allowPublicKeyRetrieval=true&useSSL=false
 ```
 
-### 更新代码后的部署
+### 更新镜像后的部署
 
-修改 `main/manager-api/`、`main/manager-web/` 或 `KSZ/patches/` 后：
+源码或补丁的构建由原项目的开发流程完成。Showroom 不构建镜像；仅修改本副本源码不会改变运行程序。原镜像更新或本副本配置变更后，使用现有镜像重新创建容器：
 
 ```bash
-docker compose up -d --build xiaozhi-esp32-server-web
-docker compose exec xiaozhi-esp32-server-redis redis-cli DEL server:config
+docker compose up -d --no-build --pull never
+docker compose exec xiaozhi-esp32-server-redis redis-cli -p 36380 DEL server:config
 docker compose restart xiaozhi-esp32-server
-```
-
-修改 `main/xiaozhi-server/` 后：
-
-```bash
-docker compose up -d --build xiaozhi-esp32-server
-docker compose logs --tail=50 xiaozhi-esp32-server
 ```
 
 ### 智能体 prompt 容量
@@ -146,11 +133,10 @@ KSZ 将角色设定上限统一为 10,000 字符，覆盖角色配置、模板�
 
 “无需迁移”仅指此 prompt 补丁。旧部署升级整个分支时仍会执行该分支已有的历史迁移；单独发布此补丁时，应在与当前部署匹配的源码副本中使用 KSZ 构建文件和补丁，并核对数据库资源保持一致。
 
-在 `KSZ/` 中部署本次修改：
+原项目完成镜像构建后，在 `KSZ/` 中更新管理端容器：
 
 ```bash
-docker compose build xiaozhi-esp32-server-web
-docker compose up -d --no-deps xiaozhi-esp32-server-web
+docker compose up -d --no-build --pull never --no-deps xiaozhi-esp32-server-web
 ```
 
 网页部署后刷新浏览器即可使用新上限，无需重启语音服务。此镜像不包含移动端安装包；移动端补丁也经过构建阶段校验，单独发布移动端时，在临时源码副本的仓库根目录应用对应部分后按移动端原有流程构建：
@@ -178,11 +164,11 @@ docker compose logs -f xiaozhi-esp32-server | grep "发送给LLM的请求"
 
 ### 常见问题
 
-- `pull access denied for xiaozhi-esp32-server`：确认命令在 `KSZ/` 执行，并使用 `docker compose up -d --build`；本地镜像必须由 `build` 段生成。
+- 镜像缺失：确认原项目本地镜像存在。Showroom 部署配置禁止拉取且没有构建入口，缺少镜像时会直接报错。
 - server 报缺少 `TTS` 或设备无法识别语音：重建 web，清 Redis 的 `server:config`，再重启 server。
 - 数据库已迁移但 web 报 `Unknown column 'attr_key'`：web 镜像与数据库结构不一致，按“更新代码后的部署”重建 web。
-- 容器启动失败或端口无法监听：检查 `8000`、`8002`、`8003`、`8004`、`${MYSQL_PORT}`、`${REDIS_PORT}` 是否已被宿主机进程占用。
-- `curl :8004/mcp/vision/explain` 报「MCP Vision 接口运行不正常」：`data/.config.yaml` 缺 `server.vision_explain` 或仍为上游默认 `8003`；见下文「Server 与智控台连接」。
+- 容器启动失败或端口无法监听：检查 `38000`、`38002`、`38003`、`38004`、`${MYSQL_PORT}`、`${REDIS_PORT}` 是否已被宿主机进程占用。
+- `curl :38004/mcp/vision/explain` 报「MCP Vision 接口运行不正常」：检查 `data/.config.yaml` 的 `server.vision_explain` 和 `http_port: 38004`；见下文「Server 与智控台连接」。
 
 版本变更、迁移背景与已知问题见 [CHANGELOG.md](CHANGELOG.md)（Keep a Changelog，自 `0.1.1` 起按版本记录）。
 
@@ -192,21 +178,21 @@ docker compose logs -f xiaozhi-esp32-server | grep "发送给LLM的请求"
 
 全模块部署时，`data/.config.yaml` 只需保留连接智控台与 Host 网络端口相关项；模型密钥等在智控台【模型配置】维护。`secret` 与 `sys_params` 表中的 `server.secret` 保持一致。
 
-Host 网络下 **不要沿用上游默认 `http_port: 8003`**：Java manager-api 已占用宿主机 `8003`，xiaozhi-server HTTP（视觉、内部回调）须用 **`8004`**。
+Host 网络下，showroom 的 Java manager-api 使用宿主机 `38003`，xiaozhi-server HTTP（视觉、内部回调）使用 **`38004`**。
 
 推荐 `data/.config.yaml` 模板（将 `<HOST_IP>` 换为设备可达的局域网 IP 或公网 IP/域名）：
 
 ```yaml
 server:
   ip: 0.0.0.0
-  port: 8000
-  http_port: 8004
+  port: 38000
+  http_port: 38004
   # 必填：GET /mcp/vision/explain 健康检查及设备下发均依赖此项
   # 内网可先留占位符，启动时自动探测本机 IP + http_port
-  vision_explain: http://<HOST_IP>:8004/mcp/vision/explain
+  vision_explain: http://<HOST_IP>:38004/mcp/vision/explain
 
 manager-api:
-  url: http://127.0.0.1:8002/xiaozhi
+  url: http://127.0.0.1:38002/xiaozhi
   secret: <从 sys_params 的 server.secret 获取>
 
 tool_feedback:
@@ -224,12 +210,12 @@ prompt_template: agent-base-prompt.txt
 
 | 配置项 | 写入位置 | KSZ 端口 / 地址 |
 |--------|----------|-----------------|
-| 连接智控台 | `.config.yaml` → `manager-api` | `http://127.0.0.1:8002/xiaozhi` |
-| WebSocket（设备） | `sys_params.server.websocket` | `ws://<HOST_IP>:8000/xiaozhi/v1/` |
-| OTA（设备） | `sys_params.server.ota` | `http://<HOST_IP>:8002/xiaozhi/ota/` |
-| 视觉 HTTP | `.config.yaml` + `sys_params.server.vision_explain` | `http://<HOST_IP>:8004/mcp/vision/explain` |
-| 内部回调 | `sys_params.server.internal_api` | `http://127.0.0.1:8004`（勿填 `8003`） |
-| manager-api Java | 无需配置 | 宿主机 `8003`，由 `8002` 反代 |
+| 连接智控台 | `.config.yaml` → `manager-api` | `http://127.0.0.1:38002/xiaozhi` |
+| WebSocket（设备） | `sys_params.server.websocket` | `ws://<HOST_IP>:38000/xiaozhi/v1/` |
+| OTA（设备） | `sys_params.server.ota` | `http://<HOST_IP>:38002/xiaozhi/ota/` |
+| 视觉 HTTP | `.config.yaml` + `sys_params.server.vision_explain` | `http://<HOST_IP>:38004/mcp/vision/explain` |
+| 内部回调 | `sys_params.server.internal_api` | `http://127.0.0.1:38004`（勿填 `38003`） |
+| manager-api Java | 无需配置 | 宿主机 `38003`，由 `38002` 反代 |
 
 > 全模块模式下，`.config.yaml` 的 `server` 段会覆盖 API 返回值。若未写 `vision_explain`，即使智控台已填 `server.vision_explain`，GET 检查仍会报「运行不正常」。
 
@@ -237,34 +223,34 @@ prompt_template: agent-base-prompt.txt
 
 ```bash
 docker compose exec xiaozhi-esp32-server-db \
-  mysql -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server -e "
-  UPDATE sys_params SET param_value='ws://<HOST_IP>:8000/xiaozhi/v1/'
+  mysql -P33307 -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server -e "
+  UPDATE sys_params SET param_value='ws://<HOST_IP>:38000/xiaozhi/v1/'
   WHERE param_code='server.websocket';
-  UPDATE sys_params SET param_value='http://<HOST_IP>:8002/xiaozhi/ota/'
+  UPDATE sys_params SET param_value='http://<HOST_IP>:38002/xiaozhi/ota/'
   WHERE param_code='server.ota';
-  UPDATE sys_params SET param_value='8004'
+  UPDATE sys_params SET param_value='38004'
   WHERE param_code='server.http_port';
-  UPDATE sys_params SET param_value='http://127.0.0.1:8004'
+  UPDATE sys_params SET param_value='http://127.0.0.1:38004'
   WHERE param_code='server.internal_api';
-  UPDATE sys_params SET param_value='http://<HOST_IP>:8004/mcp/vision/explain'
+  UPDATE sys_params SET param_value='http://<HOST_IP>:38004/mcp/vision/explain'
   WHERE param_code='server.vision_explain';"
 ```
 
 修改后清除配置缓存并重启 server：
 
 ```bash
-docker compose exec xiaozhi-esp32-server-redis redis-cli DEL server:config
+docker compose exec xiaozhi-esp32-server-redis redis-cli -p 36380 DEL server:config
 docker compose restart xiaozhi-esp32-server
 ```
 
-验证视觉接口（公网部署须放行安全组/防火墙 **8004**）：
+验证视觉接口（公网部署须放行安全组/防火墙 **38004**）：
 
 ```bash
-curl http://<HOST_IP>:8004/mcp/vision/explain
+curl http://<HOST_IP>:38004/mcp/vision/explain
 # 正常：MCP Vision 接口运行正常，视觉解释接口地址是：http://...
 ```
 
-视觉模型密钥与智能体绑定见下文「视觉模型（VLLM）」；上游 [`mcp-vision-integration.md`](../docs/mcp-vision-integration.md) 中的 **`8003` 端口不适用 KSZ Host 部署**，一律改为 **`8004`**。
+视觉模型密钥与智能体绑定见下文「视觉模型（VLLM）」；上游 [`mcp-vision-integration.md`](../docs/mcp-vision-integration.md) 的视觉接口示例须使用 showroom 的 **`38004`** 端口。
 
 ### 视觉模型（VLLM）
 
@@ -332,15 +318,15 @@ ASR HTTP 客户端在同一设备会话内跨轮复用，连接默认空闲保�
 更新适配后，先在 `KSZ/` 重建服务端：
 
 ```bash
-docker compose up -d --build xiaozhi-esp32-server
+docker compose up -d --no-build --pull never xiaozhi-esp32-server
 ```
 
 保存后，在【智能体】中把语音识别模型改为该模型。清理 Redis 配置并重启 server：
 
-下面以 Redis 默认端口 `6379` 为例；若 `.env` 使用 `6380`，将命令改为 `redis-cli -p 6380 DEL server:config`。
+下面使用 showroom Redis 端口 `36380`；如修改 `.env`，同步调整命令中的端口。
 
 ```bash
-docker compose exec xiaozhi-esp32-server-redis redis-cli DEL server:config
+docker compose exec xiaozhi-esp32-server-redis redis-cli -p 36380 DEL server:config
 docker compose restart xiaozhi-esp32-server
 ```
 
@@ -350,7 +336,7 @@ docker compose restart xiaozhi-esp32-server
 
 ```bash
 docker compose exec xiaozhi-esp32-server-db \
-  mysql -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server -e "
+  mysql -P33307 -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server -e "
   UPDATE ai_model_config
   SET config_json='{
     \"type\":\"qwen3_asr_flash\",
@@ -361,7 +347,7 @@ docker compose exec xiaozhi-esp32-server-db \
   }'
   WHERE id='ASR_Qwen3Flash';
   UPDATE ai_agent_template SET asr_model_id='ASR_Qwen3Flash';"
-docker compose exec xiaozhi-esp32-server-redis redis-cli DEL server:config
+docker compose exec xiaozhi-esp32-server-redis redis-cli -p 36380 DEL server:config
 docker compose restart xiaozhi-esp32-server
 ```
 
@@ -379,7 +365,7 @@ uv run --with httpx==0.28.1 python -m unittest discover -s KSZ/server/tests -p t
 
 ```bash
 docker compose exec xiaozhi-esp32-server-db \
-  mysql -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server -e "
+  mysql -P33307 -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server -e "
   UPDATE ai_model_config
   SET config_json='{
     \"type\":\"openai\",
@@ -389,7 +375,7 @@ docker compose exec xiaozhi-esp32-server-db \
     \"enable_thinking\":false
   }'
   WHERE id IN ('LLM_ChatGLMLLM', 'SLM_ChatGLMLLM');"
-docker compose exec xiaozhi-esp32-server-redis redis-cli FLUSHALL
+docker compose exec xiaozhi-esp32-server-redis redis-cli -p 36380 FLUSHALL
 docker compose restart xiaozhi-esp32-server
 ```
 
@@ -420,7 +406,7 @@ curl --request POST http://<LLM_HOST>:15000/v1/chat/completions \
 
 ```bash
 docker compose exec xiaozhi-esp32-server-db \
-  mysql -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server -e "
+  mysql -P33307 -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server -e "
   SELECT u.id, u.username, t.token, t.expire_date
   FROM sys_user_token t
   JOIN sys_user u ON u.id = t.user_id
@@ -431,7 +417,7 @@ docker compose exec xiaozhi-esp32-server-db \
 
 ```bash
 docker compose exec xiaozhi-esp32-server-db \
-  mysql -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server -e "
+  mysql -P33307 -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server -e "
   UPDATE sys_user_token
   SET expire_date=DATE_ADD(NOW(), INTERVAL 12 HOUR)
   WHERE token='<TOKEN>';"
@@ -454,20 +440,20 @@ docker compose exec -T xiaozhi-esp32-server-db \
   > backup/ai_device_attribute-$(date +%F-%H%M%S).sql
 
 docker compose exec -T xiaozhi-esp32-server-db \
-  mysql -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server \
+  mysql -P33307 -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server \
   < ../main/manager-api/src/main/resources/db/changelog/202607101600.sql
 
 docker compose exec -T xiaozhi-esp32-server-db \
-  mysql -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server \
+  mysql -P33307 -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" xiaozhi_esp32_server \
   < ../main/manager-api/src/main/resources/db/changelog/202607311534.sql
 ```
 
 迁移后重建 web 并检查表结构：
 
 ```bash
-docker compose up -d --build xiaozhi-esp32-server-web
+docker compose up -d --no-build --pull never xiaozhi-esp32-server-web
 docker compose exec xiaozhi-esp32-server-db \
-  mysql -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" -D xiaozhi_esp32_server \
+  mysql -P33307 -uroot -p"${MYSQL_ROOT_PASSWORD:-123456}" -D xiaozhi_esp32_server \
   -e "DESC ai_device_attribute;"
 ```
 
@@ -498,7 +484,7 @@ Body: beacon-abc-123
 使用设备所属用户的智控台登录令牌查询：
 
 ```bash
-curl 'http://127.0.0.1:8002/xiaozhi/device/80:f1:b2:d4:ce:64/cell' \
+curl 'http://127.0.0.1:38002/xiaozhi/device/80:f1:b2:d4:ce:64/cell' \
   -H 'Authorization: Bearer <TOKEN>'
 ```
 
@@ -507,7 +493,7 @@ curl 'http://127.0.0.1:8002/xiaozhi/device/80:f1:b2:d4:ce:64/cell' \
 改动由 `KSZ/Dockerfile-web` 应用补丁并覆盖 `KSZ/manager-api/src`。基站定位同时启用下节的数据库迁移；重建管理端后，设备下次 OTA 上报即可接收：
 
 ```bash
-docker compose -f KSZ/compose.yml up -d --build xiaozhi-esp32-server-web
+docker compose -f KSZ/compose.yml up -d --no-build --pull never xiaozhi-esp32-server-web
 docker compose -f KSZ/compose.yml logs -f --tail=100 xiaozhi-esp32-server-web | rg '80:f1:b2:d4:ce:64.*board.cell'
 ```
 
@@ -735,7 +721,7 @@ KSZ 不走“按 `device_language` 强制翻译”路线（`agent-base-prompt.tx
 
 HTTP 层恒为 `200`，业务成败看 JSON 的 `code`（`0` 成功，非 `0` 失败）。这是 manager-api 的 `Result` 约定，不是传输异常。`code=0` 表示语言已保存且换绑已在 server 侧执行（设备须在线）。
 
-`server.internal_api`（参数字典）**必须**指向 xiaozhi-server 内部 HTTP，Host 网络 Docker 部署下为 `http://127.0.0.1:8004`（不要填 `8003`，那是 manager-api Java）；回调使用 `server.secret` 的 Bearer 鉴权。未配置或换绑失败时返回非零业务码，语言属性与设备绑定均保持原值。
+`server.internal_api`（参数字典）**必须**指向 xiaozhi-server 内部 HTTP，Host 网络 Docker 部署下为 `http://127.0.0.1:38004`（不要填 `38003`，那是 manager-api Java）；回调使用 `server.secret` 的 Bearer 鉴权。未配置或换绑失败时返回非零业务码，语言属性与设备绑定均保持原值。
 
 设备也可直接通过 WebSocket 上报 `device_event` / `language_change`，效果相同。目标智能体始终由 `language` 与 `dev` 推导，设备传入的 `target_agent_name` 不会覆盖该规则：
 
@@ -863,7 +849,7 @@ wss://<WorkspaceId>.ap-southeast-1.maas.aliyuncs.com/api-ws/v1/inference
 
 ### 定向语音开发 WebSocket
 
-开发控制端连接 `ws://<SERVER_HOST>:8000/dev/ws` 后，可查询在线设备，并向指定真实设备注入文本；目标设备会沿用原有 LLM、TTS 和 Opus 音频下发流程。
+开发控制端连接 `ws://<SERVER_HOST>:38000/dev/ws` 后，可查询在线设备，并向指定真实设备注入文本；目标设备会沿用原有 LLM、TTS 和 Opus 音频下发流程。
 
 查询在线设备：
 
@@ -899,42 +885,36 @@ wss://<WorkspaceId>.ap-southeast-1.maas.aliyuncs.com/api-ws/v1/inference
 
 固件须支持上游 MQTT+UDP 应用协议 v3、QoS 0，并能在 MQTT 通道发送既有 KSZ 事件。语言换绑后需处理 `goodbye`，重新发送 `hello` 建立会话。视觉流式还需实现本文的 `vision_stream`、`_meta.vision_request_id` 与 HTTP 上传约定；未适配的旧端继续使用原视觉返回方式。
 
-### 构建与启动
+### 使用已有镜像启动
 
 在 `KSZ/.env` 中补齐 `.env.example` 的 MQTT 配置：
 
 | 环境变量 | 填写要求 |
 | --- | --- |
 | `MQTT_PUBLIC_HOST` | 设备可访问的服务器 IPv4 或域名，不带协议和端口 |
-| `MQTT_PORT` | MQTT TCP 端口，默认 `1883` |
-| `MQTT_UDP_PORT` | 音频 UDP 端口，默认 `8884` |
-| `MQTT_API_PORT` | 管理 API 宿主机端口，默认 `8007`，只监听宿主机回环地址 |
+| `MQTT_PORT` | MQTT TCP 端口，默认 `31883` |
+| `MQTT_UDP_PORT` | 音频 UDP 端口，默认 `38884` |
+| `MQTT_API_PORT` | 管理 API 宿主机端口，默认 `38007`，只监听宿主机回环地址 |
 | `MQTT_SIGNATURE_KEY` | 与智控台 `server.mqtt_signature_key` 一致 |
 | `MQTT_SERVER_SECRET` | 与智控台 `server.secret` 一致 |
-| `MQTT_CHAT_SERVER` | 默认 `ws://host.docker.internal:8000/xiaozhi/v1/?from=mqtt_gateway` |
+| `MQTT_CHAT_SERVER` | 默认 `ws://host.docker.internal:38000/xiaozhi/v1/?from=mqtt_gateway` |
 
-签名密钥至少 8 位，包含大小写字母，不能包含上游禁止的弱密码片段 `test`、`1234`、`admin`、`password`、`qwerty`、`xiaozhi`。两种密钥各有用途，不要互相替代。配置缺失时网关会在监听端口前退出；普通 Compose 启动不要求配置 MQTT。
+签名密钥至少 8 位，包含大小写字母，不能包含上游禁止的弱密码片段 `test`、`1234`、`admin`、`password`、`qwerty`、`xiaozhi`。两种密钥各有用途，不要互相替代。配置缺失时网关会在监听端口前退出；showroom 的 `.env` 默认通过 `COMPOSE_PROFILES=mqtt` 启用网关。
 
 先确保现有 server/web 已正常运行，再启动网关：
 
 ```bash
-cd /apps/xiaozhi-esp32-server/KSZ
-docker compose --profile mqtt build xiaozhi-mqtt-gateway
-docker compose --profile mqtt up -d xiaozhi-mqtt-gateway
+cd /apps/xiaozhi-esp32-server_showroom/KSZ
+docker compose --profile mqtt up -d --no-build --pull never xiaozhi-mqtt-gateway
 docker compose --profile mqtt ps xiaozhi-mqtt-gateway
 docker compose --profile mqtt logs --tail=100 xiaozhi-mqtt-gateway
 ```
 
-网关独立使用 Bridge 网络，其余服务继续使用 Host 网络。网关通过 Docker 的 `host-gateway` 访问宿主机 `8000`；宿主机防火墙须允许该容器访问服务端。设备网络须可达 MQTT TCP 和音频 UDP 端口；仅 HTTP 反向代理不能承载这两个入口。管理 API 映射为 `127.0.0.1:<MQTT_API_PORT>`，供 Host 网络的 manager-api 访问。
+网关独立使用 Bridge 网络，其余服务继续使用 Host 网络。网关通过 Docker 的 `host-gateway` 访问宿主机 `38000`；宿主机防火墙须允许该容器访问服务端。设备网络须可达 MQTT TCP 和音频 UDP 端口；仅 HTTP 反向代理不能承载这两个入口。管理 API 映射为 `127.0.0.1:<MQTT_API_PORT>`，供 Host 网络的 manager-api 访问。
 
 镜像固定使用上游 [xiaozhi-mqtt-gateway](https://github.com/xinnan-tech/xiaozhi-mqtt-gateway/tree/93f026ad3a9a5572c9cf6ce651dd8fcf46fd2419) 提交 `93f026ad3a9a5572c9cf6ce651dd8fcf46fd2419`，校验源码归档 SHA256，通过 `npm ci` 使用提交的依赖锁。`qs` 使用兼容修复版本覆盖。构建文件、依赖及补丁均位于 `mqtt/`；升级网关时须同步更新提交、校验和、补丁及锁文件，并重新运行协议测试。
 
-若本机 Docker Hub 镜像代理不可用，可通过构建参数指定可访问的 Node 镜像仓库，例如：
-
-```bash
-docker compose --profile mqtt build \
-  --build-arg NODE_REGISTRY=public.ecr.aws/docker/library xiaozhi-mqtt-gateway
-```
+网关源码构建在原项目的开发流程完成，showroom 直接复用本地 `xiaozhi-esp32-server:mqtt_local` 镜像。
 
 ### 智控台参数与 OTA
 
@@ -947,19 +927,19 @@ docker compose --profile mqtt build \
 | `server.udp_gateway` | `<MQTT_PUBLIC_HOST>:<MQTT_UDP_PORT>` |
 | `server.mqtt_manager_api` | `127.0.0.1:<MQTT_API_PORT>` |
 
-保留 `server.websocket` 和 `server.ota`；`server.internal_api` 仍为 KSZ 的 `http://127.0.0.1:8004`。视觉 `vision.url` 必须可被设备访问，不能使用网关内部地址 `host.docker.internal`；图片仍直接上传 HTTP 视觉接口，音频和字幕经网关返回。
+保留 `server.websocket` 和 `server.ota`；`server.internal_api` 仍为 KSZ 的 `http://127.0.0.1:38004`。视觉 `vision.url` 必须可被设备访问，不能使用网关内部地址 `host.docker.internal`；图片仍直接上传 HTTP 视觉接口，音频和字幕经网关返回。
 
-这些 OTA 参数是全局配置，首期不提供按设备灰度。应先在测试环境启用，记录原参数值。保存后清理配置缓存、重启 server，再让测试设备重新获取 OTA。下面清缓存命令适用于默认 Redis 端口 `6379`；如果 `.env` 配置了 `REDIS_PORT=6380`，需使用 `redis-cli -p 6380 DEL server:config`。Compose 会读取 `.env`，直接执行的 `redis-cli` 不会自动读取其中的端口：
+这些 OTA 参数是全局配置，首期不提供按设备灰度。保存后清理配置缓存、重启 server，再让测试设备重新获取 OTA。下面使用 showroom Redis 端口 `36380`；如修改 `.env`，同步调整命令中的端口。Compose 会读取 `.env`，直接执行的 `redis-cli` 不会自动读取其中的端口：
 
 ```bash
-docker compose exec xiaozhi-esp32-server-redis redis-cli DEL server:config
+docker compose exec xiaozhi-esp32-server-redis redis-cli -p 36380 DEL server:config
 docker compose restart xiaozhi-esp32-server
 ```
 
 可用 Node.js 22 执行 OTA 检查，指定专用测试 MAC：
 
 ```bash
-node mqtt/verify-ota.cjs http://<HOST_IP>:8002/xiaozhi/ota/ aa:bb:cc:dd:ee:ff
+node mqtt/verify-ota.cjs http://<HOST_IP>:38002/xiaozhi/ota/ aa:bb:cc:dd:ee:ff
 ```
 
 该命令会提交真实 OTA 请求，可能更新测试设备连接信息或产生激活码；不会切换语言、连接 MQTT 或播放语音。检查设备身份、主题、凭据及 WebSocket 回退地址，只输出检查结果，不输出密码。若进程环境提供 `MQTT_SIGNATURE_KEY`，还会校验 OTA 密码签名；脚本不自动读取 `.env`。
@@ -976,7 +956,7 @@ node mqtt/verify-ota.cjs http://<HOST_IP>:8002/xiaozhi/ota/ aa:bb:cc:dd:ee:ff
 
 仅保持 MQTT 连接时，不代表存在 KSZ 活动会话。没有会话时信标事件不转发、定向播报不可用；首期不缓存这些事件。按 MAC 定位设备，服务端显示的 TCP 对端地址属于网关。
 
-构建后运行隔离协议测试，无需模型、数据库或真实设备，不发布宿主机端口：
+使用现有镜像运行隔离协议测试，无需模型、数据库或真实设备，不发布宿主机端口：
 
 ```bash
 docker run --rm --network none \
@@ -1016,7 +996,7 @@ docker compose restart xiaozhi-esp32-server
 
 - [MCP 接入点部署](../docs/mcp-endpoint-enable.md)
 - [MCP 接入点使用](../docs/mcp-endpoint-integration.md)
-- [视觉模型 MCP 集成](../docs/mcp-vision-integration.md)（KSZ Host 部署请将文档中 **8003** 改为 **8004**）
+- [视觉模型 MCP 集成](../docs/mcp-vision-integration.md)（showroom 视觉接口使用 **38004**）
 - [通过 MCP 获取设备信息](../docs/mcp-get-device-info.md)
 
 ### 视觉语言与超时对齐

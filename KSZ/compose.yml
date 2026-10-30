@@ -1,38 +1,37 @@
-# 小智服务端全模块部署 - KSZ 二次开发本地构建版（Host 网络模式）
-# 在本目录执行：docker compose up -d --build
+# 小智服务端全模块部署 - Showroom 复用现有镜像（Host 网络模式）
+# 在本目录执行：docker compose up -d --no-build --pull never
+
+name: xiaozhi-esp32-server_showroom
 
 services:
   xiaozhi-mqtt-gateway:
     profiles: [mqtt]
     image: xiaozhi-esp32-server:mqtt_local
-    build:
-      context: ./mqtt
+    pull_policy: never
     restart: always
     init: true
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "${MQTT_PORT:-1883}:${MQTT_PORT:-1883}/tcp"
-      - "${MQTT_UDP_PORT:-8884}:${MQTT_UDP_PORT:-8884}/udp"
-      - "127.0.0.1:${MQTT_API_PORT:-8007}:8007/tcp"
+      - "${MQTT_PORT:-31883}:${MQTT_PORT:-31883}/tcp"
+      - "${MQTT_UDP_PORT:-38884}:${MQTT_UDP_PORT:-38884}/udp"
+      - "127.0.0.1:${MQTT_API_PORT:-38007}:${MQTT_API_PORT:-38007}/tcp"
     environment:
       TZ: Asia/Shanghai
       PUBLIC_IP: ${MQTT_PUBLIC_HOST:-}
-      MQTT_PORT: ${MQTT_PORT:-1883}
-      UDP_PORT: ${MQTT_UDP_PORT:-8884}
-      API_PORT: 8007
+      MQTT_PORT: ${MQTT_PORT:-31883}
+      UDP_PORT: ${MQTT_UDP_PORT:-38884}
+      API_PORT: ${MQTT_API_PORT:-38007}
       MQTT_SIGNATURE_KEY: ${MQTT_SIGNATURE_KEY:-}
       SERVER_SECRET: ${MQTT_SERVER_SECRET:-}
-      MQTT_CHAT_SERVER: ${MQTT_CHAT_SERVER:-ws://host.docker.internal:8000/xiaozhi/v1/?from=mqtt_gateway}
+      MQTT_CHAT_SERVER: ${MQTT_CHAT_SERVER:-ws://host.docker.internal:38000/xiaozhi/v1/?from=mqtt_gateway}
       KSZ_GUIDE_CONTROL_URL: ${KSZ_GUIDE_CONTROL_URL:-}
       KSZ_GUIDE_CONTROL_TOKEN: ${KSZ_GUIDE_CONTROL_TOKEN:-}
 
   xiaozhi-esp32-server:
     image: xiaozhi-esp32-server:server_local
-    build:
-      context: ..
-      dockerfile: KSZ/Dockerfile-server
-    container_name: xiaozhi-esp32-server
+    pull_policy: never
+    container_name: xiaozhi-esp32-server_showroom
     depends_on:
       xiaozhi-esp32-server-db:
         condition: service_healthy
@@ -68,10 +67,9 @@ services:
 
   xiaozhi-esp32-server-web:
     image: xiaozhi-esp32-server:web_local
-    build:
-      context: ..
-      dockerfile: KSZ/Dockerfile-web
-    container_name: xiaozhi-esp32-server-web
+    pull_policy: never
+    container_name: xiaozhi-esp32-server_showroom-web
+    command: ["bash", "/start.sh"]
     restart: always
     network_mode: host
     depends_on:
@@ -81,12 +79,12 @@ services:
         condition: service_healthy
     environment:
       - TZ=Asia/Shanghai
-      - SPRING_DATASOURCE_DRUID_URL=jdbc:mysql://127.0.0.1:${MYSQL_PORT:-3307}/xiaozhi_esp32_server?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&nullCatalogMeansCurrent=true&connectTimeout=30000&socketTimeout=30000&autoReconnect=true&failOverReadOnly=false&maxReconnects=10${SPRING_DATASOURCE_DRUID_EXTRA_ARGS:+&$SPRING_DATASOURCE_DRUID_EXTRA_ARGS}
+      - SPRING_DATASOURCE_DRUID_URL=jdbc:mysql://127.0.0.1:${MYSQL_PORT:-33307}/xiaozhi_esp32_server?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&nullCatalogMeansCurrent=true&connectTimeout=30000&socketTimeout=30000&autoReconnect=true&failOverReadOnly=false&maxReconnects=10${SPRING_DATASOURCE_DRUID_EXTRA_ARGS:+&$SPRING_DATASOURCE_DRUID_EXTRA_ARGS}
       - SPRING_DATASOURCE_DRUID_USERNAME=root
       - SPRING_DATASOURCE_DRUID_PASSWORD=${SPRING_DATASOURCE_DRUID_PASSWORD:-123456}
       - SPRING_DATA_REDIS_HOST=127.0.0.1
       - SPRING_DATA_REDIS_PASSWORD=
-      - SPRING_DATA_REDIS_PORT=${REDIS_PORT:-6379}
+      - SPRING_DATA_REDIS_PORT=${REDIS_PORT:-36380}
       - KSZ_CELL_LOCATION_ENABLED=${KSZ_CELL_LOCATION_ENABLED:-0}
       - KSZ_TANSHU_API_KEY=${KSZ_TANSHU_API_KEY:-}
       - KSZ_CELL_LOCATION_CACHE_SECONDS=${KSZ_CELL_LOCATION_CACHE_SECONDS:-2592000}
@@ -95,13 +93,16 @@ services:
       - KSZ_LOCATION_DEFAULT_CITY=${KSZ_LOCATION_DEFAULT_CITY:-}
     volumes:
       - ${UPLOAD_DIR:-./uploadfile}:/uploadfile
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./start-web.sh:/start.sh:ro
 
   xiaozhi-esp32-server-db:
     image: mysql:latest
-    container_name: xiaozhi-esp32-server-db
-    command: --port=${MYSQL_PORT:-3307}
+    pull_policy: never
+    container_name: xiaozhi-esp32-server_showroom-db
+    command: --port=${MYSQL_PORT:-33307}
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-P", "${MYSQL_PORT:-3307}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-P", "${MYSQL_PORT:-33307}"]
       timeout: 45s
       interval: 10s
       retries: 10
@@ -109,6 +110,8 @@ services:
     network_mode: host
     volumes:
       - ${MYSQL_DATA_DIR:-./mysql/data}:/var/lib/mysql
+      - ./mysql/initdb/00-snapshot.sql:/docker-entrypoint-initdb.d/00-snapshot.sql:ro
+      - ./mysql-init/99-showroom-ports.sql:/docker-entrypoint-initdb.d/99-showroom-ports.sql:ro
     environment:
       - TZ=Asia/Shanghai
       - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-123456}
@@ -117,12 +120,13 @@ services:
 
   xiaozhi-esp32-server-redis:
     image: redis:8.0
-    container_name: xiaozhi-esp32-server-redis
-    command: ["redis-server", "--port", "${REDIS_PORT:-6379}"]
+    pull_policy: never
+    container_name: xiaozhi-esp32-server_showroom-redis
+    command: ["redis-server", "--port", "${REDIS_PORT:-36380}"]
     restart: always
     network_mode: host
     healthcheck:
-      test: ["CMD", "redis-cli", "-p", "${REDIS_PORT:-6379}", "ping"]
+      test: ["CMD", "redis-cli", "-p", "${REDIS_PORT:-36380}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 3

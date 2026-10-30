@@ -244,9 +244,9 @@ def main():
     request.add_argument("--mqtt-host", help="覆盖 OTA MQTT 主机，用于本机对比；端口不变")
     request.add_argument("--udp-host", help="覆盖 hello UDP 主机，用于本机对比；端口不变")
     for mode in (logs, request):
-        mode.add_argument("--server-container", default="xiaozhi-esp32-server")
-        mode.add_argument("--mqtt-container", default="ksz-xiaozhi-mqtt-gateway-1")
-        mode.add_argument("--agent-container", default="docker-museum-guide-agent-1")
+        mode.add_argument("--server-container", default="xiaozhi-esp32-server_showroom")
+        mode.add_argument("--mqtt-container", default="xiaozhi-esp32-server_showroom-xiaozhi-mqtt-gateway-1")
+        mode.add_argument("--agent-container", default="museum-guide-agent-showroom")
         mode.add_argument("--json-out", type=Path)
         mode.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR,
                           help="每次运行的诊断日志目录，默认 KSZ/logs")

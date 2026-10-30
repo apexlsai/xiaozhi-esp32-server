@@ -50,7 +50,7 @@ MQTT 完成认证和订阅后可发送导览控制消息，不需要先建立语
       "rssi_advantage": 8,
       "stable_ms": 3000,
       "window_ms": 2000,
-      "lost_ms": 8000,
+      "lost_ms": 38000,
       "min_announce_interval_ms": 15000
     }
   },

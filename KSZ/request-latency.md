@@ -22,7 +22,7 @@ python KSZ/scripts/request_latency.py logs \
   --json-out /tmp/weather-latency.json
 ```
 
-此模式只用 Python 标准库。默认容器名为 `xiaozhi-esp32-server`、`ksz-xiaozhi-mqtt-gateway-1`、`docker-museum-guide-agent-1`；可用 `--server-container`、`--mqtt-container`、`--agent-container` 覆盖。需要读取 Docker 日志的权限。
+此模式只用 Python 标准库。默认容器名为 `xiaozhi-esp32-server_showroom`、`xiaozhi-esp32-server_showroom-xiaozhi-mqtt-gateway-1`、`museum-guide-agent-showroom`；可用 `--server-container`、`--mqtt-container`、`--agent-container` 覆盖。需要读取 Docker 日志的权限。
 
 也可读取离线日志；日志须通过 `docker logs --timestamps` 导出，不能用只有秒级时间的浏览器日志替代：
 
@@ -48,7 +48,7 @@ uv run KSZ/scripts/request_latency.py --help
 
 ```bash
 uv run KSZ/scripts/request_latency.py request \
-  --ota http://127.0.0.1:8002/xiaozhi/ota/ \
+  --ota http://127.0.0.1:38002/xiaozhi/ota/ \
   --device aa:bb:cc:dd:ee:ff \
   --text '给我说一声谢谢' \
   --with-logs --json-out /tmp/chat-latency.json
@@ -58,7 +58,7 @@ uv run KSZ/scripts/request_latency.py request \
 
 ```bash
 uv run KSZ/scripts/request_latency.py request \
-  --ota http://127.0.0.1:8002/xiaozhi/ota/ \
+  --ota http://127.0.0.1:38002/xiaozhi/ota/ \
   --device aa:bb:cc:dd:ee:ff \
   --scenario weather --expect-tool get_weather --with-logs
 ```
@@ -67,7 +67,7 @@ uv run KSZ/scripts/request_latency.py request \
 
 ```bash
 uv run KSZ/scripts/request_latency.py request \
-  --ota http://127.0.0.1:8002/xiaozhi/ota/ \
+  --ota http://127.0.0.1:38002/xiaozhi/ota/ \
   --device aa:bb:cc:dd:ee:ff \
   --mcp --scenario mcp --expect-tool self.get_device_status --with-logs
 ```
@@ -76,7 +76,7 @@ uv run KSZ/scripts/request_latency.py request \
 
 ```bash
 uv run KSZ/scripts/request_latency.py request \
-  --ota http://127.0.0.1:8002/xiaozhi/ota/ \
+  --ota http://127.0.0.1:38002/xiaozhi/ota/ \
   --device aa:bb:cc:dd:ee:ff \
   --audio /tmp/question.wav --with-logs --json-out /tmp/audio-latency.json
 ```

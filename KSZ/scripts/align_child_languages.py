@@ -44,7 +44,7 @@ class Database:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--container", default="xiaozhi-esp32-server-db")
+    parser.add_argument("--container", default="xiaozhi-esp32-server_showroom-db")
     parser.add_argument("--backup", type=Path)
     parser.add_argument("--rollback", type=Path)
     parser.add_argument("--apply", action="store_true")
