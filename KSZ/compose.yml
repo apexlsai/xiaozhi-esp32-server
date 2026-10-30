@@ -66,7 +66,7 @@ services:
       # 启用本地 FunASR 时，再恢复 model.pt 文件挂载。
 
   xiaozhi-esp32-server-web:
-    image: xiaozhi-esp32-server:web_local
+    image: ${KSZ_WEB_IMAGE:-xiaozhi-esp32-server:web_local}
     pull_policy: never
     container_name: xiaozhi-esp32-server_showroom-web
     command: ["bash", "/start.sh"]
@@ -112,6 +112,7 @@ services:
       - ${MYSQL_DATA_DIR:-./mysql/data}:/var/lib/mysql
       - ./mysql/initdb/00-snapshot.sql:/docker-entrypoint-initdb.d/00-snapshot.sql:ro
       - ./mysql-init/99-showroom-ports.sql:/docker-entrypoint-initdb.d/99-showroom-ports.sql:ro
+      - ./mysql-init/100-korean-asr.sql:/docker-entrypoint-initdb.d/100-korean-asr.sql:ro
     environment:
       - TZ=Asia/Shanghai
       - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-123456}

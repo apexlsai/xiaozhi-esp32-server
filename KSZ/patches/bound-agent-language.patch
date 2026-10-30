@@ -1,0 +1,12 @@
+--- a/main/manager-api/src/main/java/xiaozhi/modules/config/service/impl/ConfigServiceImpl.java
++++ b/main/manager-api/src/main/java/xiaozhi/modules/config/service/impl/ConfigServiceImpl.java
+@@ -223,6 +223,8 @@
+ 
+         // 注入设备扩展属性，供 xiaozhi-server 读取并传给 LLM
+-        Map<String, String> deviceAttributes = deviceAttributeService.getAttributesByDeviceId(device.getMacAddress());
++        Map<String, String> deviceAttributes = new HashMap<>(
++                deviceAttributeService.getAttributesByDeviceId(device.getMacAddress()));
++        deviceAttributes.put("agent_name", agent.getAgentName());
+         result.put("device_attributes", deviceAttributes);
+ 
+         // 构建模块配置
