@@ -4,6 +4,7 @@
 !KSZ/patches/prompt-limit.patch
 !KSZ/patches/cell-report.patch
 !KSZ/patches/cell-location-api.patch
+!KSZ/patches/bound-agent-language.patch
 !KSZ/manager-api/
 !KSZ/manager-api/**
 !main/
