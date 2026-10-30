@@ -325,6 +325,8 @@ KSZ 向 Agent 的语音与拍照请求统一传递 `session_id`，拍照增加 `
 
 官方预设 `ASR_Qwen3Flash` 的 `qwen3-asr-flash` 同样可用，保持原地址和模型名即可；只有切换 Fun-ASR-Flash 时才需改为上述值。KSZ 适配保留两种请求协议，云端等待采用异步 HTTP，并限制整次请求默认最多60秒，避免识别服务卡住时阻塞所有设备握手。实现位于 `patches/qwen-fun-asr.patch`，由 `Dockerfile-server` 在源码构建阶段检查并应用，上游工作区源码保持原样。
 
+韩语可使用独立的 `ASR_Qwen3Flash_Korean`（“Qwen3Flash韩语专用”）配置：复制现有千问 API 地址、密钥和模型参数，在配置 JSON 中增加 `"language": "ko"`，再让儿童、青年、专家三个韩语智能体选择该语音识别模型。`qwen3-asr-flash` 会将其发送为 `parameters.asr_options.language: ko`；Fun-ASR-Flash 对应 `parameters.language_hints: [ko]`。当前表单未展示独立语言字段，需要在模型配置 JSON 中维护。指定语种适合固定韩语输入，混合语言输入应使用自动识别配置。
+
 ASR HTTP 客户端在同一设备会话内跨轮复用，连接默认空闲保留300秒，建连超时20秒，设备断开时释放连接池。可在模型配置 JSON 中设置 `keepalive_expiry`、`connect_timeout`、`timeout`（均以秒计）；空闲保留时间受云端主动断开限制，不能保证连接持续存在，也不会自动发送保活识别请求。整次请求超时与连接空闲过期分别控制。
 
 更新适配后，先在 `KSZ/` 重建服务端：
