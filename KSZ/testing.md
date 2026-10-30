@@ -8,11 +8,11 @@
 
 ## Showroom 韩语识别与回复回归
 
-隔离 Maven 容器执行 `BoundAgentLanguageTest`、`ConfigServiceImplTest`、`DeviceServiceImplRebindTest`、`DeviceLanguageSpecTest`：21项通过，覆盖扩展属性缺失、残留中文语言与旧智能体名称时，配置仍使用实际绑定智能体，并保留其他属性。ASR 补丁隔离回归 `test_qwen_asr.py`：9项通过。
+隔离 Maven 容器执行 `BoundAgentLanguageTest`、`ConfigServiceImplTest`、`DeviceServiceImplRebindTest`、`DeviceLanguageSpecTest`：21项通过，覆盖扩展属性缺失、残留中文语言与旧智能体名称时，配置仍使用实际绑定智能体，并保留其他属性。ASR 补丁隔离回归 `test_qwen_asr.py`：11项通过，包含同一模型配置下四语并发连接的参数隔离，以及未知语种和未启用 KSZ 时保留模型设置。
 
-Showroom 管理端使用独立修复镜像，沿用运行 JAR 的依赖，仅替换 `ConfigServiceImpl.class`；构建补丁同步接入 `Dockerfile-web`。真实配置接口确认“青年-韩语”设备下发 `agent_name=青年-韩语`、`language=ko`、`ASR_Qwen3Flash_Korean`，最终系统提示词使用 `Korean (ko)`。
+管理端绑定语言补丁接入 `Dockerfile-web`。三个正式韩语角色复用原有 `ASR_Qwen3Flash`，公共模型 JSON 保持原值，删除无人引用的旧韩语专用选项；数据库操作先回滚验证并备份，再提交。设备下发 `agent_name=青年-韩语`、`language=ko`，最终系统提示词使用 `Korean (ko)`。识别语言在各连接打开音频通道时设置，服务端新镜像已构建并更新。
 
-闲置专用测试设备临时绑定韩语角色，以合成的1.02秒韩语 WAV 通过真实 MQTT/UDP 链路发送：ASR 返回“안녕하세요”，回复“안녕하세요,소석입니다.”，收到33个音频包、无序列缺失，正常收到 TTS stop。测试后恢复原绑定，扩展属性保持原值。此验证覆盖云端识别、模型回复和音频返回，未验证用户原录音、浏览器播放或实体扬声器；正式韩语角色须关闭模拟器的“测试智能体”后重新连接。
+闲置专用测试设备临时绑定韩语角色，以合成的1.02秒韩语 WAV 通过真实 MQTT/UDP 链路发送：ASR 返回“안녕하세요”，回复“안녕하세요.”，收到18个音频包、无序列缺失，正常收到 TTS stop。测试后恢复原绑定，扩展属性保持原值。此验证覆盖云端识别、模型回复和音频返回，未验证用户原录音、浏览器播放或实体扬声器；正式韩语角色须关闭模拟器的“测试智能体”，选择语言后点击“切换语言”，等待成功回执和自动重连。
 
 ## 讲解模式与播放进度回归
 

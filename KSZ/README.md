@@ -312,9 +312,9 @@ KSZ 向 Agent 的语音与拍照请求统一传递 `session_id`，拍照增加 `
 
 官方预设 `ASR_Qwen3Flash` 的 `qwen3-asr-flash` 同样可用，保持原地址和模型名即可；只有切换 Fun-ASR-Flash 时才需改为上述值。KSZ 适配保留两种请求协议，云端等待采用异步 HTTP，并限制整次请求默认最多60秒，避免识别服务卡住时阻塞所有设备握手。实现位于 `patches/qwen-fun-asr.patch`，由 `Dockerfile-server` 在源码构建阶段检查并应用，上游工作区源码保持原样。
 
-韩语可使用独立的 `ASR_Qwen3Flash_Korean`（“Qwen3Flash韩语专用”）配置：复制现有千问 API 地址、密钥和模型参数，在配置 JSON 中增加 `"language": "ko"`，再让儿童、青年、专家三个韩语智能体选择该语音识别模型。`qwen3-asr-flash` 会将其发送为 `parameters.asr_options.language: ko`；Fun-ASR-Flash 对应 `parameters.language_hints: [ko]`。当前表单未展示独立语言字段，需要在模型配置 JSON 中维护。指定语种适合固定韩语输入，混合语言输入应使用自动识别配置。
+儿童、青年、专家等不同语言角色可共用现有 `ASR_Qwen3Flash`，无需增加韩语专用选项。连接打开音频通道时，Qwen/Fun ASR 按当前绑定角色为该连接设置识别语言：中英日韩分别为 `zh`、`en`、`ja`、`ko`；其他语种保留模型原设置。`qwen3-asr-flash` 发送 `parameters.asr_options.language`，Fun-ASR-Flash 发送 `parameters.language_hints`。公共模型配置、API Key 和其他连接均不受影响。
 
-Showroom 首次初始化会在快照导入后执行 `mysql-init/100-korean-asr.sql`，复用既有千问凭据创建韩语配置，将仍使用通用 OpenAI/Qwen ASR 的三个正式韩语角色改为该配置，并补齐已绑定韩语设备的语言属性。已有数据库须先备份相关模型、角色和设备属性，再手动执行：
+Showroom 首次初始化会在快照导入后执行 `mysql-init/100-korean-asr.sql`，将仍使用通用 OpenAI ASR 或旧韩语专用选项的三个正式韩语角色改为现有千问配置，清理无人引用的旧韩语选项，并补齐已绑定韩语设备的语言属性。已有数据库须先备份相关模型、角色和设备属性，再手动执行：
 
 ```bash
 docker compose exec -T xiaozhi-esp32-server-db sh -c \
@@ -324,7 +324,7 @@ docker compose exec xiaozhi-esp32-server-redis redis-cli -p 36380 DEL server:con
 docker compose restart xiaozhi-esp32-server
 ```
 
-配置下发始终使用设备当前绑定智能体的名称，服务端据名称后缀确定回复语言；新设备尚无扩展属性或保留旧绑定名称时也不会因此误判为中文。模拟器使用正式“青年-韩语”时须关闭“测试智能体”：`dev=true` 请求独立的“青年-韩语-测试”，目标不存在会返回失败，不会自动退回正式智能体。
+配置下发始终使用设备当前绑定智能体的名称，服务端据名称后缀确定回复语言；新设备尚无扩展属性或保留旧绑定名称时也不会因此误判为中文。模拟器使用正式“青年-韩语”时须关闭“测试智能体”：`dev=true` 请求独立的“青年-韩语-测试”，目标不存在会返回失败，不会自动退回正式智能体。语言下拉框只选择目标，须点击“切换语言”，等待“已确认”及自动重连后才生效。
 
 ASR HTTP 客户端在同一设备会话内跨轮复用，连接默认空闲保留300秒，建连超时20秒，设备断开时释放连接池。可在模型配置 JSON 中设置 `keepalive_expiry`、`connect_timeout`、`timeout`（均以秒计）；空闲保留时间受云端主动断开限制，不能保证连接持续存在，也不会自动发送保活识别请求。整次请求超时与连接空闲过期分别控制。
 

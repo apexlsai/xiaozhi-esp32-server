@@ -1,6 +1,6 @@
 --- a/core/providers/asr/qwen3_asr_flash.py
 +++ b/core/providers/asr/qwen3_asr_flash.py
-@@ -1,111 +1,220 @@
+@@ -1,111 +1,231 @@
 +import asyncio
 +import base64
  import os
@@ -76,6 +76,17 @@
 +        self._client = None
 +
          os.makedirs(self.output_dir, exist_ok=True)
++
++    async def open_audio_channels(self, conn):
++        from core.utils.ksz_extension import guide
++
++        if guide:
++            language = {"zh-CN": "zh", "en": "en", "ja": "ja", "ko": "ko"}.get(
++                guide.response_language(conn)
++            )
++            if language:
++                self.language = language
++        await super().open_audio_channels(conn)
 +
 +    def _get_client(self):
 +        if self._client is None or self._client.is_closed:
