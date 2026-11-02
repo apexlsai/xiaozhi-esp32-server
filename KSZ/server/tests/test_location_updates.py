@@ -37,7 +37,7 @@ async def test_built_hello_handler_starts_snapshot_after_hello_and_only_once(tmp
     handler = tmp_path / "core/handle/helloHandle.py"
     handler.parent.mkdir(parents=True)
     handler.write_text((root / "main/xiaozhi-server/core/handle/helloHandle.py").read_text())
-    subprocess.run(["git", "apply", str(root / "KSZ/patches/location-updates.patch")], cwd=tmp_path, check=True)
+    subprocess.run(["git", "apply", "--include=core/handle/helloHandle.py", str(root / "KSZ/patches/location-updates.patch")], cwd=tmp_path, check=True)
     tree = ast.parse(handler.read_text())
     function = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == "handleHelloMessage")
     namespace = {"json": json, "asyncio": asyncio, "TAG": "test", "MCPClient": Mock(),
@@ -61,6 +61,32 @@ async def test_built_hello_handler_starts_snapshot_after_hello_and_only_once(tmp
         assert len([message for message in messages(conn) if message["type"] == "guide_control"]) == 1
     finally:
         await h.runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("place_name", ["赛车游戏屏幕体验区", " 赛车游戏屏幕体验区 "])
+async def test_location_display_uses_only_bound_place_name(place_name):
+    item = beacon(place_id="racing", place_name=place_name)
+    h = Harness(auto_announce=False, items=[item])
+    try:
+        conn = await subscribe(h)
+        assert await h.runtime.legacy(conn, {"beacon_id": item.mac})
+        await settle()
+        location = messages(conn)[-1]["location"]
+        assert location["place_name"] == "赛车游戏屏幕体验区"
+        assert "location_description" not in location
+        assert item.to_prompt_context() == "，".join((location["floor"], location["area"], location["place_name"]))
+        h.announce.assert_not_awaited()
+    finally:
+        await h.runtime.close()
+
+
+@pytest.mark.parametrize("field,value", [("place_id", None), ("place_name", None), ("place_name", " ")])
+def test_catalog_requires_bound_place(field, value):
+    from ksz_guide.models import GuideError
+
+    with pytest.raises(GuideError, match="invalid_catalog_place"):
+        beacon(**{field: value})
 
 
 @pytest.mark.asyncio

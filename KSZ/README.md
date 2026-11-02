@@ -2,7 +2,7 @@
 
 本目录是 showroom 副本的部署与运维入口，使用 `KSZ/compose.yml`。项目名、容器名、数据目录及监听端口均与原环境隔离。server、web 和 MQTT 网关均支持本地构建，镜像使用独立的 `xiaozhi-esp32-server_showroom` 名称。Nginx 配置和 web 启动脚本以只读挂载覆盖，修改端口无需重新构建。
 
-默认构建标签为 `server_local`、`web_local` 和 `mqtt_local`；`KSZ_WEB_IMAGE` 可覆盖管理端镜像标签。管理端本地构建通过 `patches/bound-agent-language.patch` 包含韩语回复语言修复。
+默认构建标签为 `server_local`、`web_local` 和 `mqtt_local`；`XIAOZHI_WEB_IMAGE` 可覆盖管理端镜像标签，未设置时兼容旧 `KSZ_WEB_IMAGE`。管理端本地构建通过 `patches/bound-agent-language.patch` 包含韩语回复语言修复。
 
 副本已包含原环境的 `.env`、server 配置、上传文件及 MySQL 一致性快照，无需覆盖 `.env`。首次启动在空数据库中自动导入 `mysql/initdb/00-snapshot.sql`，随后执行 [showroom 端口修正](mysql-init/99-showroom-ports.sql)；已有数据目录不会重复导入。快照保存在权限为 `700` 的目录中且被 Git 忽略，包含原账号、设备、智能体及模型配置。模型服务地址与设备绑定沿用快照中的选择。
 
@@ -32,6 +32,10 @@
 - 默认使用远程 ASR（Fun-ASR-Flash 或 OpenAI 兼容接口），无需下载或挂载本地 SenseVoice 模型。
 
 ## 构建并启动
+
+server、web、MySQL、Redis 和 MQTT 网关的镜像与容器名统一在 `KSZ/.env` 配置，完整模板见 `.env.example` 中的 `XIAOZHI_*_IMAGE` 和 `XIAOZHI_*_CONTAINER_NAME`。首次部署复制模板，已有环境补充或修改对应变量；修改后重新执行 Compose 创建容器。
+
+自定义容器名后，Compose 命令仍使用下方的服务名。延时诊断脚本通过 `--server-container`、`--mqtt-container` 指定对应容器名。
 
 ```bash
 cd /apps/xiaozhi-esp32-server_showroom/KSZ
@@ -482,6 +486,28 @@ Body: beacon-abc-123
 
 兼容的通用接口仍可用：`GET /xiaozhi/device/attribute/{deviceId}` 与 `PUT /xiaozhi/device/attribute/{deviceId}/{attrKey}`。
 
+### 首次 OTA 自动临时绑定
+
+在需要启用的环境中，将 `KSZ/.env` 配置为：
+
+```dotenv
+KSZ_OTA_AUTO_BIND_AGENT_NAME=儿童-韩语-测试
+```
+
+该名称必须在此环境所有账号中唯一存在，设备归属于这个智能体的管理账号。留空时沿用原有验证码绑定；目标不存在、重名或没有所属账号时，首次 OTA 返回错误，不返回连接配置，也不自动创建智能体。
+
+新设备首次访问现有 `POST /xiaozhi/ota/` 时，后台登记 MAC、硬件型号和固件版本，绑定临时智能体并同步设备属性中的智能体名称，然后直接返回连接配置，无需输入验证码或修改固件。首次上报须包含原有 `application.version`。自动登记设备默认关闭固件自动升级，避免登记时顺带触发刷机；后续可在设备管理中单独开启。
+
+已登记设备保持当前归属，手动改绑后重连不会返回临时智能体；即使临时目标后来被改名或删除，也不影响已有设备获取连接配置。连接前携带 `language_change` 或 `profile_change` 时，先完成首次登记，再沿用现有按钮选择逻辑。同一 MAC 并发首次上报只创建一条登记，不覆盖同时完成的手动绑定。
+
+从该环境的 `KSZ/` 目录重建管理端生效：
+
+```bash
+docker compose up -d --build xiaozhi-esp32-server-web
+```
+
+回退时将配置留空并重建管理端，已登记设备保持不变。删除设备登记后，下次 OTA 会重新按新设备分配；设备停用仍需单独的后台权限控制。
+
 ### 蜂窝小区上报与读取
 
 设备启动时向 `POST /xiaozhi/ota/` 上报，使用 `Device-Id` 请求头关联设备，蜂窝信息放在请求体的 `board.cell` 中：
@@ -789,14 +815,14 @@ HTTP 层恒为 `200`，业务成败看 JSON 的 `code`（`0` 成功，非 `0` �
 GET http://127.0.0.1:14000/api/v1/beacons/by-beacon-id/{beaconId}
 ```
 
-接口响应至少应包含匹配的 `beacon_id`，以及 `floor`、`area`、`location_description` 中的一项。例如：
+接口响应至少应包含匹配的 `beacon_id`，以及 绑定位置名称 `place_name`（楼层 `floor` 和区域 `area` 可选）。例如：
 
 ```json
 {
   "beacon_id": "jx-pxm-003",
   "floor": "2F",
   "area": "古代文明展厅",
-  "location_description": "北墙 A12 展柜旁"
+  "place_name": "北墙 A12 展柜旁"
 }
 ```
 

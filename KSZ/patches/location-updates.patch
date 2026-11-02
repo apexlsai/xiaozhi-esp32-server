@@ -9,3 +9,47 @@
  
      # The device waits for the server hello before processing MCP messages.
      if features and features.get("mcp"):
+--- a/core/utils/beacon_location.py
++++ b/core/utils/beacon_location.py
+@@ -14,10 +14,10 @@
+     beacon_id: str
+     floor: str
+     area: str
+-    location_description: str
++    place_name: str
+ 
+     def to_prompt_context(self) -> str:
+-        parts = [self.floor, self.area, self.location_description]
++        parts = [self.floor, self.area, self.place_name]
+         return "，".join(part for part in parts if part)
+ 
+ 
+@@ -34,7 +34,7 @@
+         beacon_id=beacon_id,
+         floor=_text_field(payload, "floor"),
+         area=_text_field(payload, "area"),
+-        location_description=_text_field(payload, "location_description"),
++        place_name=_text_field(payload, "place_name"),
+     )
+     return location if location.to_prompt_context() else None
+ 
+--- a/tests/test_beacon_location.py
++++ b/tests/test_beacon_location.py
+@@ -60,7 +60,7 @@
+                 "beacon_id": "jx-pxm-003",
+                 "floor": "2F",
+                 "area": "古代文明展厅",
+-                "location_description": "北墙 A12 展柜旁",
++                "place_name": "北墙 A12 展柜旁",
+             },
+         )
+ 
+@@ -77,7 +77,7 @@
+                 "beacon_id": "jx-pxm-003",
+                 "floor": "2F",
+                 "area": "古代文明展厅",
+-                "location_description": "北墙 A12 展柜旁",
++                "place_name": "北墙 A12 展柜旁",
+             },
+         )
+         with patch(

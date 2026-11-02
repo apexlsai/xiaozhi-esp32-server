@@ -82,12 +82,11 @@ class Beacon:
     area_id: str | None
     floor: str
     area: str
-    location_description: str
+    place_id: str
+    place_name: str
     uuid: str | None = None
     major: int | None = None
     minor: int | None = None
-    place_id: str | None = None
-    place_name: str | None = None
     place_beacon_count: int = 1
 
     @classmethod
@@ -99,15 +98,14 @@ class Beacon:
         if isinstance(count, bool) or not isinstance(count, int) or count < 1:
             raise GuideError("invalid_catalog_place_count")
         for key in ("place_id", "place_name"):
-            if item.get(key) is not None and (not isinstance(item[key], str) or not item[key]):
+            if not isinstance(item.get(key), str) or not item[key].strip():
                 raise GuideError("invalid_catalog_place")
         return cls(
             id=item["id"], mac=identity["mac"], beacon_id=item["beacon_id"],
             venue_id=item["venue_id"], area_id=item.get("area_id"),
             floor=str(item.get("floor") or ""), area=str(item.get("area") or ""),
-            location_description=str(item.get("location_description") or ""),
             uuid=identity.get("uuid"), major=identity.get("major"), minor=identity.get("minor"),
-            place_id=item.get("place_id"), place_name=item.get("place_name"), place_beacon_count=count,
+            place_id=item["place_id"], place_name=item["place_name"].strip(), place_beacon_count=count,
         )
 
     def matches(self, observed):
@@ -119,11 +117,10 @@ class Beacon:
 
     @property
     def zone(self):
-        return (self.venue_id, self.place_id or self.id)
+        return (self.venue_id, self.place_id)
 
     def to_prompt_context(self):
-        location = (self.place_name or "").strip() or self.location_description.strip()
-        return "，".join(part.strip() for part in (self.floor, self.area, location) if part.strip())
+        return "，".join(part.strip() for part in (self.floor, self.area, self.place_name) if part.strip())
 
     def wire(self):
         return {key: value for key, value in vars(self).items() if value is not None}

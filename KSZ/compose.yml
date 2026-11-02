@@ -6,7 +6,8 @@ name: xiaozhi-esp32-server_showroom
 services:
   xiaozhi-mqtt-gateway:
     profiles: [mqtt]
-    image: xiaozhi-esp32-server_showroom:mqtt_local
+    image: ${XIAOZHI_MQTT_GATEWAY_IMAGE:-xiaozhi-esp32-server_showroom:mqtt_local}
+    container_name: ${XIAOZHI_MQTT_GATEWAY_CONTAINER_NAME:-xiaozhi-esp32-server_showroom-xiaozhi-mqtt-gateway-1}
     build:
       context: ./mqtt
     pull_policy: never
@@ -31,12 +32,12 @@ services:
       KSZ_GUIDE_CONTROL_TOKEN: ${KSZ_GUIDE_CONTROL_TOKEN:-}
 
   xiaozhi-esp32-server:
-    image: xiaozhi-esp32-server_showroom:server_local
+    image: ${XIAOZHI_SERVER_IMAGE:-xiaozhi-esp32-server_showroom:server_local}
     build:
       context: ..
       dockerfile: KSZ/Dockerfile-server
     pull_policy: never
-    container_name: xiaozhi-esp32-server_showroom
+    container_name: ${XIAOZHI_SERVER_CONTAINER_NAME:-xiaozhi-esp32-server_showroom}
     depends_on:
       xiaozhi-esp32-server-db:
         condition: service_healthy
@@ -71,12 +72,12 @@ services:
       # 启用本地 FunASR 时，再恢复 model.pt 文件挂载。
 
   xiaozhi-esp32-server-web:
-    image: ${KSZ_WEB_IMAGE:-xiaozhi-esp32-server_showroom:web_local}
+    image: ${XIAOZHI_WEB_IMAGE:-${KSZ_WEB_IMAGE:-xiaozhi-esp32-server_showroom:web_local}}
     build:
       context: ..
       dockerfile: KSZ/Dockerfile-web
     pull_policy: never
-    container_name: xiaozhi-esp32-server_showroom-web
+    container_name: ${XIAOZHI_WEB_CONTAINER_NAME:-xiaozhi-esp32-server_showroom-web}
     command: ["bash", "/start.sh"]
     restart: always
     network_mode: host
@@ -93,6 +94,7 @@ services:
       - SPRING_DATA_REDIS_HOST=127.0.0.1
       - SPRING_DATA_REDIS_PASSWORD=
       - SPRING_DATA_REDIS_PORT=${REDIS_PORT:-36380}
+      - KSZ_OTA_AUTO_BIND_AGENT_NAME=${KSZ_OTA_AUTO_BIND_AGENT_NAME:-}
       - KSZ_CELL_LOCATION_ENABLED=${KSZ_CELL_LOCATION_ENABLED:-0}
       - KSZ_TANSHU_API_KEY=${KSZ_TANSHU_API_KEY:-}
       - KSZ_CELL_LOCATION_CACHE_SECONDS=${KSZ_CELL_LOCATION_CACHE_SECONDS:-2592000}
@@ -105,9 +107,9 @@ services:
       - ./start-web.sh:/start.sh:ro
 
   xiaozhi-esp32-server-db:
-    image: mysql:latest
+    image: ${XIAOZHI_DB_IMAGE:-mysql:latest}
     pull_policy: never
-    container_name: xiaozhi-esp32-server_showroom-db
+    container_name: ${XIAOZHI_DB_CONTAINER_NAME:-xiaozhi-esp32-server_showroom-db}
     command: --port=${MYSQL_PORT:-33307}
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-P", "${MYSQL_PORT:-33307}"]
@@ -128,9 +130,9 @@ services:
       - MYSQL_INITDB_ARGS=--character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
 
   xiaozhi-esp32-server-redis:
-    image: redis:8.0
+    image: ${XIAOZHI_REDIS_IMAGE:-redis:8.0}
     pull_policy: never
-    container_name: xiaozhi-esp32-server_showroom-redis
+    container_name: ${XIAOZHI_REDIS_CONTAINER_NAME:-xiaozhi-esp32-server_showroom-redis}
     command: ["redis-server", "--port", "${REDIS_PORT:-36380}"]
     restart: always
     network_mode: host
