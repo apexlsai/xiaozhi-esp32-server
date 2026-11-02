@@ -27,6 +27,10 @@
 
 ## 首次构建并启动
 
+server、web、MySQL、Redis 和 MQTT 网关的镜像与容器名统一在 `KSZ/.env` 配置，完整模板见 `.env.example` 中的 `XIAOZHI_*_IMAGE` 和 `XIAOZHI_*_CONTAINER_NAME`。首次部署复制模板，已有环境补充或修改对应变量；修改后重新执行 Compose 创建容器。
+
+自定义容器名后，Compose 命令仍使用下方的服务名。延时诊断脚本通过 `--server-container`、`--mqtt-container` 指定对应容器名。
+
 ```bash
 cd /apps/xiaozhi-esp32-server/KSZ
 
@@ -482,6 +486,28 @@ Body: beacon-abc-123
 ```
 
 兼容的通用接口仍可用：`GET /xiaozhi/device/attribute/{deviceId}` 与 `PUT /xiaozhi/device/attribute/{deviceId}/{attrKey}`。
+
+### 首次 OTA 自动临时绑定
+
+在需要启用的环境中，将 `KSZ/.env` 配置为：
+
+```dotenv
+KSZ_OTA_AUTO_BIND_AGENT_NAME=儿童-韩语-测试
+```
+
+该名称必须在此环境所有账号中唯一存在，设备归属于这个智能体的管理账号。留空时沿用原有验证码绑定；目标不存在、重名或没有所属账号时，首次 OTA 返回错误，不返回连接配置，也不自动创建智能体。
+
+新设备首次访问现有 `POST /xiaozhi/ota/` 时，后台登记 MAC、硬件型号和固件版本，绑定临时智能体并同步设备属性中的智能体名称，然后直接返回连接配置，无需输入验证码或修改固件。首次上报须包含原有 `application.version`。自动登记设备默认关闭固件自动升级，避免登记时顺带触发刷机；后续可在设备管理中单独开启。
+
+已登记设备保持当前归属，手动改绑后重连不会返回临时智能体；即使临时目标后来被改名或删除，也不影响已有设备获取连接配置。连接前携带 `language_change` 或 `profile_change` 时，先完成首次登记，再沿用现有按钮选择逻辑。同一 MAC 并发首次上报只创建一条登记，不覆盖同时完成的手动绑定。
+
+从该环境的 `KSZ/` 目录重建管理端生效：
+
+```bash
+docker compose up -d --build xiaozhi-esp32-server-web
+```
+
+回退时将配置留空并重建管理端，已登记设备保持不变。删除设备登记后，下次 OTA 会重新按新设备分配；设备停用仍需单独的后台权限控制。
 
 ### 蜂窝小区上报与读取
 

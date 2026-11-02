@@ -9,6 +9,8 @@ COPY KSZ/patches/cell-report.patch /tmp/cell-report.patch
 RUN git apply --check /tmp/cell-report.patch && git apply /tmp/cell-report.patch
 COPY KSZ/patches/cell-location-api.patch /tmp/cell-location-api.patch
 RUN git apply --check /tmp/cell-location-api.patch && git apply /tmp/cell-location-api.patch
+COPY KSZ/patches/ota-auto-bind.patch /tmp/ota-auto-bind.patch
+RUN git apply --check /tmp/ota-auto-bind.patch && git apply /tmp/ota-auto-bind.patch
 COPY KSZ/manager-api/src ./main/manager-api/src
 
 FROM node:18 AS web-builder

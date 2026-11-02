@@ -2,6 +2,14 @@
 
 以下命令在仓库根目录 `/apps/xiaozhi-esp32-server` 执行。推荐使用 `uv`，当前 Conda `(base)` 无需退出；依赖在隔离环境安装。
 
+## 首次 OTA 自动临时绑定回归
+
+按 `Dockerfile-web` 的 `patched-source` 阶段检查并应用补丁，在无网络 Maven 容器编译全部管理端源码和测试，执行 `DeviceAutoBindTest`、`OTAControllerTest`、`DeviceCellReportTest`、`DeviceLocationTest`、`DeviceServiceImplRebindTest`、`DeviceAttributeServiceImplTest` 和 `DeviceAutoUpdateTest`：51项通过，其中15项为本次新增。
+
+新增测试使用真实 MyBatis、H2 内存数据库和 Spring 事务，验证首次登记继承目标所属账号、直接返回连接配置且无激活码、不触发固件升级、手动改绑后的归属和属性保留、临时目标删除后已有设备仍可连接、关闭功能后沿用验证码，以及缺失/重名/无归属目标、非法身份和连接前事件的拒绝。另验证属性写入失败整体回滚、两次并发首次上报只登记一次、并发手动登记不被覆盖，以及首次登记先于连接前语言/角色选择。
+
+Compose 默认关闭和指定 `儿童-韩语-测试` 的配置解析通过，差异空白检查通过。未部署运行环境，未执行固件刷写或实机音频验收。
+
 ## 讲解模式与播放进度回归
 
 隔离源码按 Docker 顺序检查并应用全部10个 server 补丁，在无网络容器执行 KSZ Python 回归：495项通过，排除未改动的 ASR 补丁自应用模块和运行镜像缺少 git 的1项 hello 构建测试。最终系统篇幅策略与播放记录专项50项通过。
