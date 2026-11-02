@@ -612,12 +612,22 @@ class GuideRuntime:
         return state.current
 
     def context(self, device_mac):
-        beacon = self.location(device_mac)
-        if beacon is None:
+        try:
+            state = self.devices.get(mac_address(device_mac))
+        except GuideError:
             return {}
-        state = self.devices[mac_address(device_mac)]
-        return {"last_beacon_id": beacon.beacon_id, "venue_id": beacon.venue_id,
-                "beacon_mac": beacon.mac, "guide_policy_revision": state.policy.revision}
+        if state is None or not state.policy or not state.policy.valid(self.clock()):
+            return {}
+        result = {}
+        venue = state.policy.data.get("venue_context")
+        if venue:
+            result.update(venue_id=venue["id"], venue_context=dict(venue),
+                          guide_policy_revision=state.policy.revision)
+        beacon = self.location(device_mac)
+        if beacon is not None:
+            result.update(last_beacon_id=beacon.beacon_id, venue_id=beacon.venue_id,
+                          beacon_mac=beacon.mac, guide_policy_revision=state.policy.revision)
+        return result
 
     def activity(self, conn, message):
         state = self.devices.get(mac_address(conn.device_id))

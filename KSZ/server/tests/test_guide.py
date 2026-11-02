@@ -14,7 +14,7 @@ from aiohttp import ClientSession, web
 
 from ksz_guide.client import ManagementClient
 from ksz_guide.integration import (
-    filter_context, handle_legacy_event, register_routes, track_chat, vision_context,
+    extend_vision_payload, filter_context, handle_legacy_event, register_routes, track_chat, vision_context,
 )
 from ksz_guide.models import Beacon, GuideError, Policy, beacon_identity
 from ksz_guide.runtime import GuideRuntime
@@ -22,6 +22,7 @@ from ksz_guide.settings import GuideSettings
 
 
 DEVICE = "AA:BB:CC:DD:EE:FF"
+VENUE = {"id": "venue1", "code": "0755001", "name": "Test showroom", "description": "Display solutions"}
 
 
 class Clock:
@@ -387,6 +388,56 @@ async def test_text_and_vision_strip_untrusted_persisted_attributes():
     assert safe["last_beacon_id"] == "asset-1" and safe["venue_id"] == "venue1"
     h.clock.now += 15
     assert "last_beacon_id" not in vision_context(conn.server, DEVICE, raw)
+
+
+@pytest.mark.asyncio
+async def test_bound_venue_survives_missing_or_expired_position_but_not_policy_expiry():
+    h = Harness(venue_context=VENUE)
+    conn = h.conn()
+    raw = {"venue_id": "forged", "venue_context": {"name": "Forged venue"}}
+    await h.sync()
+    context = filter_context(conn, raw)
+    assert context["venue_context"] == VENUE and context["venue_id"] == VENUE["id"]
+    assert "last_beacon_id" not in context and "beacon_mac" not in context
+    await h.observe(1)
+    h.clock.now += 15
+    context = vision_context(conn.server, DEVICE, raw)
+    assert context["venue_context"] == VENUE and "last_beacon_id" not in context
+    h.clock.now += 45
+    assert vision_context(conn.server, DEVICE, raw) == {}
+
+
+@pytest.mark.asyncio
+async def test_venue_reassignment_and_disable_clear_the_previous_model_context():
+    h = Harness(venue_context=VENUE)
+    await h.sync()
+    state = h.runtime.state(DEVICE)
+    replacement = {**VENUE, "id": "venue2", "name": "Another venue"}
+    for changes, expected in [
+        ({"venue_ids": ["venue2"], "venue_context": replacement}, replacement),
+        ({"mode": "consumer", "venue_ids": [], "venue_context": None}, None),
+        ({"enabled": False, "venue_context": VENUE}, None),
+    ]:
+        policy = Policy.parse(policy_data(revision="2:1", **changes), h.clock(), h.clock())
+        h.runtime._apply_policy(state, policy)
+        assert h.runtime.context(DEVICE).get("venue_context") == expected
+
+
+@pytest.mark.parametrize("changes", [
+    {"mode": "consumer"}, {"venue_ids": ["another"]},
+    {"venue_context": {**VENUE, "name": ""}},
+    {"venue_context": {**VENUE, "description": "x" * 6001}},
+])
+def test_invalid_bound_venue_context_is_rejected(changes):
+    with pytest.raises(GuideError, match="invalid_policy_venue"):
+        Policy.parse(policy_data(venue_context=VENUE) | changes)
+
+
+def test_bound_venue_is_forwarded_into_the_vision_model_request():
+    payload = {"messages": [{"role": "user", "content": "image"}]}
+    assert extend_vision_payload(payload, {"venue_context": VENUE, "venue_id": VENUE["id"]}) == {
+        "messages": payload["messages"], "venue_context": VENUE, "venue_id": VENUE["id"],
+    }
 
 
 @pytest.mark.asyncio

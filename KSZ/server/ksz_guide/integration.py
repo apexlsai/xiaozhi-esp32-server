@@ -245,7 +245,7 @@ def filter_context(conn, values):
 
 def validated_context(runtime, device_mac, values):
     result = dict(values)
-    for key in ("last_beacon_id", "venue_id", "beacon_mac", "guide_policy_revision"):
+    for key in ("last_beacon_id", "venue_id", "venue_context", "beacon_mac", "guide_policy_revision"):
         result.pop(key, None)
     result.update(runtime.context(device_mac))
     return result
@@ -257,7 +257,7 @@ def vision_context(server, device_mac, values):
 
 
 def extend_vision_payload(payload, kwargs):
-    for key in ("venue_id", "beacon_mac", "guide_policy_revision",
+    for key in ("venue_id", "venue_context", "beacon_mac", "guide_policy_revision",
                 "session_id", "image_id", "image_seq", "captured_at"):
         if kwargs.get(key) is not None:
             payload[key] = kwargs[key]

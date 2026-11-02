@@ -2,6 +2,20 @@
 
 以下命令在仓库根目录 `/apps/xiaozhi-esp32-server_showroom` 执行。推荐使用 `uv`，当前 Conda `(base)` 无需退出；依赖在隔离环境安装。
 
+## 设备绑定场馆与语义追问回归
+
+2026-10-30 线上日志对照：17:55:33 的 `Please tell me about this show room.`（`req_350c14713647474b`）被旧规则判为 `contextual_followup`，跳过检索；18:06:01 的 `안녕하세요.ありがとう。`（`req_2fd102d6a689484e`）则走 `ambiguous_default`，在默认场馆 `0755001` 命中2条康硕展资料。后者知道公司名源于检索，不代表识别了游客位置；两轮差异与本次尚未部署的修改无关。
+
+配套 management 改动复用设备绑定场馆，按有效策略下发 `venue_context`；小智在没有信标时也传递场馆名称、简介和业务编号，策略失效移除上下文。Agent 注入设备服务场馆，按 `code` 限定文字、图片和目录检索；语义路由结合问题与历史区分知识追问、闲聊和工具，失败保守检索。场馆配置约定见[场馆资产与导览](guide-management.md)。
+
+- management 全量：46项通过，7项需要可选 PostgreSQL/Redis 环境的测试跳过；覆盖无信标、场馆更新/调馆、停用、未配置及非固定场馆模式。
+- 小智 `test_guide.py`：无网络临时 server 容器中53项通过，覆盖策略/位置分别过期、可信字段覆盖及文字/视觉透传。
+- Agent 全量：1108项通过、8项失败。8项在修改前的商业场景基线同样复现：`test_graph.py` 的 `test_image_guide_flow`、`test_idle_state`，`test_vision.py` 的3项 `test_vision_rag_switch_skips_retrieval`，以及 `test_vision_api.py` 的2项 `test_openai_vision_can_skip_rag_per_request` 和 `test_structured_vision_upload_accepts_file`；分别涉及旧状态图递归和“馆藏/展品”文案断言。
+- Agent 新增回归覆盖流式/非流式、有无相机工具、普通文本/文本数组、混合语言问候、异常/超时回退、顶层与嵌套场馆字段、跨馆检索隔离和调馆后旧照片失效。
+- 使用当前真实模型与 RAG 的隔离 API 冒烟：10个中英日韩场景路由全部符合预期；同一句 `Tell me more.` 随前文公司介绍或虚构故事分别检索/直答；不会把助手上轮猜测的人名写入检索问题。英文展厅问题实际检索并返回康硕展介绍，混合问候走直答。
+
+真实模型本轮语义判断中位耗时约1008ms，样本不代表 P95。未部署 management、Agent 或小智服务，未执行实体设备录音与扬声器验收；正式使用前须使场馆业务编号与知识库编号一致，并同步更新三端。
+
 ## Showroom 本地构建回归
 
 通过 Compose 配置解析核对 server、web、MQTT 的构建目录、Dockerfile 与独立镜像标签；MySQL、Redis 沿用本地镜像。实际执行 `cd KSZ && docker compose --progress plain build`，三个 `xiaozhi-esp32-server_showroom:{server_local,web_local,mqtt_local}` 镜像均构建成功，包含 server 全部补丁和管理端韩语语言修复补丁。构建上下文排除运行数据，差异空白检查通过。本次仅构建镜像，容器更新由 `docker compose up -d --build` 执行。
