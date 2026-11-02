@@ -1,6 +1,7 @@
 import asyncio
 import json
 import queue
+from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -211,14 +212,14 @@ def test_late_model_output_is_discarded_when_guide_loses_ownership(conn, change)
 
 
 def test_missing_location_never_reaches_model(conn):
-    narrate(conn, item=beacon(floor=" ", area="", location_description=""))
+    narrate(conn, item=replace(beacon(), floor=" ", area="", place_name=""))
     conn.llm.response.assert_not_called()
     assert spoken(conn) == ""
 
 
 def test_custom_template_and_empty_fields_are_rendered_once(conn):
     settings = GuideSettings.from_env({"KSZ_GUIDE_LOCATION_TEMPLATE_ZH_CN": "当前位置：{location}。"})
-    narrate(conn, settings=settings, item=beacon(floor="", area="展区", location_description=" "))
+    narrate(conn, settings=settings, item=replace(beacon(), floor="", area="展区", place_name=" "))
     assert spoken(conn) == "当前位置：展区。"
     assert GuideSettings.from_env({"KSZ_GUIDE_LOCATION_TEMPLATE_ZH_CN": ""}).location_template("zh-CN") == "您现在位于{location}。"
 
@@ -231,8 +232,7 @@ def test_custom_template_and_empty_fields_are_rendered_once(conn):
 ])
 def test_opening_and_model_use_current_place_instead_of_old_beacon_description(conn, language, expected):
     conn.device_attributes["language"] = language
-    item = beacon(area="主展示区", place_id="racing", place_name="赛车游戏屏幕体验区",
-                  location_description="地砖屏展示区")
+    item = beacon(area="主展示区", place_id="racing", place_name="赛车游戏屏幕体验区")
     turn = narrate(conn, item=item)
     assert spoken(conn) == expected
     assert assistant_text(conn) == [expected]
@@ -247,14 +247,13 @@ def test_opening_and_model_use_current_place_instead_of_old_beacon_description(c
 @pytest.mark.parametrize("change", ["new_place", "renamed_place", "same_place_member"])
 async def test_runtime_rejects_stale_place_without_interrupting_same_place_member(conn, monkeypatch, phase, change):
     h = Harness()
-    current = beacon(place_id="place1", place_name="当前位置", location_description="旧信标描述")
+    current = beacon(place_id="place1", place_name="当前位置")
     if change == "new_place":
         latest = beacon(2, place_id="place2", place_name="新位置")
     elif change == "renamed_place":
         latest = beacon(place_id="place1", place_name="更新的位置名称")
     else:
-        latest = beacon(2, area=current.area, place_id=current.place_id, place_name=current.place_name,
-                        location_description="另一枚信标的旧描述")
+        latest = beacon(2, area=current.area, place_id=current.place_id, place_name=current.place_name)
     state = h.runtime.state(DEVICE)
     state.owner = conn
     state.policy = h.client.policies[DEVICE]

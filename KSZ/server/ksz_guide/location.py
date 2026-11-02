@@ -66,7 +66,8 @@ class LocationUpdates:
                 location = None if beacon is None else {
                     "beacon_id": beacon.beacon_id, "beacon_mac": beacon.mac,
                     "venue_id": beacon.venue_id, "floor": beacon.floor,
-                    "area": beacon.area, "location_description": beacon.location_description,
+                    "area": beacon.area,
+                    "place_name": beacon.place_name,
                 }
                 message = self.runtime.message(
                     "location", session_id=conn.session_id, location_revision=revision,

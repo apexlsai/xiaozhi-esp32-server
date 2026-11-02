@@ -389,7 +389,7 @@ test('KSZ MQTT gateway protocol integration', { timeout: 60000 }, async (t) => {
             { type: 'guide_control', version: 1, action: 'location', session_id: hello.session_id,
                 location_revision: 2, status: 'located', expires_in_ms: 15000,
                 location: { beacon_id: 'asset-1', beacon_mac: 'DA:01:16:00:08:87', venue_id: 'venue-1',
-                    floor: '1F', area: '青铜器展区', location_description: '展柜旁' } },
+                    floor: '1F', area: '青铜器展区', place_name: '展柜旁' } },
             { type: 'llm', emotion: 'happy', text: '😆' },
         ]) {
             backendSocket.send(JSON.stringify(event));

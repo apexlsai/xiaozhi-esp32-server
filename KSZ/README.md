@@ -816,14 +816,14 @@ HTTP 层恒为 `200`，业务成败看 JSON 的 `code`（`0` 成功，非 `0` �
 GET http://127.0.0.1:14000/api/v1/beacons/by-beacon-id/{beaconId}
 ```
 
-接口响应至少应包含匹配的 `beacon_id`，以及 `floor`、`area`、`location_description` 中的一项。例如：
+接口响应至少应包含匹配的 `beacon_id`，以及 绑定位置名称 `place_name`（楼层 `floor` 和区域 `area` 可选）。例如：
 
 ```json
 {
   "beacon_id": "jx-pxm-003",
   "floor": "2F",
   "area": "古代文明展厅",
-  "location_description": "北墙 A12 展柜旁"
+  "place_name": "北墙 A12 展柜旁"
 }
 ```
 

@@ -45,7 +45,7 @@ def beacon(number=1, **changes):
     return Beacon.parse({
         "id": f"beacon{number}", "mac": f"DA:01:16:{number >> 16 & 255:02X}:{number >> 8 & 255:02X}:{number & 255:02X}",
         "beacon_id": f"asset-{number}", "venue_id": "venue1", "area_id": f"area{number}",
-        "floor": "1F", "area": f"展区{number}", "location_description": "展柜旁", **changes,
+        "floor": "1F", "area": f"展区{number}", "place_id": f"place{number}", "place_name": "展柜旁", **changes,
     })
 
 
