@@ -41,6 +41,7 @@ import xiaozhi.common.user.UserDetail;
 import xiaozhi.modules.device.dto.DeviceCellReport;
 import xiaozhi.modules.device.dto.DeviceReportRespDTO;
 import xiaozhi.modules.device.entity.DeviceEntity;
+import xiaozhi.modules.device.service.DeviceAutoBindService;
 import xiaozhi.modules.device.service.DeviceCellService;
 import xiaozhi.modules.device.service.DeviceService;
 import xiaozhi.modules.device.location.CellLocationStore;
@@ -80,7 +81,7 @@ class DeviceCellReportTest {
         when(devices.checkDeviceActive(anyString(), anyString(), any())).thenReturn(new DeviceReportRespDTO());
         ObjectMapper mapper = new ObjectMapper().disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
         mvc = MockMvcBuilders.standaloneSetup(
-                new OTAController(devices, mock(SysParamsService.class), cells),
+                new OTAController(devices, mock(SysParamsService.class), cells, mock(DeviceAutoBindService.class)),
                 new DeviceCellController(devices, cells))
                 .setMessageConverters(new StringHttpMessageConverter(StandardCharsets.UTF_8),
                         new MappingJackson2HttpMessageConverter(mapper))
