@@ -25,7 +25,7 @@ from .idle_greeting import (
     cancel_idle_greeting, close_idle_greeting, greeting_session,
     handle_idle_greeting, interrupt_idle_greeting,
 )
-from .prompt import prepare_system_prompt, prompt_template_path, response_language
+from .prompt import prepare_system_prompt, prompt_template_path, response_language, venue_prompt
 from .role_patch import handle_profile_change, handle_role_rebind, on_hello as role_on_hello
 from .runtime import GuideRuntime
 from .settings import GuideSettings
@@ -36,7 +36,10 @@ from .visual_context import (
     visual_request_payload, visual_state,
 )
 from .tts import tts_complete_sentence
-from .geographic_location import close_location, location_context, start_location
+from .geographic_location import (
+    apply_location, close_location, location_context, location_description, location_value,
+    start_location, wait_location,
+)
 from .playback import (
     begin_response, commit_playback_message, handle_playback_progress, interrupt_response,
     playback_context_messages, prepare_playback_message, record_response_delta, record_response_text,
@@ -136,13 +139,16 @@ async def on_hello(conn, message):
     role_on_hello(conn)
     runtime = runtime_for(conn)
     if runtime is None:
+        await wait_location(conn)
         return True
     try:
-        accepted = await runtime.bind(conn, message.get("guide"))
+        accepted, _ = await asyncio.gather(runtime.bind(conn, message.get("guide")), wait_location(conn))
     except GuideError:
         accepted = False
     if not accepted:
         await conn.websocket.close()
+    else:
+        apply_location(conn)
     return accepted
 
 
@@ -236,8 +242,14 @@ def refresh_location(conn):
 
 
 def filter_context(conn, values):
-    values = visual_chat_context(conn, values)
     runtime = runtime_for(conn)
+    location = location_value(conn)
+    if runtime is not None or location is not None:
+        apply_location(conn)
+    values = visual_chat_context(conn, values)
+    values.pop("device_location", None)
+    if location is not None:
+        values["device_location"] = location
     if runtime is None:
         return values
     return validated_context(runtime, conn.device_id, values)
@@ -253,16 +265,30 @@ def validated_context(runtime, device_mac, values):
 
 def vision_context(server, device_mac, values):
     runtime = getattr(server, "guide_runtime", None)
-    return validated_context(runtime, device_mac, values) if isinstance(runtime, GuideRuntime) and runtime.guide_enabled else values
+    result = validated_context(runtime, device_mac, values) if isinstance(runtime, GuideRuntime) and runtime.guide_enabled else values
+    find = getattr(server, "find_device_connection", None)
+    conn = find({"device_id": device_mac}) if callable(find) else None
+    location = location_value(conn) if conn is not None else None
+    if "device_location" in result or location is not None:
+        result = dict(result)
+        result.pop("device_location", None)
+        if location is not None:
+            result["device_location"] = location
+    return result
 
 
 def extend_vision_payload(payload, kwargs):
     for key in ("venue_id", "venue_context", "beacon_mac", "guide_policy_revision",
-                "session_id", "image_id", "image_seq", "captured_at"):
+                "device_location", "session_id", "image_id", "image_seq", "captured_at"):
         if kwargs.get(key) is not None:
             payload[key] = kwargs[key]
     if kwargs.get("history"):
         payload["messages"] = [*kwargs["history"], *payload["messages"]]
+    context = venue_prompt("", kwargs.get("venue_context"))
+    if location := kwargs.get("device_location"):
+        context += "\n" + location_description(location)
+    if context.strip():
+        payload["messages"] = [{"role": "system", "content": context.strip()}, *payload["messages"]]
     return payload
 
 

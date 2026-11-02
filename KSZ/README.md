@@ -542,9 +542,11 @@ docker compose -f KSZ/compose.yml logs -f --tail=100 xiaozhi-esp32-server-web | 
 
 管理端启动时由 Liquibase 创建 `ksz_device_location` 和 `ksz_cell_location_cache`。前者按设备保存最新 cell 上报、定位模式及配置城市，后者按 MCC、MNC、接入制式、LAC 和 Cell ID 保存基站结果。多个设备连接同一基站时共用结果，服务重启和断线重连不触发重复外部查询。基站缓存默认30天，设备上报默认24小时有效；缓存过期才重查，基站变化先查对应缓存。数据库中的查询租约避免并发重复请求，失败默认60秒后重试。旧 Redis 上报在首次解析时可导入 MySQL，Redis 故障不影响已持久化的有效上报。
 
-Python 服务端每次连接后异步读取管理端位置，不阻塞 hello 或普通对话，并每分钟检查一次更新。位置到达后替换现有 system 中的城市，不新增历史消息；首次尚未取得城市时先按未知位置处理。设备定位过期、无效或查询失败时使用该设备的配置城市，再使用显式配置的 `KSZ_LOCATION_DEFAULT_CITY`，均不回退到4G出口 IP。默认城市仅用于本地查询，不声称是实际定位；没有兜底城市时询问用户。没有 cell 上报、使用 `cell` 模式且未配置单设备城市的 WiFi 设备保留原 IP 定位。用户明确指定的查询城市始终优先。
+Python 服务端每次连接时读取管理端位置，完成首次读取后每分钟检查一次更新。位置到达后更新现有 system 中的位置上下文，不新增历史消息；首次读取超时或失败且尚未取得城市时按未知位置处理。设备定位过期、无效或查询失败时使用该设备的配置城市，再使用显式配置的 `KSZ_LOCATION_DEFAULT_CITY`，均不回退到4G出口 IP。默认城市仅用于本地查询，不声称是实际定位；没有兜底城市时询问用户。没有 cell 上报、使用 `cell` 模式且未配置单设备城市的 WiFi 设备保留原 IP 定位。用户明确指定的查询城市始终优先。
 
 `POST /xiaozhi/config/device-location` 使用小智现有 `server.secret` 服务间鉴权，Body 为 `{"deviceId":"80:f1:b2:d4:ce:64"}`。返回 `source`（`cell`、`fixed`、`default`、`unknown` 或 `ip`）、`city`、`position`、`locatedAt`、`expiresAt`、`cellReported`、`status` 和 `retryAt`；时间均为 Unix 毫秒。城市、位置状态和天气工具共用该结果。
+
+设备连接时并行读取 management 场馆策略与基站定位，在 `hello` 完成前等待首次结果；基站读取最多等待10秒，失败后继续普通对话并在后台重试。绑定场馆名称、简介、业务编号与基站返回的地址、WGS84 坐标、覆盖半径、定位时间和有效期同时进入 Agent 的系统消息，普通问答无需等待信标。普通位置问答按接口地址回答到行政区、街道及附近道路，不主动播报定位来源、坐标和覆盖半径；用户追问详情时再提供。拍照请求复用当前连接的有效位置；每轮重新检查场馆授权和位置有效期。场馆绑定说明服务归属，具体楼层和展区仍以有效信标为准。
 
 同样鉴权的 `POST /xiaozhi/config/device-location/settings` 可保存单设备配置：
 

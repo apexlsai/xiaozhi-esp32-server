@@ -530,6 +530,10 @@ class GuideRuntime:
             return False
         metadata = metadata or {}
         async with state.lock:
+            try:
+                self._apply_policy(state, await self.client.policy(state.mac))
+            except GuideError:
+                self._expire(state)
             activation_id = metadata.get("activation_id")
             if activation_id:
                 self._expire(state)

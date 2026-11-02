@@ -14,9 +14,11 @@ from aiohttp import ClientSession, web
 
 from ksz_guide.client import ManagementClient
 from ksz_guide.integration import (
-    extend_vision_payload, filter_context, handle_legacy_event, register_routes, track_chat, vision_context,
+    extend_vision_payload, filter_context, handle_legacy_event, on_hello, register_routes, track_chat, vision_context,
 )
+from ksz_guide.geographic_location import close_location
 from ksz_guide.models import Beacon, GuideError, Policy, beacon_identity
+from ksz_guide.prompt import prepare_system_prompt
 from ksz_guide.runtime import GuideRuntime
 from ksz_guide.settings import GuideSettings
 
@@ -435,9 +437,69 @@ def test_invalid_bound_venue_context_is_rejected(changes):
 
 def test_bound_venue_is_forwarded_into_the_vision_model_request():
     payload = {"messages": [{"role": "user", "content": "image"}]}
-    assert extend_vision_payload(payload, {"venue_context": VENUE, "venue_id": VENUE["id"]}) == {
-        "messages": payload["messages"], "venue_context": VENUE, "venue_id": VENUE["id"],
-    }
+    result = extend_vision_payload(payload, {"venue_context": VENUE, "venue_id": VENUE["id"]})
+    assert result["venue_context"] == VENUE and result["venue_id"] == VENUE["id"]
+    assert result["messages"][0]["role"] == "system"
+    assert VENUE["name"] in result["messages"][0]["content"]
+    assert result["messages"][-1] == {"role": "user", "content": "image"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("location_first", [True, False])
+async def test_hello_waits_for_both_initial_sources_and_first_request_contains_them(monkeypatch, location_first):
+    h = Harness(venue_context=VENUE)
+    conn = h.conn()
+    conn.read_config_from_api = True
+    conn.device_attributes = {}
+    conn.prompt = "Configured role."
+    conn.change_system_prompt = lambda prompt: setattr(conn, "prompt", prepare_system_prompt(conn, prompt))
+    policy_started, location_started = asyncio.Event(), asyncio.Event()
+    policy_ready, location_ready = asyncio.Event(), asyncio.Event()
+
+    async def policy(mac):
+        policy_started.set()
+        await policy_ready.wait()
+        return h.client.policies[mac]
+
+    async def location(_):
+        location_started.set()
+        await location_ready.wait()
+        return {"source": "cell", "city": "深圳市", "position": {
+            "city": "深圳市", "address": "深圳市宝安区", "lat": 22.767094, "lng": 113.863019, "radius": 1414,
+        }}
+
+    monkeypatch.setattr(h.client, "policy", policy)
+    monkeypatch.setattr("ksz_guide.geographic_location.fetch_location", location)
+    hello = asyncio.create_task(on_hello(conn, {}))
+    await asyncio.wait_for(asyncio.gather(policy_started.wait(), location_started.wait()), timeout=1)
+    first, second = (location_ready, policy_ready) if location_first else (policy_ready, location_ready)
+    first.set()
+    await asyncio.sleep(0)
+    assert not hello.done()
+    second.set()
+    assert await hello
+    assert VENUE["name"] in conn.prompt and "深圳市宝安区" in conn.prompt
+    context = filter_context(conn, {})
+    assert context["venue_context"] == VENUE
+    assert context["device_location"]["position"]["radius"] == 1414
+    assert all(text in conn.prompt for text in (VENUE["name"], VENUE["description"], "深圳市宝安区", "113.863019"))
+    assert conn.prompt.count("<ksz_device_venue>") == 1
+    h.clock.now += 60
+    filter_context(conn, {})
+    assert VENUE["name"] not in conn.prompt and "深圳市宝安区" in conn.prompt
+    close_location(conn)
+    await conn.ksz_geographic_location.task
+
+
+@pytest.mark.asyncio
+async def test_management_failure_on_hello_preserves_conversation_without_expired_venue():
+    h = Harness(venue_context=VENUE)
+    h.client.failed = True
+    h.clock.now += 60
+    conn = h.conn()
+    assert await on_hello(conn, {})
+    assert h.runtime.context(DEVICE) == {}
+    conn.websocket.close.assert_not_awaited()
 
 
 @pytest.mark.asyncio
