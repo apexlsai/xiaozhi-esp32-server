@@ -482,7 +482,8 @@ async def test_hello_waits_for_both_initial_sources_and_first_request_contains_t
     context = filter_context(conn, {})
     assert context["venue_context"] == VENUE
     assert context["device_location"]["position"]["radius"] == 1414
-    assert all(text in conn.prompt for text in (VENUE["name"], VENUE["description"], "深圳市宝安区", "113.863019"))
+    assert all(text in conn.prompt for text in (VENUE["name"], VENUE["description"], "深圳市宝安区"))
+    assert all(text not in conn.prompt for text in ("22.767094", "113.863019", "1414"))
     assert conn.prompt.count("<ksz_device_venue>") == 1
     h.clock.now += 60
     filter_context(conn, {})

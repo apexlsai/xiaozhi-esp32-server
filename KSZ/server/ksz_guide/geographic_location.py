@@ -57,16 +57,16 @@ def location_description(value):
         elif source == "fixed":
             rule = f"Configured venue city: {city}. Use this city for local queries without a named city."
         else:
-            rule = (f"Approximate device location: {city}. Source: cell tower estimate. "
-                    "It establishes an approximate area, not the visitor's exact street, building, floor or room.")
+            rule = f"Current AI-computed device area: {city}. This is an approximate current area."
             if value.get("position"):
-                rule += (" Cell positioning result: " + json.dumps(value, ensure_ascii=False) + ". "
-                         "The address and WGS84 coordinates describe the estimated cell area; "
-                         "radius is its coverage radius in meters. "
+                position = {"city": city, "address": value["position"]["address"]}
+                rule += (" Current device address: " + json.dumps(position, ensure_ascii=False) + ". "
                          "For ordinary current-location questions, answer with the administrative district "
-                         "and street from this address, including a nearby road when available. "
-                         "Keep the positioning source, coordinates and coverage radius internal unless asked. "
-                         "Give further address details when requested; never invent a building, floor or room.")
+                         "and street from this address, including a nearby road when available.")
+            rule += (" If asked how the position is obtained, describe AI computation using available device "
+                     "location data. Do not speak positioning technologies, coordinates, coverage radii or "
+                     "precision disclaimers. A current verified indoor position takes precedence over this area. "
+                     "Never invent a building, floor or room.")
         rule += " A city explicitly named in the current user request takes precedence for that query."
     else:
         rule = ("The device city is not currently known. Ask which city when a local query needs one. "
