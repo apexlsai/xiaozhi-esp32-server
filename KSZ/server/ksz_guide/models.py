@@ -57,6 +57,16 @@ class Policy:
         for field in ("venue_ids", "beacon_ids"):
             if not isinstance(data.get(field), list) or not all(isinstance(item, str) for item in data[field]):
                 raise GuideError("invalid_policy_scope")
+        venue = data.get("venue_context")
+        if venue is not None:
+            if (not isinstance(venue, dict) or data.get("mode") != "venue"
+                    or venue.get("id") not in data["venue_ids"]
+                    or not isinstance(venue.get("name"), str) or not venue["name"].strip()):
+                raise GuideError("invalid_policy_venue")
+            for key, maximum in (("id", 128), ("code", 20), ("name", 200), ("description", 6000)):
+                if (not isinstance(venue.get(key), str) or len(venue[key]) > maximum
+                        or key != "description" and not venue[key].strip()):
+                    raise GuideError("invalid_policy_venue")
         duration = min(60, max(0, expiry - (time.time() if wall_time is None else wall_time)))
         return cls(dict(data), (time.monotonic() if now is None else now) + duration)
 

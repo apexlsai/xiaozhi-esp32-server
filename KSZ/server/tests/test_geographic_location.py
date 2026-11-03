@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -10,8 +11,9 @@ from core.utils.dialogue import Dialogue, Message
 from plugins_func.functions import get_weather as weather
 from ksz_guide.geographic_location import (
     GeographicLocation, apply_location, close_location, fetch_location,
-    location_context, location_prompt, start_location, watch_location,
+    location_context, location_prompt, start_location, wait_location, watch_location,
 )
+from ksz_guide.integration import extend_vision_payload, filter_context, vision_context
 from ksz_guide.prompt import prepare_system_prompt
 
 
@@ -35,6 +37,8 @@ def conn():
 
 def located(source="cell", city="深圳市"):
     return {"source": source, "city": city, "expiresAt": int(time.time() * 1000) + 60000,
+            "position": {"city": city, "address": "广东省深圳市宝安区公明街道石井路;楼岗大道与田园路路口西南111米",
+                         "lat": 22.767094, "lng": 113.863019, "radius": 1414.0} if source == "cell" else None,
             "status": "ok", "cellReported": True, "retryAt": 0}
 
 
@@ -70,6 +74,26 @@ def test_expired_location_is_not_claimed_as_current(conn):
     conn.ksz_geographic_location = GeographicLocation(value={**located(), "expiresAt": 1})
     assert location_context(conn) == (True, "")
     assert "深圳" not in location_prompt(conn, conn.prompt)
+
+
+def test_full_cell_result_reaches_text_and_vision_and_is_removed_after_expiry(conn):
+    value = located()
+    conn.ksz_geographic_location = GeographicLocation(value=value)
+    context = filter_context(conn, {"device_location": {"city": "forged"}})
+    assert context["device_location"] == value
+    assert all(str(value["position"][key]) in conn.prompt for key in ("address", "lat", "lng", "radius"))
+    assert "coverage radius in meters" in conn.prompt
+    assert "answer with the administrative district and street" in conn.prompt
+    assert "coverage radius internal unless asked" in conn.prompt
+    server = SimpleNamespace(find_device_connection=lambda _: conn)
+    image_context = vision_context(server, conn.device_id, {})
+    payload = extend_vision_payload({"messages": [{"role": "user", "content": "image"}]}, image_context)
+    assert payload["device_location"] == value
+    assert value["position"]["address"] in payload["messages"][0]["content"]
+    value["expiresAt"] = 1
+    context = filter_context(conn, {})
+    assert context["device_location"] == {"source": "unknown", "status": "expired"}
+    assert value["position"]["address"] not in conn.prompt
 
 
 def test_wifi_and_standalone_keep_existing_ip_path(conn):
@@ -116,6 +140,32 @@ async def test_closed_connection_discards_late_result(conn, monkeypatch):
     monkeypatch.setattr("ksz_guide.geographic_location.fetch_location", fetch)
     await watch_location(conn, state)
     assert "深圳市" not in conn.prompt
+
+
+@pytest.mark.asyncio
+async def test_initial_location_failure_releases_hello_and_keeps_background_retry(conn, monkeypatch):
+    monkeypatch.setattr("ksz_guide.geographic_location.fetch_location", AsyncMock(side_effect=ValueError("unavailable")))
+    await asyncio.wait_for(wait_location(conn), timeout=1)
+    state = conn.ksz_geographic_location
+    assert state.ready.is_set() and not state.task.done()
+    assert location_context(conn) == (True, "")
+    close_location(conn)
+    await state.task
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", [
+    {"lat": True}, {"lat": 91}, {"lng": -181}, {"radius": 0},
+    {"radius": float("nan")}, {"radius": float("inf")}, {"address": "x" * 1001},
+])
+async def test_invalid_cell_position_is_not_injected(conn, monkeypatch, change):
+    original = httpx.AsyncClient
+    value = located()
+    value["position"].update(change)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: original(
+        **kwargs, transport=httpx.MockTransport(lambda _: httpx.Response(200, content=json.dumps({"code": 0, "data": value})))))
+    with pytest.raises(ValueError):
+        await fetch_location(conn)
 
 
 @pytest.mark.asyncio
