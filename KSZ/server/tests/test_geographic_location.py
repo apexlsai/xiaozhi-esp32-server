@@ -76,20 +76,23 @@ def test_expired_location_is_not_claimed_as_current(conn):
     assert "深圳" not in location_prompt(conn, conn.prompt)
 
 
-def test_full_cell_result_reaches_text_and_vision_and_is_removed_after_expiry(conn):
+def test_location_metadata_stays_available_but_spoken_context_only_gets_address(conn):
     value = located()
     conn.ksz_geographic_location = GeographicLocation(value=value)
     context = filter_context(conn, {"device_location": {"city": "forged"}})
     assert context["device_location"] == value
-    assert all(str(value["position"][key]) in conn.prompt for key in ("address", "lat", "lng", "radius"))
-    assert "coverage radius in meters" in conn.prompt
+    assert value["position"]["address"] in conn.prompt
+    assert all(str(value["position"][key]) not in conn.prompt for key in ("lat", "lng", "radius"))
+    assert "cell tower" not in conn.prompt
+    assert "AI computation" in conn.prompt
     assert "answer with the administrative district and street" in conn.prompt
-    assert "coverage radius internal unless asked" in conn.prompt
     server = SimpleNamespace(find_device_connection=lambda _: conn)
     image_context = vision_context(server, conn.device_id, {})
     payload = extend_vision_payload({"messages": [{"role": "user", "content": "image"}]}, image_context)
     assert payload["device_location"] == value
     assert value["position"]["address"] in payload["messages"][0]["content"]
+    assert all(str(value["position"][key]) not in payload["messages"][0]["content"]
+               for key in ("lat", "lng", "radius"))
     value["expiresAt"] = 1
     context = filter_context(conn, {})
     assert context["device_location"] == {"source": "unknown", "status": "expired"}

@@ -46,6 +46,10 @@ MQTT 完成认证和订阅后可发送导览控制消息，不需要先建立语
     "auto_announce": true,
     "current_venue_id": "<场馆ID>",
     "filter": {
+      "scan_interval_ms": 1000,
+      "scan_window_ms": 1000,
+      "observation_interval_ms": 1000,
+      "heartbeat_interval_ms": 5000,
       "rssi_enter": -75,
       "rssi_advantage": 8,
       "stable_ms": 3000,
@@ -109,13 +113,13 @@ UTF8(manifest.manifest_json + "\n" + chunk_json[0] + "\n" + ... + chunk_json[N-1
 
 可选广播身份使用 `beacon.uuid`、`beacon.major`、`beacon.minor`，必须全填或全空。Major/Minor是0–65535整数。若管理端登记了广播三元组，新协议必须完整携带且与登记值匹配；旧协议仅按完整MAC兼容校验。
 
-每5秒发送 `action=heartbeat`，其他信封字段一致，并携带当前仍稳定观测到的 `beacon`。仅设备在线但未观测到信标时，不得补报历史信标。确认丢失发送 `action=lost`（不带beacon）；服务端默认15秒未获得有效位置确认也会失位，可通过 `KSZ_GUIDE_POSITION_TTL_MS` 调整。
+按 `filter.heartbeat_interval_ms`（默认5000、最大30000）发送 `action=heartbeat`，其他信封字段一致，并携带当前仍稳定观测到的 `beacon`。`scan_interval_ms`/`scan_window_ms` 为设备扫描间隔与窗口，单位毫秒；窗口不大于间隔。`observation_interval_ms` 限制同一稳定信标的连续观测上报，确认切换或丢失应立即上报。缺少新增字段时兼容原固件默认值；支持时须在策略原子应用时更新定时器和扫描器，再确认策略。仅设备在线但未观测到信标时，不得补报历史信标。确认丢失发送 `action=lost`（不带beacon）；服务端位置有效期默认15秒，统一在管理端调整，须大于上报/保活间隔及丢失时间。
 
 management 目录提供 `place_id`、`place_name`、`place_beacon_count`（同位置启用信标总数，独立于分页和设备授权子集）。数量仅作资产统计，不决定播报条件；一个位置绑定多枚信标时，任意一枚有效上报即可识别并触发讲解，无需双信标、成员跳变或确认窗口。同位置持续上报和成员切换不重播，其他位置已开始讲解后才允许返回重新触发，并受默认60秒同位置冷却限制。每枚信标必须绑定位置并提供位置名称；位置变化不修改设备固定归属。
 
 默认允许信标变化打断正在生成或播放的讲解，但必须满足15秒最小讲解间隔、同位置重复讲解间隔及用户交互优先等条件。冷却期间继续旧讲解，只保留最新有效位置的待播任务；切换不会重置冷却，到期时任务仍须有效。固件的稳定判断和自身冷却保持原实现，旧报文同样获得服务端防重复保护，不要求新增扫描候选字段。
 
-新协议策略中的 `auto_announce` 同时受设备授权与 `KSZ_GUIDE_AUTO_ANNOUNCE_ENABLED` 约束；`filter.min_announce_interval_ms` 为服务端 `KSZ_GUIDE_MIN_ANNOUNCE_INTERVAL_MS` 的有效值，参与策略摘要。其他服务器端讲解规则见[配置说明](guide-management.md#信标讲解规则)，RSSI 与扫描判定仍按原策略执行。
+新协议策略中的 `auto_announce` 同时受设备授权与管理端全局开关约束；`filter.min_announce_interval_ms` 取统一配置值。策略 `config_revision` 对应管理端配置版本，所有过滤参数参与策略摘要；配置变化后须重新下载与确认。其他服务器端讲解规则见[配置说明](guide-management.md#信标讲解规则)，管理端尚未升级时兼容启动环境变量。
 
 结果消息使用 `action=result`，含 `request_id`、`seq`、`accepted` 和 `reason`。未知、跨馆、停用或冲突信标不更新位置、不触发语音。`policy_revision_mismatch` 时同步新策略；`resolve_rate_limited` 时按正常稳定观测节奏重试，不能快速循环请求。
 
