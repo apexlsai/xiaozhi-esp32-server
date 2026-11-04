@@ -3,6 +3,7 @@ import json
 import queue
 from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import Context
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -129,14 +130,18 @@ def test_env_template_overrides_builtin_yaml():
 ])
 def test_fixed_opening_uses_bound_language_before_model_is_called(conn, language, expected):
     conn.device_attributes["language"] = language
+    history_at_request = []
 
     def response(*args, **kwargs):
         assert conn.tts.complete == [expected]
+        history_at_request.extend(assistant_text(conn))
         assert [item.sentence_type for item in messages(conn)] == [SentenceType.FIRST, SentenceType.MIDDLE]
         return iter(())
 
     conn.llm.response.side_effect = response
     narrate(conn)
+    assert history_at_request == [expected]
+    assert conn.llm.response.call_args.args[1][-1] == {"role": "user", "content": "[位置变化] 请直接介绍这里。"}
     assert spoken(conn) == expected
     assert assistant_text(conn) == [expected]
     assert conn.tts.texts[conn.sentence_id] == expected
@@ -187,12 +192,13 @@ def test_model_failure_keeps_location_sentence_and_finishes(conn, stage):
 
 
 @pytest.mark.parametrize("change", ["abort", "new_beacon", "disconnect", "position_expired"])
-def test_late_model_output_is_discarded_when_guide_loses_ownership(conn, change):
+@pytest.mark.parametrize("body", ["", "这里展示城市规划。"])
+def test_late_model_output_is_discarded_when_guide_loses_ownership(conn, change, body):
     valid = True
 
     def response():
         nonlocal valid
-        yield "您好，我是"
+        yield "您好，我是小硕。" + body
         if change == "abort":
             conn.client_abort = True
         elif change == "new_beacon":
@@ -205,8 +211,8 @@ def test_late_model_output_is_discarded_when_guide_loses_ownership(conn, change)
 
     conn.llm.response.return_value = response()
     turn = narrate(conn, valid=lambda: valid)
-    assert spoken(conn) == turn.prefix
-    assert assistant_text(conn) == []
+    assert spoken(conn) == turn.prefix + body
+    assert assistant_text(conn) == [turn.prefix + body]
     if change != "position_expired":
         assert all(item.sentence_type != SentenceType.LAST for item in messages(conn))
 
@@ -215,6 +221,33 @@ def test_missing_location_never_reaches_model(conn):
     narrate(conn, item=replace(beacon(), floor=" ", area="", place_name=""))
     conn.llm.response.assert_not_called()
     assert spoken(conn) == ""
+    assert assistant_text(conn) == []
+
+
+def test_followup_during_narration_receives_accepted_history_in_order(conn):
+    body = "这里展示城市规划。"
+    question = "刚才介绍的是什么？"
+    answer = "刚才介绍的是城市规划。"
+    history_during_stream = []
+
+    def response():
+        yield body
+        history_during_stream.extend(assistant_text(conn))
+        Context().run(conn.chat, question)
+        yield "已经过期的讲解。"
+
+    conn.llm.response.side_effect = [response(), iter([answer])]
+    turn = narrate(conn)
+    assert history_during_stream == [turn.prefix + body]
+    request = conn.llm.response.call_args_list[1].args[1]
+    assert request[-2:] == [
+        {"role": "assistant", "content": turn.prefix + body},
+        {"role": "user", "content": question},
+    ]
+    assert assistant_text(conn) == [turn.prefix + body, answer]
+    assert [(message.role, message.content) for message in conn.dialogue.dialogue[-3:]] == [
+        ("assistant", turn.prefix + body), ("user", question), ("assistant", answer),
+    ]
 
 
 def test_custom_template_and_empty_fields_are_rendered_once(conn):
@@ -286,16 +319,21 @@ async def test_runtime_rejects_stale_place_without_interrupting_same_place_membe
         assert spoken(conn) == ""
     else:
         assert spoken(conn) == "您现在位于1F，展区1，当前位置。"
-        assert assistant_text(conn) == []
+        assert assistant_text(conn) == [spoken(conn)]
 
 
 def test_following_user_chat_keeps_greetings_and_its_original_prompt(conn):
-    narrate(conn)
+    conn.llm.response.return_value = iter(["这里展示城市规划。"])
+    turn = narrate(conn)
     conn.tts.tts_text_queue = queue.Queue()
     conn.llm.response.return_value = iter(["你好，我是小硕。"])
     conn.chat("你好")
     assert spoken(conn) == "你好，我是小硕。"
     assert assistant_text(conn)[-1] == "你好，我是小硕。"
+    assert conn.llm.response.call_args.args[1][-2:] == [
+        {"role": "assistant", "content": turn.prefix + "这里展示城市规划。"},
+        {"role": "user", "content": "你好"},
+    ]
     assert "automatic beacon narration" not in conn.llm.response.call_args.args[1][0]["content"]
 
 

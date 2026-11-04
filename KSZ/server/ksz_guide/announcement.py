@@ -95,6 +95,7 @@ class GuideAnnouncement:
         self.filter = OpeningFilter(self.location, self.prefix)
         self.sentence_id = None
         self.parts = []
+        self.history_message = None
 
     def owns_turn(self):
         return (self.sentence_id is not None and self.conn.sentence_id == self.sentence_id
@@ -106,6 +107,8 @@ class GuideAnnouncement:
         if not self.owns_turn() or not self.valid() or not self.location:
             return False
         self.parts.append(self.prefix)
+        self.history_message = Message(role="assistant", content=self.prefix)
+        self.conn.dialogue.put(self.history_message)
         record_response_text(self.conn, self.prefix, sentence_id)
         self.conn.tts.store_tts_text(sentence_id, self.prefix)
         tts_complete_sentence(self.conn, self.prefix, sentence_id)
@@ -119,8 +122,9 @@ class GuideAnnouncement:
             if len(self.parts) == 1 and self.language in {"en", "ko"}:
                 output = " " + output
             self.parts.append(output)
-            record_response_text(self.conn, "".join(self.parts), self.sentence_id)
-            self.conn.tts.store_tts_text(self.sentence_id, "".join(self.parts))
+            self.history_message.content = "".join(self.parts)
+            record_response_text(self.conn, self.history_message.content, self.sentence_id)
+            self.conn.tts.store_tts_text(self.sentence_id, self.history_message.content)
         return output
 
     def finish(self):
@@ -130,8 +134,6 @@ class GuideAnnouncement:
             remaining = self.accept("", final=True)
             if remaining:
                 tts_complete_sentence(self.conn, remaining, self.sentence_id)
-            if self.parts and self.valid():
-                self.conn.dialogue.put(Message(role="assistant", content="".join(self.parts)))
         finally:
             if self.owns_turn():
                 self.conn.tts.tts_text_queue.put(TTSMessageDTO(self.sentence_id, SentenceType.LAST, ContentType.ACTION))
@@ -186,6 +188,10 @@ def guide_announcement_messages(conn, messages, sentence_id):
         "If no relevant facts are available, return no additional narration."
     )
     result = [dict(message) for message in messages]
+    if (turn.history_message is not None and result
+            and result[-1].get("role") == "assistant"
+            and result[-1].get("content") == turn.history_message.content):
+        result.pop()
     system = next((message for message in result if message.get("role") == "system"), None)
     if system is None:
         result.insert(0, {"role": "system", "content": rule})
