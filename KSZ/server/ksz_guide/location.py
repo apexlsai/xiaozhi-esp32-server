@@ -68,6 +68,7 @@ class LocationUpdates:
                     "venue_id": beacon.venue_id, "floor": beacon.floor,
                     "area": beacon.area,
                     "place_name": beacon.place_name,
+                    "location_description": beacon.place_name,
                 }
                 message = self.runtime.message(
                     "location", session_id=conn.session_id, location_revision=revision,

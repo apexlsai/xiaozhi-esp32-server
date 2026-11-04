@@ -65,7 +65,7 @@ async def test_built_hello_handler_starts_snapshot_after_hello_and_only_once(tmp
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("place_name", ["赛车游戏屏幕体验区", " 赛车游戏屏幕体验区 "])
-async def test_location_display_uses_only_bound_place_name(place_name):
+async def test_location_display_supports_both_field_names_from_bound_place(place_name):
     item = beacon(place_id="racing", place_name=place_name)
     h = Harness(auto_announce=False, items=[item])
     try:
@@ -74,7 +74,7 @@ async def test_location_display_uses_only_bound_place_name(place_name):
         await settle()
         location = messages(conn)[-1]["location"]
         assert location["place_name"] == "赛车游戏屏幕体验区"
-        assert "location_description" not in location
+        assert location.get("location_description") == "赛车游戏屏幕体验区"
         assert item.to_prompt_context() == "，".join((location["floor"], location["area"], location["place_name"]))
         h.announce.assert_not_awaited()
     finally:

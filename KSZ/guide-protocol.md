@@ -144,12 +144,13 @@ management 目录提供 `place_id`、`place_name`、`place_beacon_count`（同�
     "venue_id": "<场馆ID>",
     "floor": "1F",
     "area": "青铜器展区",
-    "place_name": "展柜旁"
+    "place_name": "展柜旁",
+    "location_description": "展柜旁"
   }
 }
 ```
 
-`status` 为 `located`、`unknown` 或 `lost`。未定位或已失位时 `location=null`、`expires_in_ms=0`，设备立即清空当前位置。位置名称必填，楼层和区域可为空；位置字段来自管理端登记资产，不采用设备上报的显示文本。`place_name` 只采用当前绑定位置的名称，与语音位置上下文一致；旧 `location_description` 字段已移除。设备需使用 `place_name` 显示位置。
+`status` 为 `located`、`unknown` 或 `lost`。未定位或已失位时 `location=null`、`expires_in_ms=0`，设备立即清空当前位置。位置名称必填，楼层和区域可为空；位置字段来自管理端登记资产，不采用设备上报的显示文本。`place_name` 与语音位置上下文均采用当前绑定位置的名称；下发时同时提供同值的 `location_description` 兼容旧固件。新固件优先使用 `place_name`，旧字段仅是传输别名，不读取信标历史说明。
 
 首次有效定位、有效位置切换、同位置有效上报续期、策略撤销和位置过期均更新显示，不受自动讲解开关或播报冷却限制。同位置任意一枚有效信标均可确认或续期。旧 `beacon_change` 与新 `observation` / 带信标的 `heartbeat` 共用服务端校验；无效、跨馆、未授权上报不能覆盖有效位置。位置通知不进入 Agent、对话历史、TTS 或音频队列，发送异常不阻塞位置处理和讲解。
 
