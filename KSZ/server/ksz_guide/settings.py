@@ -80,6 +80,28 @@ class GuideSettings:
         return self.location_templates.get(language) or self.location_templates.get(family) or self.location_templates["zh-CN"]
 
     @classmethod
+    def from_management(cls, data):
+        fields = set(cls.__dataclass_fields__)
+        if not isinstance(data, dict) or set(data) != fields:
+            raise ValueError("Incomplete management guide configuration")
+        env = {}
+        booleans = {"auto_announce_enabled", "announce_on_first_beacon", "interrupt_on_beacon_change"}
+        for name in fields - {"location_templates"}:
+            value = data[name]
+            if type(value) is not (bool if name in booleans else int):
+                raise ValueError(f"Invalid management guide setting: {name}")
+            key = "KSZ_NARRATION_MAX_TOKENS" if name == "narration_max_tokens" else f"KSZ_GUIDE_{name.upper()}"
+            env[key] = str(int(value))
+        templates = data["location_templates"]
+        if not isinstance(templates, dict) or set(templates) != set(_load_templates()):
+            raise ValueError("Incomplete management location templates")
+        for language, value in templates.items():
+            if not isinstance(value, str) or not value.strip() or len(value) > 500:
+                raise ValueError("Invalid management location template")
+            env[f"KSZ_GUIDE_LOCATION_TEMPLATE_{language.upper().replace('-', '_')}"] = value
+        return cls.from_env(env)
+
+    @classmethod
     def from_env(cls, env=None):
         env = os.environ if env is None else env
         templates = _load_templates()

@@ -82,6 +82,8 @@ class GuideRuntime:
         self.announcement_tasks = set()
         self.guide_enabled = guide_enabled
         self.settings = settings if settings is not None else GuideSettings()
+        self.config_revision = None
+        self.next_config_refresh = 0
         self.presence = PresenceTracker(clock, wall_clock)
         self.voice_connections = {}
         self.voice_by_device = {}
@@ -281,7 +283,8 @@ class GuideRuntime:
             beacons = await self.client.wire_whitelist(policy, venue) if policy.valid(self.clock()) else []
             config = {key: value for key, value in policy.data.items() if key not in {"expires_at", "beacon_allowlist"}}
             config["auto_announce"] = config.get("auto_announce") is True and self.settings.auto_announce_enabled
-            config["filter"] = {**config.get("filter", {}), "min_announce_interval_ms": self.settings.min_announce_interval_ms}
+            if not config.get("config_revision"):
+                config["filter"] = {**config.get("filter", {}), "min_announce_interval_ms": self.settings.min_announce_interval_ms}
             config["current_venue_id"] = venue
             manifest_json = json.dumps(config, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
             digest = hashlib.sha256((manifest_json + "\n").encode())
@@ -791,6 +794,7 @@ class GuideRuntime:
             return result
         result.update({
             "location_observed_at": self.wall_clock() - max(0, self.clock() - state.last_position_at) if state.current else None,
+            "config_revision": self.config_revision,
             "policy_revision": state.policy.revision if state.policy else None,
             "applied_policy_revision": state.ack_revision, "compatibility": state.compatibility,
             "current_venue_id": state.current.venue_id if state.current else None,
@@ -804,7 +808,38 @@ class GuideRuntime:
         })
         return result
 
+    async def refresh_configuration(self):
+        fetch = getattr(self.client, "beacon_configuration", None)
+        if not self.guide_enabled or fetch is None or self.clock() < self.next_config_refresh:
+            return False
+        self.next_config_refresh = self.clock() + 5
+        try:
+            payload = await fetch()
+            revision = payload.get("revision")
+            if (not isinstance(revision, str) or len(revision) != 64
+                    or any(c not in "0123456789abcdef" for c in revision)):
+                raise ValueError("Invalid management configuration revision")
+            if revision == self.config_revision:
+                return False
+            settings = GuideSettings.from_management(payload["config"]["guide"])
+        except (GuideError, ValueError, KeyError, TypeError, AttributeError):
+            log.warning("Guide configuration refresh unavailable; keeping last valid settings")
+            return False
+        self.settings = settings
+        self.config_revision = revision
+        for state in list(self.devices.values()):
+            async with state.lock:
+                state.manifest = None
+                if not settings.auto_announce_enabled:
+                    self._invalidate(state)
+                self._expire(state)
+        self._mark_reports(self.devices)
+        log.info("Guide configuration applied: %s", revision[:12])
+        return True
+
     async def tick(self, *, refresh=False):
+        changed = await self.refresh_configuration()
+        refresh = refresh or changed
         if self.clock() >= self.next_connection_snapshot:
             self.snapshot_connections()
             self.next_connection_snapshot = self.clock() + 10
