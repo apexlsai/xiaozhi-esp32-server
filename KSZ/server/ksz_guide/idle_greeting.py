@@ -136,7 +136,11 @@ def generate(conn, turn, runtime):
     else:
         system["content"] = (system.get("content") or "") + "\n\n" + rule
     messages.append({"role": "user", "content": "[Device event: idle_greeting] Initiate the greeting now."})
-    stream = conn.llm.response(conn.session_id, messages, max_tokens=160, extra_body=conn._build_llm_extra_body())
+    from .prompt_owner import agent_owned, request_messages
+    values = conn._build_llm_extra_body()
+    if agent_owned(conn):
+        messages = request_messages(conn, messages[:-1], values, kind="idle_greeting")
+    stream = conn.llm.response(conn.session_id, messages, max_tokens=160, extra_body=values)
     parts = []
     try:
         for chunk in stream:

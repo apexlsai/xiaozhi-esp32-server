@@ -1,0 +1,9 @@
+**
+!KSZ/
+!KSZ/patches/
+!KSZ/patches/agent-news-routing.patch
+!KSZ/patches/agent-prompt-owner.patch
+!KSZ/agent/
+!KSZ/agent/prompt_owner.py
+!KSZ/shared/
+!KSZ/shared/ksz_prompt.py

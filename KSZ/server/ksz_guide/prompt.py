@@ -79,6 +79,9 @@ def venue_prompt(prompt, venue):
 
 
 def prepare_system_prompt(conn, prompt):
+    from .prompt_owner import agent_owned
+    if agent_owned(conn):
+        return conn.config.get("prompt") or ""
     start = prompt.rfind(POLICY_START)
     if start >= 0 and prompt.endswith(POLICY_END):
         prompt = prompt[:start]
@@ -93,7 +96,11 @@ def prepare_system_prompt(conn, prompt):
         "naturally acknowledge being this device when asked, without stressing a distinction between the AI "
         "assistant and hardware. Use its verified current location when asked where you are. "
         "Keep the configured name and personality. Describe only capabilities and actions supported by current "
-        "device data or successful tools. For unverified venue or product details, briefly direct the visitor "
+        "device data or successful tools. Preserve the user's explicit news source or category in tool arguments; "
+        "a category is not a news provider. When using news or search results, state only supported facts. "
+        "Do not expand a headline into an invented report, infer that an event did not occur from missing search "
+        "results, or label undated news as today's news. Results about similarly named events do not establish "
+        "facts or dates about the requested event. For unverified venue or product details, briefly direct the visitor "
         "to onsite staff, equivalent to '具体请咨询工作人员' in the configured reply language. "
         "Do not explain that you lack information, evidence or retrieval results, and do not append this "
         "referral to answers you can provide. Choose the response mode from the current request and context: "

@@ -181,6 +181,9 @@ def handle_playback_progress(conn, message):
 
 
 def playback_context_messages(conn, messages, response_id):
+    from .prompt_owner import agent_owned
+    if agent_owned(conn):
+        return messages
     state = playback_state(conn, False)
     if state is None:
         return messages

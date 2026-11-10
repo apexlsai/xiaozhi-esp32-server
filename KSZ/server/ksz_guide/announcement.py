@@ -174,6 +174,9 @@ def filter_guide_announcement_text(conn, text, sentence_id):
 
 
 def guide_announcement_messages(conn, messages, sentence_id):
+    from .prompt_owner import agent_owned
+    if agent_owned(conn):
+        return messages
     turn = _turn(conn, sentence_id)
     if turn is None:
         return messages

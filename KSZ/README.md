@@ -22,6 +22,8 @@
 
 固件可在空闲后通过 `device_event/idle_greeting` 请求绑定角色主动招呼；计时、建链、去重及用户打断约定见[主动招呼协议](idle-greeting.md)。
 
+Agent 统一接管提示词与最近 20 轮历史的配置、接口、构建和回滚见 [提示词接管](prompt-owner.md)。默认不启用，先更新 Agent，再为目标智能体配置 `prompt_owner: agent` 并重新建连。
+
 ## 前置条件
 
 - 已安装 Docker Engine 和 Docker Compose v2。
@@ -1096,3 +1098,7 @@ KSZ 服务镜像构建时应用 `patches/vision-language-timeout.patch`。拍照
 回归测试位于 `server/tests/test_prompt_policy.py` 和 `server/tests/test_multilingual_sentences.py`，覆盖四语逐字符/多句增量、缩写与数字跨块、语言换绑、打断、断线及情绪切换。Museum Guide Agent 的配套修改移除追加上下文中的冲突人设，并在下游 Tools 推理载荷末尾按请求语言补充简短系统提醒；提醒不写入对话历史，也不改变工具结果轮的判定或原始工具消息顺序。提示词不能保证模型对所有输入绝不偏离，需结合真实模型验证语言遵循情况。
 
 视觉链路规划、直接回答模式与拍照延迟基线见 [视觉路线](vision-roadmap.md)。Agent 使用 `VISION_ANSWER_MODE=direct`（默认）由 VLM 直接流式回答，`structured` 恢复原两阶段流程；更改 Agent 配置后需重新创建对应容器。
+
+### 新闻与联网检索
+
+新闻播报默认先访问配置主源，失败才切换 RSS；用户指定来源或类别时严格遵守，不混入其他新闻。娱乐圈等话题新闻及具体事件的最新进展使用联网搜索，工具描述兼容旧模板配置并按连接隔离。Agent 需配套新闻路由补丁，保留热搜、事件查询的工具入口，并允许话题误入新闻工具后续调搜索。小智与实际使用的 Agent 实例均需更新；配置、两端构建与验收结果见[新闻与联网检索](news-retrieval.md)。

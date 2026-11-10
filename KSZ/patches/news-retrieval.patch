@@ -1,0 +1,390 @@
+diff --git a/plugins_func/functions/get_news_from_newsnow.py b/plugins_func/functions/get_news_from_newsnow.py
+--- a/plugins_func/functions/get_news_from_newsnow.py
++++ b/plugins_func/functions/get_news_from_newsnow.py
+@@ -5,6 +5,10 @@
+ from markitdown import MarkItDown, StreamInfo
+ from config.logger import setup_logging
+ from plugins_func.register import register_function, ToolType, ActionResponse, Action
++from plugins_func.functions.get_news_from_chinanews import (
++    fetch_news_from_rss,
++    map_category,
++)
+ from typing import TYPE_CHECKING
+ 
+ if TYPE_CHECKING:
+@@ -54,6 +58,28 @@
+ 
+ # 默认新闻来源字典，当配置中没有指定时使用
+ DEFAULT_NEWS_SOURCES = "澎湃新闻;百度热搜;财联社"
++RSS_CATEGORIES = {
++    "society_rss_url": "社会",
++    "world_rss_url": "国际",
++    "finance_rss_url": "财经",
++}
++
++
++def get_news_categories_from_config(conn):
++    rss_config = conn.config.get("plugins", {}).get("get_news_from_chinanews", {})
++    return {
++        key: name for key, name in RSS_CATEGORIES.items()
++        if isinstance(rss_config.get(key), str) and rss_config[key].strip()
++    }
++
++
++async def fetch_rss_items(rss_url):
++    items = await fetch_news_from_rss(rss_url)
++    return [
++        {**item, "url": item.get("link", "#")}
++        for item in items
++        if isinstance(item, dict) and isinstance(item.get("title"), str) and item["title"].strip()
++    ]
+ 
+ def _get_newsnow_config(conn):
+     # 从连接配置获取
+@@ -90,7 +116,12 @@
+     "type": "function",
+     "function": {
+         "name": "get_news_from_newsnow",
+-        "description": "当用户要求查看或收听新闻时调用（如'来条新闻''今天有什么新闻'）。",
++        "description": (
++            "随机播报一条新闻，适用于'来条新闻''今天有什么新闻'，可按已配置来源或类别播报。"
++            "用户未指定来源和类别时必须省略source，主源失败才使用备用RSS；指定来源或类别时严格遵守，不混入其他来源。"
++            "娱乐圈等具体话题的新闻、具体事件或人物的最新进展及事实查询应使用web_search。"
++            "追问本工具刚播报新闻的详情时再次调用本工具，设置detail=true。"
++        ),
+         "parameters": {
+             "type": "object",
+             "properties": {
+@@ -193,7 +224,7 @@
+ )
+ async def get_news_from_newsnow(
+     conn: "ConnectionHandler",
+-    source: str = "澎湃新闻",
++    source: str = None,
+     detail: bool = False,
+     lang: str = "zh_CN",
+ ):
+@@ -219,7 +250,10 @@
+             url = conn.last_newsnow_link.get("url")
+             title = conn.last_newsnow_link.get("title", "未知标题")
+             source_id = conn.last_newsnow_link.get("source_id", "thepaper")
+-            source_name = CHANNEL_MAP.get(source_id, "未知来源")
++            source_name = conn.last_newsnow_link.get("source_name") or next(
++                (name for name, value in CHANNEL_MAP.items() if value == source_id),
++                "中新网" if source_id == "chinanews" else "未知来源",
++            )
+ 
+             if not url or url == "#":
+                 return ActionResponse(
+@@ -244,70 +278,92 @@
+             detail_report = (
+                 f"根据下列数据，用{lang}回应用户的新闻详情查询请求：\n\n"
+                 f"新闻标题: {title}\n"
+-                # f"新闻来源: {source_name}\n"
++                f"新闻来源: {source_name}\n"
++                f"新闻链接: {url}\n"
++                f"发布时间: {conn.last_newsnow_link.get('pubDate') or '未知'}\n"
+                 f"详细内容: {detail_content}\n\n"
+                 f"(请对上述新闻内容进行总结，提取关键信息，以自然、流畅的方式向用户播报，"
+-                f"不要提及这是总结，就像是在讲述一个完整的新闻)"
++                f"不要提及这是总结，就像是在讲述一个完整的新闻。"
++                f"仅依据实际内容，不得将未确认发布时间的新闻称为今日或最新新闻。)"
+             )
+ 
+             return ActionResponse(Action.REQLLM, detail_report, None)
+ 
+-        # 否则，获取新闻列表并随机选择一条
+-        # 将中文名称转换为英文ID
+-        english_source_id = None
+-
+-        # 检查输入的中文名称是否在配置的新闻源中
++        source = source.strip() if source else None
++        specified_source = bool(source)
+         news_sources_list = [name.strip() for name in news_sources.split(";") if name.strip()]
+-        if source in news_sources_list:
+-            english_source_id = CHANNEL_MAP.get(source)
+-        elif not source and news_sources_list:
+-            source = news_sources_list[0]
+-            english_source_id = CHANNEL_MAP.get(source)
+-
+-        # 如果找不到对应的英文ID，使用默认源
+-        if not english_source_id:
+-            fallback_source = next(
++        rss_config = conn.config.get("plugins", {}).get("get_news_from_chinanews", {})
++        category = map_category(source)
++        if source and category in RSS_CATEGORIES:
++            if category not in get_news_categories_from_config(conn):
++                return ActionResponse(
++                    Action.REQLLM, f"未配置{source}对应的新闻类别，不能用其他类别代替。具体话题可使用web_search检索。", None
++                )
++            source_id = "chinanews"
++            source_name = "中新网"
++            news_items = await fetch_rss_items(rss_config[category])
++        elif source and (source not in news_sources_list or source not in CHANNEL_MAP):
++            if source in CHANNEL_MAP:
++                return ActionResponse(
++                    Action.REQLLM, f"未配置新闻来源：{source}，不能用其他来源代替。", None
++                )
++            return ActionResponse(
++                Action.REQLLM, f"未配置新闻来源或类别：{source}，不能用其他新闻代替。具体话题可使用web_search检索。", None
++            )
++        else:
++            source = source or next(
+                 (name for name in news_sources_list if CHANNEL_MAP.get(name)),
+                 "澎湃新闻",
+             )
+-            logger.bind(tag=TAG).warning(
+-                f"无效的新闻源: {source}，使用配置中的默认源{fallback_source}"
+-            )
+-            english_source_id = CHANNEL_MAP[fallback_source]
+-            source = fallback_source
+-
+-        logger.bind(tag=TAG).info(f"获取新闻: 新闻源={source}({english_source_id})")
+-
+-        # 获取新闻列表
+-        news_items = await fetch_news_from_api(conn, english_source_id)
++            source_id = CHANNEL_MAP[source]
++            source_name = source
++            logger.bind(tag=TAG).info(f"获取新闻: 新闻源={source}({source_id})")
++            news_items = await fetch_news_from_api(conn, source_id)
++            if not news_items and not specified_source:
++                logger.bind(tag=TAG).info("默认新闻源无结果，切换中新网RSS备用源")
++                source_id = "chinanews"
++                source_name = "中新网"
++                news_items = await fetch_rss_items(
++                    rss_config.get("default_rss_url") or "https://www.chinanews.com.cn/rss/society.xml"
++                )
+ 
+         if not news_items:
+             return ActionResponse(
+                 Action.REQLLM,
+-                f"抱歉，未能从{source}获取到新闻信息，请稍后再试或尝试其他新闻源。",
++                f"抱歉，未能获取{source or '默认来源'}的新闻信息，请稍后再试。不得编造新闻或改播其他类别。",
+                 None,
+             )
+ 
+         # 随机选择一条新闻
+         selected_news = random.choice(news_items)
+         title = selected_news.get("title", "未知标题")
++        pub_date = selected_news.get("pubDate")
++        if pub_date in ("未知时间", "未知"):
++            pub_date = None
+ 
+         # 保存当前新闻链接到连接对象，以便后续查询详情
+-        if not hasattr(conn, "last_newsnow_link"):
+-            conn.last_newsnow_link = {}
+         conn.last_newsnow_link = {
+             "url": selected_news.get("url", "#"),
+             "title": title,
+-            "source_id": english_source_id,
++            "source_id": source_id,
++            "source_name": source_name,
++            "pubDate": pub_date,
+         }
+ 
+         # 构建新闻报告
+         news_report = (
+             f"根据下列数据，用{lang}回应用户的新闻查询请求：\n\n"
+             f"新闻标题: {title}\n"
+-            # f"新闻来源: {source}\n"
+-            f"(请以自然、流畅的方式向用户播报这条新闻标题，"
+-            f"提示用户可以要求获取详细内容，此时会获取新闻的详细内容。)"
++            f"新闻来源: {source_name}\n"
++            f"新闻链接: {conn.last_newsnow_link['url']}\n"
++            f"发布时间: {pub_date or '未知'}\n"
++        )
++        if selected_news.get("description"):
++            news_report += f"新闻内容: {selected_news['description']}\n"
++        news_report += (
++            "(仅根据上述数据自然播报，不要凭标题补充未经核实的内容，"
++            "不得将未确认发布时间的新闻称为今日或最新新闻；"
++            "用户可以要求获取这条新闻的详细内容。)"
+         )
+ 
+         return ActionResponse(Action.REQLLM, news_report, None)
+diff --git a/plugins_func/functions/get_news_from_chinanews.py b/plugins_func/functions/get_news_from_chinanews.py
+--- a/plugins_func/functions/get_news_from_chinanews.py
++++ b/plugins_func/functions/get_news_from_chinanews.py
+@@ -18,9 +18,10 @@
+     "function": {
+         "name": "get_news_from_chinanews",
+         "description": (
+-            "当用户要求查看或收听新闻时调用（如'来条新闻''今天有什么新闻'）。"
+-            "用户可以指定新闻类型，如社会新闻、科技新闻、国际新闻等。"
+-            "如果没有指定，默认播报社会新闻。"
++            "中新网RSS专用新闻播报。用户明确指定中新网时使用。"
++            "若同时提供get_news_from_newsnow，未指定来源或按类别播报时优先使用get_news_from_newsnow。"
++            "仅支持已配置类别；具体事件或话题的最新进展应使用web_search检索。"
++            "追问本工具刚播报新闻的详情时设置detail=true。"
+         ),
+         "parameters": {
+             "type": "object",
+@@ -156,6 +157,7 @@
+ ):
+     """获取新闻并随机选择一条进行播报，或获取上一条新闻的详细内容"""
+     try:
++        detail = str(detail).lower() == "true"
+         # 如果detail为True，获取上一条新闻的详细内容
+         if detail:
+             if (
+@@ -209,6 +211,10 @@
+ 
+         # 将用户输入的类别映射到配置中的类别键
+         mapped_category = map_category(category)
++        if category and (mapped_category not in rss_config or not rss_config[mapped_category]):
++            return ActionResponse(
++                Action.REQLLM, f"未配置{category}对应的新闻类别，不能用其他类别代替。具体话题可使用web_search检索。", None
++            )
+ 
+         # 如果提供了类别，尝试从配置中获取对应的URL
+         rss_url = default_rss_url
+@@ -236,16 +242,20 @@
+         conn.last_news_link = {
+             "link": selected_news.get("link", "#"),
+             "title": selected_news.get("title", "未知标题"),
++            "pubDate": selected_news.get("pubDate"),
++            "source_name": "中新网",
+         }
+ 
+         # 构建新闻报告
+         news_report = (
+             f"根据下列数据，用{lang}回应用户的新闻查询请求：\n\n"
+             f"新闻标题: {selected_news['title']}\n"
++            f"新闻来源: 中新网\n"
++            f"新闻链接: {selected_news.get('link', '#')}\n"
+             f"发布时间: {selected_news['pubDate']}\n"
+             f"新闻内容: {selected_news['description']}\n"
+             f"(请以自然、流畅的方式向用户播报这条新闻，可以适当总结内容，"
+-            f"直接读出新闻即可，不需要额外多余的内容。"
++            f"直接读出新闻即可，不需要额外多余的内容。不得将未确认发布时间的新闻称为今日或最新新闻。"
+             f"如果用户询问更多详情，告知用户可以说'请详细介绍这条新闻'获取更多内容)"
+         )
+ 
+diff --git a/plugins_func/functions/web_search.py b/plugins_func/functions/web_search.py
+--- a/plugins_func/functions/web_search.py
++++ b/plugins_func/functions/web_search.py
+@@ -15,7 +15,10 @@
+ logger = setup_logging()
+ 
+ _DEFAULT_DESCRIPTION = (
+-    "联网搜索工具。当用户明确需要联网搜索问题时使用此工具。"
++    "联网搜索工具。用户询问具体事件、人物或话题的最新进展，以及当前政策、活动、价格等时效性事实时，"
++    "先调用本工具核实，再依据结果回答，不凭记忆断言或直接声称无法确认。"
++    "搜索词保留用户指定的话题和时间范围。随机听一条新闻使用新闻播报工具；"
++    "闲聊、创作和稳定常识无需搜索。"
+ )
+ 
+ WEB_SEARCH_FUNCTION_DESC = {
+@@ -63,12 +66,15 @@
+     if not webpages:
+         return "未找到相关搜索结果。"
+ 
+-    lines = ["【联网搜索结果】"]
++    lines = [f"【联网搜索结果】\n检索问题：{query}"]
+     for i, item in enumerate(webpages, 1):
+         title = item.get("title", "无标题")
+         snippet = item.get("summary", "")
+         date = item.get("date", "")
++        link = item.get("link") or item.get("url")
+         lines.append(f"{i}. 标题：{title}")
++        if link:
++            lines.append(f"   链接：{link}")
+         if date:
+             lines.append(f"   日期：{date}")
+         if snippet:
+diff --git a/core/providers/tools/server_plugins/plugin_executor.py b/core/providers/tools/server_plugins/plugin_executor.py
+--- a/core/providers/tools/server_plugins/plugin_executor.py
++++ b/core/providers/tools/server_plugins/plugin_executor.py
+@@ -1,12 +1,24 @@
+ """服务端插件工具执行器"""
+ 
+ import asyncio
++from copy import deepcopy
+ from typing import Dict, Any, TYPE_CHECKING
+ 
+ if TYPE_CHECKING:
+     from core.connection import ConnectionHandler
+ from ..base import ToolType, ToolDefinition, ToolExecutor
+ from plugins_func.register import all_function_registry, module_func_map, Action, ActionResponse
++
++
++LEGACY_DESCRIPTIONS = {
++    "web_search": "联网搜索工具。当用户明确需要联网搜索问题时使用此工具。",
++    "get_news_from_newsnow": "当用户要求查看或收听新闻时调用（如'来条新闻''今天有什么新闻'）。",
++    "get_news_from_chinanews": (
++        "当用户要求查看或收听新闻时调用（如'来条新闻''今天有什么新闻'）。"
++        "用户可以指定新闻类型，如社会新闻、科技新闻、国际新闻等。"
++        "如果没有指定，默认播报社会新闻。"
++    ),
++}
+ 
+ 
+ class ServerPluginExecutor(ToolExecutor):
+@@ -112,8 +124,11 @@
+         for func_name in all_required_functions:
+             func_item = all_function_registry.get(func_name)
+             if func_item:
++                func_item = deepcopy(func_item)
+                 # 从函数注册中获取描述（支持模块名和函数名的双层查找）
+                 fun_description = self._get_plugin_description(func_name)
++                if isinstance(fun_description, str) and fun_description.strip() == LEGACY_DESCRIPTIONS.get(func_name):
++                    fun_description = ""
+                 if fun_description is not None and len(fun_description) > 0:
+                     if "function" in func_item.description and isinstance(
+                         func_item.description["function"], dict
+@@ -123,7 +138,7 @@
+                         ] = fun_description
+ 
+                 # 新闻插件：根据配置更新新闻源参数描述
+-                if func_name == "get_news_from_newsnow":
++                if func_name in ("get_news_from_newsnow", "get_news_from_chinanews"):
+                     self._init_news_source_description(func_item, func_name)
+ 
+                 tools[func_name] = ToolDefinition(
+@@ -140,17 +155,36 @@
+ 
+     def _init_news_source_description(self, func_item, func_name):
+         """根据连接配置初始化新闻工具的参数描述"""
+-        news_sources = (
+-            self.config.get("plugins", {})
+-            .get(func_name, {})
+-            .get("news_sources", "")
++        from plugins_func.functions.get_news_from_newsnow import (
++            CHANNEL_MAP,
++            get_news_sources_from_config,
++            get_news_categories_from_config,
+         )
+-        if not news_sources:
+-            news_sources = "澎湃新闻;百度热搜;财联社"
+-        sources_str = news_sources.replace(";", "、")
++        sources_str = get_news_sources_from_config(self.conn).replace(";", "、")
++        categories = "、".join(get_news_categories_from_config(self.conn).values())
++        description = (
++            f"用户明确指定的新闻来源或类别。来源可选：{sources_str}。"
++            "只指定类别时必须传类别，例如'国际新闻'传'国际'，不可改填默认来源。"
++            "用户未指定来源和类别时必须省略此参数，不要代填默认来源；指定来源失败时不切换其他来源。"
++            "娱乐圈等话题新闻使用web_search检索，不可将话题填作来源。"
++        )
++        description += f"已配置类别：{categories}。" if categories else "未配置可选新闻类别。"
++        parameter = "source"
++        if func_name == "get_news_from_chinanews":
++            parameter = "category"
++            description = (
++                f"已配置新闻类别：{categories or '无'}。未指定时省略此参数，使用默认RSS；"
++                "指定的类别未配置时明确反馈，不切换为其他类别。"
++            )
+         try:
+-            func_item.description["function"]["parameters"]["properties"]["source"][
+-                "description"
+-            ] = f"新闻源的标准中文名称，例如{sources_str}等。可选参数，如果不提供则使用默认新闻源"
++            property_schema = func_item.description["function"]["parameters"]["properties"][parameter]
++            property_schema["description"] = description
++            if func_name == "get_news_from_newsnow":
++                sources = [
++                    name.strip() for name in get_news_sources_from_config(self.conn).split(";")
++                    if name.strip() in CHANNEL_MAP
++                ]
++                choices = sources + list(get_news_categories_from_config(self.conn).values())
++                property_schema["enum"] = list(dict.fromkeys(choices)) or [""]
+         except (KeyError, TypeError):
+             pass

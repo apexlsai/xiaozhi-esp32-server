@@ -1,0 +1,19 @@
+ARG AGENT_IMAGE=ghcr.io/apexlsai/museum_guide_agent:showroom
+FROM ${AGENT_IMAGE} AS agent-base
+
+FROM node:18 AS patched-source
+WORKDIR /src
+COPY --from=agent-base /app/src/api/server.py src/api/server.py
+COPY --from=agent-base /app/src/api/chat_service.py src/api/chat_service.py
+COPY --from=agent-base /app/src/api/schemas.py src/api/schemas.py
+COPY KSZ/patches/agent-news-routing.patch /tmp/agent-news-routing.patch
+RUN git apply --check /tmp/agent-news-routing.patch \
+    && git apply /tmp/agent-news-routing.patch
+COPY KSZ/patches/agent-prompt-owner.patch /tmp/agent-prompt-owner.patch
+RUN git apply --check /tmp/agent-prompt-owner.patch \
+    && git apply /tmp/agent-prompt-owner.patch
+
+FROM agent-base
+COPY --from=patched-source /src/src/api/ /app/src/api/
+COPY KSZ/agent/prompt_owner.py /app/src/api/prompt_owner.py
+COPY KSZ/shared/ksz_prompt.py /app/ksz_prompt.py

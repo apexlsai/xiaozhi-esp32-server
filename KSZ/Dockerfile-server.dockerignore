@@ -5,6 +5,8 @@
 !KSZ/
 !KSZ/patches/
 !KSZ/patches/*.patch
+!KSZ/shared/
+!KSZ/shared/**
 !KSZ/server/
 !KSZ/server/ksz_guide/
 !KSZ/server/ksz_guide/**

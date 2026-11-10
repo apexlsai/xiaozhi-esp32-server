@@ -168,7 +168,11 @@ def visual_request_payload(capture):
     if (capture.conn.sentence_id != capture.sentence_id or capture.conn.client_abort
             or (capture.request is not None and capture.request.cancelled)):
         raise asyncio.CancelledError()
-    return {**capture.metadata(), "history": list(capture.history)}
+    payload = {**capture.metadata(), "history": list(capture.history)}
+    from .prompt_owner import agent_owned, context
+    if agent_owned(capture.conn):
+        payload["ksz_prompt_context"] = context(capture.conn, capture.conn._build_llm_extra_body())
+    return payload
 
 
 def finish_visual_request(capture, succeeded=False):

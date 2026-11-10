@@ -1,0 +1,78 @@
+diff --git a/src/api/server.py b/src/api/server.py
+--- a/src/api/server.py
++++ b/src/api/server.py
+@@ -340,8 +340,19 @@
+         re.compile(r"weather|forecast|temperature|天气|气温|预报", re.IGNORECASE),
+     ),
+     (
++        "search",
++        re.compile(
++            r"联网|上网|搜索|检索|核实|最新|近期|实时|近况|进展|"
++            r"(?:会议|大会).*(?:何时|什么时候)|(?:何时|什么时候).*(?:开|举行|成立)|"
++            r"web.?search|search.*(?:web|online)|look.*up|latest|recent.*(?:news|updates)|"
++            r"current.*(?:news|policy|price)|検索|調べ|최신|검색",
++            re.IGNORECASE,
++        ),
++        re.compile(r"^web_search(?:\s|$)", re.IGNORECASE),
++    ),
++    (
+         "news",
+-        re.compile(r"新闻|资讯|热点|头条|news|headline", re.IGNORECASE),
++        re.compile(r"新闻|资讯|热点|头条|热搜|时事|news|headline", re.IGNORECASE),
+         re.compile(r"news|headline|资讯|新闻|热点", re.IGNORECASE),
+     ),
+ )
+@@ -465,6 +476,8 @@
+ 
+     current = body.messages[-1]
+     if current.role == "tool":
++        if _news_search_retry(body):
++            return decide("tool", "news_search_retry", tool_available=True)
+         reason = "tool_error" if _latest_tool_error(body) else "tool_result"
+         return decide("tool", reason, tool_available=False)
+ 
+@@ -592,6 +605,16 @@
+             if tool_call.id == tool_message.tool_call_id:
+                 return tool_call.function.name
+     return None
++
++
++def _news_search_retry(body: ChatCompletionRequest) -> bool:
++    return (
++        body.tool_choice in (None, "auto")
++        and "web_search" in _offered_tool_names(body)
++        and _latest_tool_name(body) == "get_news_from_newsnow"
++        and _message_content_text(body.messages[-1].content).startswith("未配置新闻来源或类别：")
++        and not re.search(r"来源|来自|只用|只要|source|from", _latest_user_text(body), re.IGNORECASE)
++    )
+ 
+ 
+ def _latest_camera_answer(body: ChatCompletionRequest) -> Optional[str]:
+@@ -742,10 +765,16 @@
+         value = getattr(body, key, None)
+         if value is not None:
+             payload[key] = value
+-    if tool_result_turn or disable_tools:
++    if disable_tools or (tool_result_turn and not _news_search_retry(body)):
+         payload.pop("tools", None)
+         payload.pop("tool_choice", None)
+         payload.pop("parallel_tool_calls", None)
++    elif tool_result_turn:
++        payload["tools"] = [
++            tool for tool in payload.get("tools", [])
++            if tool.get("function", {}).get("name") == "web_search"
++        ]
++        payload["tool_choice"] = "auto"
+     elif visual_intent(_latest_user_text(body)) not in {"capture", "identity"}:
+         payload["tools"] = [
+             tool for tool in payload.get("tools", [])
+@@ -1898,8 +1927,7 @@
+     rag_question = _tool_result_rag_query(body, question)
+     use_rag = decision.rag_decision == "retrieve"
+     suppress_tool_calls = (
+-        tool_result_turn
+-        or decision.route != "tool"
++        decision.route != "tool"
+         or not decision.tool_available
+     )
+     try:

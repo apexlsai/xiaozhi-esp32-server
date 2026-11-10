@@ -37,9 +37,17 @@ COPY KSZ/patches/narration-playback.patch /tmp/narration-playback.patch
 RUN git apply --check /tmp/narration-playback.patch \
     && git apply /tmp/narration-playback.patch
 
+COPY KSZ/patches/news-retrieval.patch /tmp/news-retrieval.patch
+RUN git apply --check /tmp/news-retrieval.patch \
+    && git apply /tmp/news-retrieval.patch
+COPY KSZ/patches/prompt-owner.patch /tmp/prompt-owner.patch
+RUN git apply --check /tmp/prompt-owner.patch \
+    && git apply /tmp/prompt-owner.patch
+
 FROM ghcr.io/xinnan-tech/xiaozhi-esp32-server:server-base
 
 COPY --from=patched-source /src .
 COPY KSZ/server/ksz_guide ./ksz_guide
+COPY KSZ/shared/ksz_prompt.py ./ksz_prompt.py
 
 CMD ["python", "app.py"]
