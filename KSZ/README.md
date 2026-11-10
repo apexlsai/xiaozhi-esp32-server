@@ -1102,3 +1102,5 @@ KSZ 服务镜像构建时应用 `patches/vision-language-timeout.patch`。拍照
 ### 新闻与联网检索
 
 新闻播报默认先访问配置主源，失败才切换 RSS；用户指定来源或类别时严格遵守，不混入其他新闻。娱乐圈等话题新闻及具体事件的最新进展使用联网搜索，工具描述兼容旧模板配置并按连接隔离。Agent 需配套新闻路由补丁，保留热搜、事件查询的工具入口，并允许话题误入新闻工具后续调搜索。小智与实际使用的 Agent 实例均需更新；配置、两端构建与验收结果见[新闻与联网检索](news-retrieval.md)。
+
+韩语可使用独立的 `ASR_Qwen3Flash_Korean`（“Qwen3Flash韩语专用”）配置：复制现有千问 API 地址、密钥和模型参数，在配置 JSON 中增加 `"language": "ko"`，再让儿童、青年、专家三个韩语智能体选择该语音识别模型。`qwen3-asr-flash` 会将其发送为 `parameters.asr_options.language: ko`；Fun-ASR-Flash 对应 `parameters.language_hints: [ko]`。当前表单未展示独立语言字段，需要在模型配置 JSON 中维护。指定语种适合固定韩语输入，混合语言输入应使用自动识别配置。
