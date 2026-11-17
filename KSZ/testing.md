@@ -378,3 +378,41 @@ Compose 验证未设置变量时默认绑定 `儿童-韩语-测试`、显式留�
 ## dev 分支整合回归
 
 新闻/提示词修复、OTA 默认值、韩语配置说明与天气补丁整合后，服务端592项及31个 subtests 通过；既有hello自应用补丁1项排除，ASR自应用补丁文件未运行，均因测试镜像缺git。完整13个服务端补丁Docker构建通过；Compose默认目标、显式空值与自定义目标3项配置验证通过。Agent实现未变，沿用77项回归。各来源与环境差异隔离方式见[分支整合记录](branch-integration.md)。没有部署服务。
+
+## 减少重复问候
+
+2026-11-11：新旧提示词路径共用直接回答规则。服务端592项、31个subtests通过，沿用既有缺git测试排除范围；server完整补丁链与实际0.1.6 Agent隔离镜像构建通过。
+
+ce:70真实角色与模型独立测试13场景通过：9个普通回答场景（首问、连续追问、跨馆介绍、问候加问题、新闻工具续答及英文，含旧链路对照）均无问候/身份/套话开场；另外验证纯问候、两条身份回答及设备主动招呼仍可正常回应。仅验收回答开场，不据此保证新闻/馆藏事实准确；未连接设备、未播音、未部署生产。原问题和回答见[真实开场验证记录](logs/20261111_direct-answer-verification.jsonl)。
+
+## 生产后端部署（2026-11-11）
+
+已按 Agent → Xiaozhi 顺序更新生产 `museum_guide_agent_prod-1` 和 `xiaozhi-esp32-server`，镜像分别为 `museum-guide-agent:ksz-direct-20261111-030525`、`xiaozhi-esp32-server:ksz-direct-20261111-030525`。保留端口、挂载、网络、重启策略和运行环境变量；Agent环境中的镜像引用同步更新。Agent健康检查通过，Xiaozhi服务端监听通过；运行文件哈希与构建源码一致，启动无Traceback。
+
+[部署记录](logs/20261111_backend-deployment.jsonl) 与 [生产文字检查](logs/20261111_production-direct-answer-verification.jsonl) 已脱敏保存。生产Agent接口4项检查通过：旧客户端首问/追问、新接口实质问题及身份回答；普通回答直接进入正文。未执行真实设备麦克风、扬声器或拍照验收。
+
+`prompt_owner`仍保留目标现有`xiaozhi`配置，没有修改设备绑定、智控台角色或接管开关；新接口已可用，减少问候规则同时覆盖现有兼容路径。设备需重新连接，旧会话在服务端重建时已断开。
+
+回滚备份位于`KSZ/.deploy-backups/direct-answer-20261111-030525/`（不入Git，包含受限权限配置）。恢复两个原镜像及Agent镜像引用可执行该目录下`python deploy.py rollback`；该操作会重新建立容器并中断活动会话。
+
+## 请求等待表情
+
+2026-11-11：新增21项生命周期测试，完整服务端回归613项、31个subtests通过。沿用既有测试镜像缺git的排除范围：`test_qwen_asr.py`未运行，hello补丁自应用测试1项排除。`git diff --check`通过，上游`main/`无改动。
+
+使用真实`ConnectionHandler.chat`和阻塞模型桩验证：模型尚未返回时，WebSocket已经收到标准`llm / thinking`消息；表情不写历史，不额外生成语音。覆盖首段正文/同步情绪/流式情绪接续、无音频结束、异常、打断、工具递归、设备表情关闭、自动位置讲解、断线/重连/新请求隔离、发送失败、慢发送与旧清理回调竞争。模型桩用于确定发送顺序，不代表真实模型或实体设备验收。
+
+14个服务端补丁完整Docker构建通过，验收镜像为`xiaozhi-esp32-server:thinking-expression-check`。实现与使用见[请求等待表情](thinking-expression.md)。本轮未部署生产；未验证实体屏幕资源、MQTT端到端显示或扬声器，固件需支持既有`emotion: thinking`映射。独立拍照流程保留原有等待提示。
+
+## 等待表情生产部署（2026-11-11）
+
+已按 Agent → Xiaozhi 顺序更新生产两个后端，镜像为`museum-guide-agent:ksz-thinking-20261111-032837`和`xiaozhi-esp32-server:ksz-thinking-20261111-032837`。保留环境、挂载、端口、网络、设备绑定及`prompt_owner`配置；Agent健康检查和Xiaozhi监听检查通过，启动未见Traceback，运行代码哈希匹配本次源码。Agent接口与角色规则沿用上一版，等待表情由Xiaozhi实现。
+
+[部署记录](logs/20261111_thinking-deployment.jsonl)包含脱敏检查结果。实际生产容器代码在隔离内存WebSocket上通过`thinking → neutral`消息测试；ce:70实际配置独立文字会话4项通过（旧链路首问/追问、接管接口问答/身份），见[文字验收](logs/20261111_thinking-production-verification.jsonl)。未验证实体屏幕、麦克风、扬声器及MQTT端到端表情显示。
+
+回滚备份为`KSZ/.deploy-backups/thinking-expression-20261111-032837/`，该目录内执行`python deploy.py rollback`恢复本次更新前的两个后端及Agent镜像引用。备份不入Git，包含受限权限配置；回滚会中断活动会话。
+
+## 0.2.0 发布回归
+
+2026-11-18：15 个服务端构建补丁按 Dockerfile 顺序检查并应用，补丁产物 Python 语法检查通过。在现有运行依赖的无网络临时容器执行 KSZ 服务端回归：622 项及 31 个 subtests 通过。测试镜像缺少 git，沿用既有排除范围：`test_qwen_asr.py` 未运行，hello 补丁自应用测试 1 项排除；完整补丁链已在宿主机检查。角色元数据刷新夹具改为验证同一语言下的角色切换，不再期待切到无关语言。
+
+源码、文档与脱敏验收记录统一归档到 `ksz/v0.2.0`。本轮仅进行发布回归，不重新部署生产容器，不执行实体设备屏幕、麦克风或扬声器验收。

@@ -81,7 +81,7 @@ class RoleRebindTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(role_patch._pending_reconnects[DEVICE]["target"], "青年-英语")
 
     async def test_refreshes_missing_current_agent(self):
-        rebind = AsyncMock(return_value={"agentName": "儿童-日语", "reconnectRequired": True})
+        rebind = AsyncMock(return_value={"agentName": "青年-汉语", "reconnectRequired": True})
         module = handler_module(rebind=rebind)
         conn = SimpleNamespace(
             device_id=DEVICE,
@@ -105,12 +105,12 @@ class RoleRebindTests(unittest.IsolatedAsyncioTestCase):
             handled = await role_patch.handle_role_rebind(conn, {
                 "event": "agent_rebind",
                 "request_id": "role-refresh",
-                "payload": {"role": "child"},
+                "payload": {"role": "youth"},
             })
 
         self.assertTrue(handled)
         module._do_rebind.assert_awaited_once_with(
-            conn, "agent_rebind", "儿童-汉语", "儿童-日语", "role-refresh", confirm=True,
+            conn, "agent_rebind", "儿童-汉语", "青年-汉语", "role-refresh", confirm=True,
         )
 
     async def test_falls_back_to_agent_language_suffix(self):

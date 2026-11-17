@@ -51,6 +51,10 @@ COPY KSZ/patches/prompt-owner.patch /tmp/prompt-owner.patch
 RUN git apply --check /tmp/prompt-owner.patch \
     && git apply /tmp/prompt-owner.patch
 
+COPY KSZ/patches/thinking-expression.patch /tmp/thinking-expression.patch
+RUN git apply --check /tmp/thinking-expression.patch \
+    && git apply /tmp/thinking-expression.patch
+
 FROM ghcr.io/xinnan-tech/xiaozhi-esp32-server:server-base
 
 COPY --from=patched-source /src .

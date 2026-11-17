@@ -6,7 +6,13 @@
 
 ## [Unreleased]
 
+## [0.2.0]
+
+与小智、Agent、管理后端和 RAG 统一发布 0.2.0，作为当前较稳定的生产部署基线。
+
 ### 新增
+
+- 普通问答等待模型时主动下发 `🤔 / thinking`；正文表情接续，无正文结束、异常、打断和断线清理，保护快速连续提问及迟到回调，尊重设备表情能力开关。复用原协议，不增加模型调用或语音提示。
 
 - 接管模式补充跨馆开放问答与同轮回答自审，普通 RAG 可选用现有搜索核实；保留旧模式及工具权限边界。记录深圳博物馆原题拒答原因与5项独立复测，自审未通过事实拦截验证，不作为自动拒答开关。
 
@@ -91,6 +97,8 @@
 ### 修复
 
 - 修复中日韩智能体语言元数据在连接、Agent 接管、工具及视觉路径之间不一致时静默回退中文：管理端同时下发绑定智能体名，xiaozhi 与 Agent 共用规范语言码，接管上下文强制校准语言，旁路沿用同一绑定语言。
+
+- 新旧提示词路径共用直接回答规则：普通首问、追问和工具续答省略重复问候、自我介绍及套话开场，保留纯问候、身份询问和设备主动招呼；ce:70独立模型13场景通过。
 
 - 为儿童、青年、专家三个韩语智能体配置独立千问 ASR，固定 `language=ko`，并补充按智能体配置识别语种的说明。
 
@@ -198,6 +206,7 @@
 
 - `202607101600.sql` 尚未登记到 `db.changelog-master.yaml`；已有环境执行该迁移前必须备份数据库。
 
-[Unreleased]: https://github.com/apexlsai/xiaozhi-esp32-server/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/apexlsai/xiaozhi-esp32-server/compare/ksz/v0.2.0...HEAD
+[0.2.0]: https://github.com/apexlsai/xiaozhi-esp32-server/compare/ksz/v0.1.2...ksz/v0.2.0
 [0.1.2]: https://github.com/apexlsai/xiaozhi-esp32-server/releases/tag/v0.1.2
 [0.1.1]: https://github.com/apexlsai/xiaozhi-esp32-server/releases/tag/ksz/v0.1.1

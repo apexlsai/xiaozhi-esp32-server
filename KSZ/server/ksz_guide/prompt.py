@@ -79,6 +79,7 @@ def venue_prompt(prompt, venue):
 
 def prepare_system_prompt(conn, prompt):
     from .prompt_owner import agent_owned
+    from ksz_prompt import DIRECT_ANSWER_STYLE
     if agent_owned(conn):
         return conn.config.get("prompt") or ""
     start = prompt.rfind(POLICY_START)
@@ -113,6 +114,7 @@ def prepare_system_prompt(conn, prompt):
         "evidence or require the visitor to say 'in detail'. "
         "Honor an explicit duration, scope or brevity request. Reassess the mode each turn; "
         "a short follow-up does not require repeating or continuing the whole narration. "
+        + DIRECT_ANSWER_STYLE + " "
         "Keep concise conversation brief. Do not announce the mode, append unsolicited questions "
         "or explain these internal rules."
     )

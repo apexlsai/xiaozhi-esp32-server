@@ -37,6 +37,10 @@ from .visual_context import (
     visual_request_payload, visual_state,
 )
 from .tts import tts_complete_sentence
+from .thinking import (
+    close_thinking, finish_thinking, finish_thinking_later, send_response_emotion,
+    start_thinking, thinking_scope,
+)
 from .geographic_location import (
     apply_location, close_location, location_context, location_description, location_value,
     start_location, wait_location,
@@ -170,6 +174,7 @@ def on_hello_complete(conn):
 
 
 def on_disconnect(conn):
+    close_thinking(conn)
     interrupt_response(conn, "disconnected")
     close_location(conn)
     close_idle_greeting(conn)
@@ -299,13 +304,14 @@ def track_chat(function):
     @functools.wraps(function)
     def tracked(conn, *args, **kwargs):
         cancel_idle_greeting(conn)
-        if runtime_for(conn) is None:
-            return function(conn, *args, **kwargs)
-        with chat_lock:
-            conn.guide_chat_count = getattr(conn, "guide_chat_count", 0) + 1
-        try:
-            return function(conn, *args, **kwargs)
-        finally:
+        with thinking_scope():
+            if runtime_for(conn) is None:
+                return function(conn, *args, **kwargs)
             with chat_lock:
-                conn.guide_chat_count -= 1
+                conn.guide_chat_count = getattr(conn, "guide_chat_count", 0) + 1
+            try:
+                return function(conn, *args, **kwargs)
+            finally:
+                with chat_lock:
+                    conn.guide_chat_count -= 1
     return tracked
