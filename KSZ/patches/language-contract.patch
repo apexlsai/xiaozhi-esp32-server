@@ -1,0 +1,127 @@
+diff --git a/core/connection.py b/core/connection.py
+index eecb5ea..7cff671 100644
+--- a/core/connection.py
++++ b/core/connection.py
+@@ -1007,8 +1007,16 @@ class ConnectionHandler:
+             self.config["context_providers"] = private_config["context_providers"]
+ 
+         # 注入设备扩展属性（语言、蓝牙信标等）
+-        if private_config.get("device_attributes", None) is not None:
+-            self.device_attributes = private_config["device_attributes"] or {}
++        bound_agent_name = private_config.get("agent_name")
++        if private_config.get("device_attributes", None) is not None or (
++            isinstance(bound_agent_name, str) and bound_agent_name.strip()
++        ):
++            device_attributes = private_config.get("device_attributes")
++            if device_attributes is None:
++                device_attributes = self.device_attributes
++            self.device_attributes = dict(device_attributes or {})
++            if isinstance(bound_agent_name, str) and bound_agent_name.strip():
++                self.device_attributes["agent_name"] = bound_agent_name.strip()
+             self.device_language = self.device_attributes.get("language")
+             self.logger.bind(tag=TAG).info(
+                 f"加载设备扩展属性: {self.device_attributes}"
+@@ -1153,10 +1161,7 @@ class ConnectionHandler:
+ 
+     def _build_llm_extra_body(self) -> dict:
+         """构造传给 LLM 网关的额外设备上下文参数"""
+-        from core.handle.deviceEventHandle import (
+-            LANGUAGE_AGENT_SUFFIXES,
+-            resolve_language_code_from_agent_name,
+-        )
++        from core.handle.deviceEventHandle import resolve_language_code_from_agent_name
+ 
+         extra_body = {}
+         if self.device_id:
+@@ -1167,12 +1172,14 @@ class ConnectionHandler:
+                 self.device_attributes.get("agent_name")
+             )
+             attr_language = self.device_attributes.get("language")
+-            if language is None and attr_language in LANGUAGE_AGENT_SUFFIXES:
++            if language is None and isinstance(attr_language, str) and attr_language.strip():
+                 language = attr_language
+             if language:
+                 extra_body["language"] = language
+             if self.device_attributes.get("last_beacon_id"):
+                 extra_body["last_beacon_id"] = self.device_attributes.get("last_beacon_id")
++        if "language" not in extra_body and isinstance(self.device_language, str) and self.device_language.strip():
++            extra_body["language"] = self.device_language
+         if guide:
+             extra_body["language"] = guide.response_language(self)
+             return guide.filter_context(self, extra_body)
+@@ -1237,8 +1244,16 @@ class ConnectionHandler:
+             private_config = await get_private_config_from_api(
+                 self.config, self.device_id, client_id
+             )
+-            if private_config.get("device_attributes", None) is not None:
+-                new_attrs = private_config["device_attributes"] or {}
++            bound_agent_name = private_config.get("agent_name")
++            if private_config.get("device_attributes", None) is not None or (
++                isinstance(bound_agent_name, str) and bound_agent_name.strip()
++            ):
++                new_attrs = private_config.get("device_attributes")
++                if new_attrs is None:
++                    new_attrs = self.device_attributes
++                new_attrs = dict(new_attrs or {})
++                if isinstance(bound_agent_name, str) and bound_agent_name.strip():
++                    new_attrs["agent_name"] = bound_agent_name.strip()
+                 if new_attrs != self.device_attributes:
+                     self.device_attributes = new_attrs
+                     self.device_language = self.device_attributes.get("language")
+--- a/core/handle/deviceEventHandle.py
++++ b/core/handle/deviceEventHandle.py
+@@ -165,6 +165,33 @@
+         logger.bind(tag=TAG).error(f"发送设备事件结果失败: {e}")
+ 
+ 
++async def _resolve_current_agent_name(
++    conn: "ConnectionHandler", current_agent_name: Optional[str]
++) -> Optional[str]:
++    candidates = [current_agent_name]
++    attributes = getattr(conn, "device_attributes", None)
++    if isinstance(attributes, dict):
++        candidates.append(attributes.get("agent_name"))
++    config = getattr(conn, "config", None)
++    if isinstance(config, dict):
++        candidates.append(config.get("agent_name"))
++
++    for candidate in candidates:
++        if isinstance(candidate, str) and candidate.strip():
++            return candidate.strip()
++
++    refresh = getattr(conn, "_refresh_device_attributes", None)
++    if callable(refresh) and getattr(conn, "read_config_from_api", False):
++        await refresh()
++        attributes = getattr(conn, "device_attributes", None)
++        if isinstance(attributes, dict):
++            candidate = attributes.get("agent_name")
++            if isinstance(candidate, str) and candidate.strip():
++                return candidate.strip()
++
++    return None
++
++
+ async def apply_language_change(
+     conn: "ConnectionHandler",
+     language: str,
+@@ -180,9 +207,7 @@
+             f"language 必须使用规范码: {', '.join(LANGUAGE_AGENT_SUFFIXES)}"
+         )
+ 
+-    resolved_current = current_agent_name or (conn.device_attributes or {}).get(
+-        "agent_name"
+-    )
++    resolved_current = await _resolve_current_agent_name(conn, current_agent_name)
+     resolved_target = target_agent_name or resolve_language_agent_name(
+         resolved_current, language, dev
+     )
+@@ -223,7 +248,8 @@
+ ):
+     """语言变更：改为触发智能体换绑，语言切换=智能体切换。
+ 
+-    目标智能体只按 language/dev 推导；current_agent_name 缺省从设备扩展属性读取。
++    目标智能体只按 language/dev 推导；current_agent_name 缺省从设备扩展属性读取，
++    缺少绑定名称时刷新 manager-api 后再解析。
+     language 以基础规范码随换绑事务持久化，不再用于强制翻译。
+     """
+     language = payload.get("language")

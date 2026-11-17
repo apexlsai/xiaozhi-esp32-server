@@ -2,6 +2,8 @@
 
 本协议用于 management 与 xiaozhi 联动版本，须部署服务并开启 `KSZ_GUIDE_ENABLED=1`。固件由独立团队实现；本文定义接入契约，不表示设备或线上服务已经升级。现有语言、MCP、视觉与音频协议保持原约定。
 
+讲解被用户打断后的播放确认使用独立的 `hello.features.playback_progress` 与 `playback_progress` 消息，段号和确认时机见[讲解模式与播放进度](narration-playback.md#固件播放回执)。未声明能力时沿用原有 TTS 消息。
+
 ## 连接与身份
 
 MQTT 完成认证和订阅后可发送导览控制消息，不需要先建立语音会话。主题仍为 OTA 返回的发布及订阅主题。WebSocket 降级通过已有认证连接发送同类消息。固件不能直接访问 management、控制 HTTP 接口或持有服务间令牌。
@@ -44,6 +46,10 @@ MQTT 完成认证和订阅后可发送导览控制消息，不需要先建立语
     "auto_announce": true,
     "current_venue_id": "<场馆ID>",
     "filter": {
+      "scan_interval_ms": 1000,
+      "scan_window_ms": 1000,
+      "observation_interval_ms": 1000,
+      "heartbeat_interval_ms": 5000,
       "rssi_enter": -75,
       "rssi_advantage": 8,
       "stable_ms": 3000,
@@ -107,11 +113,13 @@ UTF8(manifest.manifest_json + "\n" + chunk_json[0] + "\n" + ... + chunk_json[N-1
 
 可选广播身份使用 `beacon.uuid`、`beacon.major`、`beacon.minor`，必须全填或全空。Major/Minor是0–65535整数。若管理端登记了广播三元组，新协议必须完整携带且与登记值匹配；旧协议仅按完整MAC兼容校验。
 
-每5秒发送 `action=heartbeat`，其他信封字段一致，并携带当前仍稳定观测到的 `beacon`。仅设备在线但未观测到信标时，不得补报历史信标。确认丢失发送 `action=lost`（不带beacon）；服务端默认15秒未获得有效位置确认也会失位，可通过 `KSZ_GUIDE_POSITION_TTL_MS` 调整。
+按 `filter.heartbeat_interval_ms`（默认5000、最大30000）发送 `action=heartbeat`，其他信封字段一致，并携带当前仍稳定观测到的 `beacon`。`scan_interval_ms`/`scan_window_ms` 为设备扫描间隔与窗口，单位毫秒；窗口不大于间隔。`observation_interval_ms` 限制同一稳定信标的连续观测上报，确认切换或丢失应立即上报。缺少新增字段时兼容原固件默认值；支持时须在策略原子应用时更新定时器和扫描器，再确认策略。仅设备在线但未观测到信标时，不得补报历史信标。确认丢失发送 `action=lost`（不带beacon）；服务端位置有效期默认15秒，统一在管理端调整，须大于上报/保活间隔及丢失时间。
 
-默认首次有效位置只建立基准，`KSZ_GUIDE_ANNOUNCE_ON_FIRST_BEACON=1` 时首次也触发讲解；后续有效信标 MAC 变化且自动讲解开启时触发，即使两枚信标属于同一导览区域。同一信标的重复上报、位置心跳和重连不重复播报；切换到其他信标后再返回原信标属于新的变化。位置变化不会修改设备固定归属。
+management 目录提供 `place_id`、`place_name`、`place_beacon_count`（同位置启用信标总数，独立于分页和设备授权子集）。数量仅作资产统计，不决定播报条件；一个位置绑定多枚信标时，任意一枚有效上报即可识别并触发讲解，无需双信标、成员跳变或确认窗口。同位置持续上报和成员切换不重播，其他位置已开始讲解后才允许返回重新触发，并受默认60秒同位置冷却限制。每枚信标必须绑定位置并提供位置名称；位置变化不修改设备固定归属。
 
-新协议策略中的 `auto_announce` 同时受设备授权与 `KSZ_GUIDE_AUTO_ANNOUNCE_ENABLED` 约束；`filter.min_announce_interval_ms` 为服务端 `KSZ_GUIDE_MIN_ANNOUNCE_INTERVAL_MS` 的有效值，参与策略摘要。其他服务器端讲解规则见[配置说明](guide-management.md#信标讲解规则)，RSSI 与扫描判定仍按原策略执行。
+默认允许信标变化打断正在生成或播放的讲解，但必须满足15秒最小讲解间隔、同位置重复讲解间隔及用户交互优先等条件。冷却期间继续旧讲解，只保留最新有效位置的待播任务；切换不会重置冷却，到期时任务仍须有效。固件的稳定判断和自身冷却保持原实现，旧报文同样获得服务端防重复保护，不要求新增扫描候选字段。
+
+新协议策略中的 `auto_announce` 同时受设备授权与管理端全局开关约束；`filter.min_announce_interval_ms` 取统一配置值。策略 `config_revision` 对应管理端配置版本，所有过滤参数参与策略摘要；配置变化后须重新下载与确认。其他服务器端讲解规则见[配置说明](guide-management.md#信标讲解规则)，管理端尚未升级时兼容启动环境变量。
 
 结果消息使用 `action=result`，含 `request_id`、`seq`、`accepted` 和 `reason`。未知、跨馆、停用或冲突信标不更新位置、不触发语音。`policy_revision_mismatch` 时同步新策略；`resolve_rate_limited` 时按正常稳定观测节奏重试，不能快速循环请求。
 
@@ -136,14 +144,15 @@ UTF8(manifest.manifest_json + "\n" + chunk_json[0] + "\n" + ... + chunk_json[N-1
     "venue_id": "<场馆ID>",
     "floor": "1F",
     "area": "青铜器展区",
+    "place_name": "展柜旁",
     "location_description": "展柜旁"
   }
 }
 ```
 
-`status` 为 `located`、`unknown` 或 `lost`。未定位或已失位时 `location=null`、`expires_in_ms=0`，设备立即清空当前位置。楼层、区域或位置描述可为空，但至少一项有内容才作为可显示位置下发；位置字段来自管理端登记资产，不采用设备上报的显示文本。
+`status` 为 `located`、`unknown` 或 `lost`。未定位或已失位时 `location=null`、`expires_in_ms=0`，设备立即清空当前位置。位置名称必填，楼层和区域可为空；位置字段来自管理端登记资产，不采用设备上报的显示文本。`place_name` 与语音位置上下文均采用当前绑定位置的名称；下发时同时提供同值的 `location_description` 兼容旧固件。新固件优先使用 `place_name`，旧字段仅是传输别名，不读取信标历史说明。
 
-首次有效定位、信标切换、同信标有效上报续期、策略撤销和位置过期均更新显示，不受自动讲解开关或播报冷却限制。旧 `beacon_change` 与新 `observation` / 带信标的 `heartbeat` 共用服务端校验；无效、跨馆、未授权上报不能覆盖有效位置。位置通知不进入 Agent、对话历史、TTS 或音频队列，发送异常不阻塞位置处理和讲解。
+首次有效定位、有效位置切换、同位置有效上报续期、策略撤销和位置过期均更新显示，不受自动讲解开关或播报冷却限制。同位置任意一枚有效信标均可确认或续期。旧 `beacon_change` 与新 `observation` / 带信标的 `heartbeat` 共用服务端校验；无效、跨馆、未授权上报不能覆盖有效位置。位置通知不进入 Agent、对话历史、TTS 或音频队列，发送异常不阻塞位置处理和讲解。
 
 `location_revision` 是当前 `session_id` 内从 1 开始递增的通知序号，续期也递增；它独立于导览运行时的信标变化序号。设备只接受当前连接、当前会话且序号严格递增的消息。断线或换绑时清空显示和计时器；新会话重新计数并接收快照，旧连接迟到消息不得恢复位置。
 
@@ -152,6 +161,8 @@ UTF8(manifest.manifest_json + "\n" + chunk_json[0] + "\n" + ... + chunk_json[N-1
 本功能只覆盖已有活动会话，不因显示位置单独唤醒语音连接；MQTT 待机无会话的位置显示推送不在此能力范围内。
 
 ## 待机唤醒与播放就绪
+
+固件也可在空闲时主动建链，完成本节 hello/UDP/ready 握手后发送 `device_event/idle_greeting`，由后端生成角色问候；请求、回执及固件计时规则见[主动招呼接口](idle-greeting.md)。
 
 服务端决定需要待机播报时发送：
 
@@ -194,7 +205,7 @@ UTF8(manifest.manifest_json + "\n" + chunk_json[0] + "\n" + ... + chunk_json[N-1
 
 服务端核验当前会话、任务、UDP回程及TTS初始化就绪后才消费待播任务。MQTT降级到WebSocket时使用相同任务ID及递增attempt，并沿用原WebSocket鉴权；旧连接迟到消息不能覆盖新会话。
 
-待播任务默认有效期15秒，可通过 `KSZ_GUIDE_PENDING_TTL_MS` 调整，设备以 `request_hello.expires_in_ms` 为准。失位、策略失效、信标变化和建链超时会取消旧任务；只保留最新有效信标。用户正在交互时不插播，过期任务不会在稍后突然补播。`ready`成功只表示协议接受，不保证立刻有音频。
+待播任务默认有效期15秒，可通过 `KSZ_GUIDE_PENDING_TTL_MS` 调整，设备以 `request_hello.expires_in_ms` 为准。失位、策略失效、有效位置变化和建链超时会取消旧任务；同位置成员切换保留任务且不延长期限。用户正在交互时不插播，过期任务不会在稍后突然补播。`ready`成功只表示协议接受，不保证立刻有音频。
 
 ## 旧固件兼容
 
@@ -213,4 +224,4 @@ UTF8(manifest.manifest_json + "\n" + chunk_json[0] + "\n" + ... + chunk_json[N-1
 - 边界RSSI抖动不反复上报；丢失信标后停止位置心跳并发lost。
 - MQTT待机可同步策略和上报位置，只有授权唤醒任务才建立语音会话。
 - 重复hello不生成双会话；UDP就绪前不开始播音；降级后旧会话不得重复播报。
-- 默认首次只建基准，开启首次播报时也讲解；同信标不重播，不同信标即使属于同一区域也触发讲解，仅在策略有效且自动讲解开启时播报。
+- 任意位置默认首次有效信标即触发，即使绑定多枚也无需第二枚确认。同位置重复或成员切换不重播，不同位置可独立触发，仍需策略有效、自动讲解开启并满足冷却。

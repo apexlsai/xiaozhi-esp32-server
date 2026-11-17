@@ -2,14 +2,14 @@
   <CustomDialog
     :title="$t('modelConfigDialog.editModel')"
     :visible.sync="dialogVisible"
-    width="57%"
+    width="960px"
+    size="large"
     class="model-edit-dialog"
     :confirmLoading="saving"
     @confirm="handleSave"
     @close="handleClose"
     @open="handleOpen"
   >
-    <div class="dialog-scroll-body">
     <div class="header-row">
       <div class="section-title">{{ $t("modelConfigDialog.modelInfo") }}</div>
       <div class="switch-group">
@@ -93,7 +93,6 @@
         </div>
       </template>
     </el-form>
-    </div>
   </CustomDialog>
 </template>
 
@@ -466,19 +465,16 @@ export default {
 <style lang="scss" scoped>
 @import '@/styles/global.scss';
 
-::v-deep .el-dialog {
-  margin-top: 6vh !important;
-}
-::v-deep .el-dialog__body {
-  max-height: 60vh;
-  overflow-y: auto;
-  @include scrollbar-style;
-}
 .model-edit-dialog {
+  ::v-deep .el-dialog__body {
+    padding: 24px 40px;
+  }
+
   .header-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    margin-bottom: 4px;
   }
 
   .section-title {
@@ -511,7 +507,7 @@ export default {
   .section-divider {
     height: 1px;
     background: #e9e9e9;
-    margin-bottom: 16px;
+    margin-bottom: 18px;
   }
 
   .form-row {
@@ -521,10 +517,13 @@ export default {
   }
 
   ::v-deep .el-input__inner {
-    height: 32px;
+    height: 38px;
   }
   ::v-deep .el-form-item {
-    margin-bottom: 10px;
+    margin-bottom: 14px;
+  }
+  ::v-deep .el-form-item__label {
+    line-height: 38px;
   }
 }
 </style>

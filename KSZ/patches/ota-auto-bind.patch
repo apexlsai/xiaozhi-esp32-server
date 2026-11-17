@@ -1,0 +1,95 @@
+--- a/main/manager-api/src/main/java/xiaozhi/modules/device/controller/OTAController.java
++++ b/main/manager-api/src/main/java/xiaozhi/modules/device/controller/OTAController.java
+@@ -30,8 +30,10 @@
+ import xiaozhi.modules.device.dto.DeviceReportReqDTO;
+ import xiaozhi.modules.device.dto.DeviceReportRespDTO;
+ import xiaozhi.modules.device.entity.DeviceEntity;
++import xiaozhi.modules.device.service.DeviceAutoBindService;
+ import xiaozhi.modules.device.service.DeviceCellService;
+ import xiaozhi.modules.device.service.DeviceService;
++import xiaozhi.modules.device.support.DeviceLanguageSpec;
+ import xiaozhi.modules.sys.service.SysParamsService;
+ 
+ @Tag(name = "设备管理", description = "OTA 相关接口")
+@@ -43,6 +45,7 @@
+     private final DeviceService deviceService;
+     private final SysParamsService sysParamsService;
+     private final DeviceCellService deviceCellService;
++    private final DeviceAutoBindService deviceAutoBindService;
+ 
+     @Operation(summary = "OTA版本和设备激活状态检查")
+     @PostMapping
+@@ -69,7 +72,7 @@
+         return createResponse(deviceService.checkDeviceActive(deviceId, clientId, deviceReportReqDTO));
+     }
+ 
+-    private DeviceReportRespDTO handlePreConnectEvent(String deviceId, DeviceReportReqDTO request) {
++    private DeviceReportRespDTO validatePreConnectEvent(String deviceId, DeviceReportReqDTO request) {
+         if (request == null || StringUtils.isBlank(request.getEvent())) {
+             return null;
+         }
+@@ -100,16 +103,38 @@
+             return DeviceReportRespDTO.createError("role 不能为空");
+         }
+ 
++        if (profileChange ? !DeviceLanguageSpec.isProfileLanguageSupported((String) language)
++                : !DeviceLanguageSpec.isSupported((String) language)) {
++            return DeviceReportRespDTO.createError("language 不受支持");
++        }
++        if (profileChange && !DeviceLanguageSpec.isRoleSupported((String) role)) {
++            return DeviceReportRespDTO.createError("role 不受支持");
++        }
++        return null;
++    }
++
++    private DeviceReportRespDTO handlePreConnectEvent(String deviceId, DeviceReportReqDTO request) {
++        DeviceReportRespDTO validationError = validatePreConnectEvent(deviceId, request);
++        if (validationError != null) {
++            return validationError;
++        }
+         try {
+-            if (profileChange) {
+-                deviceService.rebindDeviceProfile(
+-                        deviceId, (String) language, (String) role, Boolean.TRUE.equals(devValue));
++            deviceAutoBindService.bindIfAbsent(deviceId, request);
++            if (request == null || StringUtils.isBlank(request.getEvent())) {
++                return null;
++            }
++            Map<String, Object> payload = request.getPayload();
++            String language = (String) payload.get("language");
++            boolean dev = Boolean.TRUE.equals(payload.get("dev"));
++            if ("profile_change".equals(request.getEvent())) {
++                String role = (String) payload.get("role");
++                deviceService.rebindDeviceProfile(deviceId, language, role, dev);
+                 log.info("连接前语言角色已选定: deviceId={}, language={}, role={}, dev={}",
+-                        deviceId, language, role, Boolean.TRUE.equals(devValue));
++                        deviceId, language, role, dev);
+             } else {
+-                deviceService.rebindDeviceLanguage(deviceId, (String) language, Boolean.TRUE.equals(devValue));
++                deviceService.rebindDeviceLanguage(deviceId, language, dev);
+                 log.info("连接前语言智能体已选定: deviceId={}, language={}, dev={}",
+-                        deviceId, language, Boolean.TRUE.equals(devValue));
++                        deviceId, language, dev);
+             }
+             return null;
+         } catch (RenException e) {
+--- a/main/manager-api/src/test/java/xiaozhi/modules/device/controller/OTAControllerTest.java
++++ b/main/manager-api/src/test/java/xiaozhi/modules/device/controller/OTAControllerTest.java
+@@ -14,6 +14,7 @@
+ 
+ import xiaozhi.modules.device.dto.DeviceReportReqDTO;
+ import xiaozhi.modules.device.dto.DeviceReportRespDTO;
++import xiaozhi.modules.device.service.DeviceAutoBindService;
+ import xiaozhi.modules.device.service.DeviceCellService;
+ import xiaozhi.modules.device.service.DeviceService;
+ import xiaozhi.modules.sys.service.SysParamsService;
+@@ -74,7 +75,8 @@
+     }
+ 
+     private OTAController controller(DeviceService deviceService) {
+-        return new OTAController(deviceService, mock(SysParamsService.class), mock(DeviceCellService.class));
++        return new OTAController(deviceService, mock(SysParamsService.class), mock(DeviceCellService.class),
++                mock(DeviceAutoBindService.class));
+     }
+ 
+     private DeviceReportReqDTO request() {

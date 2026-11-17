@@ -1,6 +1,9 @@
 import asyncio
 import json
 import queue
+from dataclasses import replace
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import Context
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -12,7 +15,7 @@ from core.utils.dialogue import Dialogue
 from ksz_guide.announcement import OpeningFilter, guide_announcement
 from ksz_guide.settings import GuideSettings
 from plugins_func.register import Action, ActionResponse
-from test_guide import Harness, beacon
+from test_guide import DEVICE, Harness, beacon
 
 
 class RecordingTTS:
@@ -127,14 +130,18 @@ def test_env_template_overrides_builtin_yaml():
 ])
 def test_fixed_opening_uses_bound_language_before_model_is_called(conn, language, expected):
     conn.device_attributes["language"] = language
+    history_at_request = []
 
     def response(*args, **kwargs):
         assert conn.tts.complete == [expected]
+        history_at_request.extend(assistant_text(conn))
         assert [item.sentence_type for item in messages(conn)] == [SentenceType.FIRST, SentenceType.MIDDLE]
         return iter(())
 
     conn.llm.response.side_effect = response
     narrate(conn)
+    assert history_at_request == [expected]
+    assert conn.llm.response.call_args.args[1][-1] == {"role": "user", "content": "[位置变化] 请直接介绍这里。"}
     assert spoken(conn) == expected
     assert assistant_text(conn) == [expected]
     assert conn.tts.texts[conn.sentence_id] == expected
@@ -185,12 +192,13 @@ def test_model_failure_keeps_location_sentence_and_finishes(conn, stage):
 
 
 @pytest.mark.parametrize("change", ["abort", "new_beacon", "disconnect", "position_expired"])
-def test_late_model_output_is_discarded_when_guide_loses_ownership(conn, change):
+@pytest.mark.parametrize("body", ["", "这里展示城市规划。"])
+def test_late_model_output_is_discarded_when_guide_loses_ownership(conn, change, body):
     valid = True
 
     def response():
         nonlocal valid
-        yield "您好，我是"
+        yield "您好，我是小硕。" + body
         if change == "abort":
             conn.client_abort = True
         elif change == "new_beacon":
@@ -203,32 +211,129 @@ def test_late_model_output_is_discarded_when_guide_loses_ownership(conn, change)
 
     conn.llm.response.return_value = response()
     turn = narrate(conn, valid=lambda: valid)
-    assert spoken(conn) == turn.prefix
-    assert assistant_text(conn) == []
+    assert spoken(conn) == turn.prefix + body
+    assert assistant_text(conn) == [turn.prefix + body]
     if change != "position_expired":
         assert all(item.sentence_type != SentenceType.LAST for item in messages(conn))
 
 
 def test_missing_location_never_reaches_model(conn):
-    narrate(conn, item=beacon(floor=" ", area="", location_description=""))
+    narrate(conn, item=replace(beacon(), floor=" ", area="", place_name=""))
     conn.llm.response.assert_not_called()
     assert spoken(conn) == ""
+    assert assistant_text(conn) == []
+
+
+def test_followup_during_narration_receives_accepted_history_in_order(conn):
+    body = "这里展示城市规划。"
+    question = "刚才介绍的是什么？"
+    answer = "刚才介绍的是城市规划。"
+    history_during_stream = []
+
+    def response():
+        yield body
+        history_during_stream.extend(assistant_text(conn))
+        Context().run(conn.chat, question)
+        yield "已经过期的讲解。"
+
+    conn.llm.response.side_effect = [response(), iter([answer])]
+    turn = narrate(conn)
+    assert history_during_stream == [turn.prefix + body]
+    request = conn.llm.response.call_args_list[1].args[1]
+    assert request[-2:] == [
+        {"role": "assistant", "content": turn.prefix + body},
+        {"role": "user", "content": question},
+    ]
+    assert assistant_text(conn) == [turn.prefix + body, answer]
+    assert [(message.role, message.content) for message in conn.dialogue.dialogue[-3:]] == [
+        ("assistant", turn.prefix + body), ("user", question), ("assistant", answer),
+    ]
 
 
 def test_custom_template_and_empty_fields_are_rendered_once(conn):
     settings = GuideSettings.from_env({"KSZ_GUIDE_LOCATION_TEMPLATE_ZH_CN": "当前位置：{location}。"})
-    narrate(conn, settings=settings, item=beacon(floor="", area="展区", location_description=" "))
+    narrate(conn, settings=settings, item=replace(beacon(), floor="", area="展区", place_name=" "))
     assert spoken(conn) == "当前位置：展区。"
     assert GuideSettings.from_env({"KSZ_GUIDE_LOCATION_TEMPLATE_ZH_CN": ""}).location_template("zh-CN") == "您现在位于{location}。"
 
 
+@pytest.mark.parametrize("language,expected", [
+    ("zh-CN", "您现在位于1F，主展示区，赛车游戏屏幕体验区。"),
+    ("en", "You are now at 1F，主展示区，赛车游戏屏幕体验区."),
+    ("ja", "現在、1F，主展示区，赛车游戏屏幕体验区にいます。"),
+    ("ko", "현재 1F，主展示区，赛车游戏屏幕体验区에 계십니다."),
+])
+def test_opening_and_model_use_current_place_instead_of_old_beacon_description(conn, language, expected):
+    conn.device_attributes["language"] = language
+    item = beacon(area="主展示区", place_id="racing", place_name="赛车游戏屏幕体验区")
+    turn = narrate(conn, item=item)
+    assert spoken(conn) == expected
+    assert assistant_text(conn) == [expected]
+    assert turn.location == item.to_prompt_context()
+    system = conn.llm.response.call_args.args[1][0]["content"]
+    assert expected in system
+    assert "地砖屏展示区" not in system
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["before_model", "during_stream"])
+@pytest.mark.parametrize("change", ["new_place", "renamed_place", "same_place_member"])
+async def test_runtime_rejects_stale_place_without_interrupting_same_place_member(conn, monkeypatch, phase, change):
+    h = Harness()
+    current = beacon(place_id="place1", place_name="当前位置")
+    if change == "new_place":
+        latest = beacon(2, place_id="place2", place_name="新位置")
+    elif change == "renamed_place":
+        latest = beacon(place_id="place1", place_name="更新的位置名称")
+    else:
+        latest = beacon(2, area=current.area, place_id=current.place_id, place_name=current.place_name)
+    state = h.runtime.state(DEVICE)
+    state.owner = conn
+    state.policy = h.client.policies[DEVICE]
+    state.current = current
+    state.last_position_at = h.clock()
+
+    async def send(_, action):
+        if phase == "before_model" and action == "start":
+            state.current = latest
+
+    def response():
+        yield "这里展示"
+        if phase == "during_stream":
+            state.current = latest
+        yield "当前展项。"
+
+    monkeypatch.setattr("core.handle.sendAudioHandle.send_tts_message", send)
+    conn.llm.response.return_value = response()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        conn.executor = executor
+        try:
+            await h.runtime._announce(conn, current)
+        finally:
+            await h.runtime.close()
+    if change == "same_place_member":
+        assert spoken(conn) == "您现在位于1F，展区1，当前位置。这里展示当前展项。"
+        assert assistant_text(conn) == [spoken(conn)]
+    elif phase == "before_model":
+        conn.llm.response.assert_not_called()
+        assert spoken(conn) == ""
+    else:
+        assert spoken(conn) == "您现在位于1F，展区1，当前位置。"
+        assert assistant_text(conn) == [spoken(conn)]
+
+
 def test_following_user_chat_keeps_greetings_and_its_original_prompt(conn):
-    narrate(conn)
+    conn.llm.response.return_value = iter(["这里展示城市规划。"])
+    turn = narrate(conn)
     conn.tts.tts_text_queue = queue.Queue()
     conn.llm.response.return_value = iter(["你好，我是小硕。"])
     conn.chat("你好")
     assert spoken(conn) == "你好，我是小硕。"
     assert assistant_text(conn)[-1] == "你好，我是小硕。"
+    assert conn.llm.response.call_args.args[1][-2:] == [
+        {"role": "assistant", "content": turn.prefix + "这里展示城市规划。"},
+        {"role": "user", "content": "你好"},
+    ]
     assert "automatic beacon narration" not in conn.llm.response.call_args.args[1][0]["content"]
 
 

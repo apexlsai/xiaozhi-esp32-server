@@ -47,12 +47,25 @@ def _location_template(env, name, default):
     return value
 
 
+def _narration_tokens(env):
+    name = "KSZ_NARRATION_MAX_TOKENS"
+    try:
+        value = int(env.get(name, "4096"))
+    except ValueError:
+        raise ValueError(f"{name} must be an integer") from None
+    if not 1 <= value <= 131072:
+        raise ValueError(f"{name} must be between 1 and 131072")
+    return value
+
+
 @dataclass(frozen=True)
 class GuideSettings:
+    narration_max_tokens: int = 4096
     auto_announce_enabled: bool = True
-    announce_on_first_beacon: bool = False
+    announce_on_first_beacon: bool = True
     interrupt_on_beacon_change: bool = True
     min_announce_interval_ms: int = 15000
+    same_beacon_cooldown_ms: int = 60000
     position_ttl_ms: int = 15000
     pending_ttl_ms: int = 15000
     user_quiet_ms: int = 15000
@@ -67,6 +80,28 @@ class GuideSettings:
         return self.location_templates.get(language) or self.location_templates.get(family) or self.location_templates["zh-CN"]
 
     @classmethod
+    def from_management(cls, data):
+        fields = set(cls.__dataclass_fields__)
+        if not isinstance(data, dict) or set(data) != fields:
+            raise ValueError("Incomplete management guide configuration")
+        env = {}
+        booleans = {"auto_announce_enabled", "announce_on_first_beacon", "interrupt_on_beacon_change"}
+        for name in fields - {"location_templates"}:
+            value = data[name]
+            if type(value) is not (bool if name in booleans else int):
+                raise ValueError(f"Invalid management guide setting: {name}")
+            key = "KSZ_NARRATION_MAX_TOKENS" if name == "narration_max_tokens" else f"KSZ_GUIDE_{name.upper()}"
+            env[key] = str(int(value))
+        templates = data["location_templates"]
+        if not isinstance(templates, dict) or set(templates) != set(_load_templates()):
+            raise ValueError("Incomplete management location templates")
+        for language, value in templates.items():
+            if not isinstance(value, str) or not value.strip() or len(value) > 500:
+                raise ValueError("Invalid management location template")
+            env[f"KSZ_GUIDE_LOCATION_TEMPLATE_{language.upper().replace('-', '_')}"] = value
+        return cls.from_env(env)
+
+    @classmethod
     def from_env(cls, env=None):
         env = os.environ if env is None else env
         templates = _load_templates()
@@ -77,10 +112,12 @@ class GuideSettings:
                 templates[key] = override
         defaults = cls(location_templates=templates)
         return cls(
+            narration_max_tokens=_narration_tokens(env),
             auto_announce_enabled=_boolean(env, "KSZ_GUIDE_AUTO_ANNOUNCE_ENABLED", defaults.auto_announce_enabled),
             announce_on_first_beacon=_boolean(env, "KSZ_GUIDE_ANNOUNCE_ON_FIRST_BEACON", defaults.announce_on_first_beacon),
             interrupt_on_beacon_change=_boolean(env, "KSZ_GUIDE_INTERRUPT_ON_BEACON_CHANGE", defaults.interrupt_on_beacon_change),
             min_announce_interval_ms=_milliseconds(env, "KSZ_GUIDE_MIN_ANNOUNCE_INTERVAL_MS", defaults.min_announce_interval_ms),
+            same_beacon_cooldown_ms=_milliseconds(env, "KSZ_GUIDE_SAME_BEACON_COOLDOWN_MS", defaults.same_beacon_cooldown_ms),
             position_ttl_ms=_milliseconds(env, "KSZ_GUIDE_POSITION_TTL_MS", defaults.position_ttl_ms, 1),
             pending_ttl_ms=_milliseconds(env, "KSZ_GUIDE_PENDING_TTL_MS", defaults.pending_ttl_ms, 1),
             user_quiet_ms=_milliseconds(env, "KSZ_GUIDE_USER_QUIET_MS", defaults.user_quiet_ms),

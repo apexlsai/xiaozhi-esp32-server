@@ -28,7 +28,7 @@ async def main(args):
     from app.main import app
     from app.models.beacon import BluetoothBeacon
     from app.models.device import Device
-    from app.models.management import CatalogRevision, VenueArea
+    from app.models.management import CatalogRevision, VenueArea, VenuePlace
     from app.models.venue import MuseumVenue
     from ksz_guide.client import ManagementClient
     from ksz_guide.runtime import GuideRuntime
@@ -42,14 +42,16 @@ async def main(args):
         db.add(CatalogRevision(id=1, revision=1))
         venue_ids = []
         for index in range(10):
-            venue_id, area_id = generate_nanoid(), generate_nanoid()
+            venue_id, area_id, place_id = generate_nanoid(), generate_nanoid(), generate_nanoid()
             venue_ids.append(venue_id)
             db.add(MuseumVenue(id=venue_id, code=f"BENCH{index}", name=f"测试场馆{index}", address="隔离性能测试", enabled=True))
             await db.flush()
             db.add(VenueArea(id=area_id, venue_id=venue_id, floor="1F", name="测试区域"))
             await db.flush()
+            db.add(VenuePlace(id=place_id, venue_id=venue_id, area_id=area_id, name="入口"))
+            await db.flush()
             db.add(BluetoothBeacon(id=generate_nanoid(), beacon_id=f"bench-{index}", beacon_mac=beacon_macs[index],
-                                   venue_id=venue_id, area_id=area_id, floor="1F", area="测试区域", location_description="入口", enabled=True))
+                                   venue_id=venue_id, area_id=area_id, floor="1F", area="测试区域", place_id=place_id, enabled=True))
         for index, mac in enumerate(macs):
             db.add(Device(device_mac=mac, name=f"测试设备{index}", mode="venue", venue_id=venue_ids[index % 10],
                           status="active", model="simulator", auto_announce=False))

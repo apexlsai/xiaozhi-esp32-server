@@ -40,9 +40,14 @@ class DeviceState:
     last_position_at: float = 0
     current: Beacon | None = None
     baseline_mac: str | None = None
+    baseline_beacon: Beacon | None = None
+    confirmed_zone: tuple | None = None
+    last_announced_zone: tuple | None = None
     location_revision: int = 0
     pending: Pending | None = None
     last_announce_at: float = float("-inf")
+    location_announce_times: dict[tuple, float] = field(default_factory=dict)
+    announcement_status: str | None = None
     owner: object = None
     owner_attempt: int = 0
     owner_ready: bool = False
@@ -77,6 +82,8 @@ class GuideRuntime:
         self.announcement_tasks = set()
         self.guide_enabled = guide_enabled
         self.settings = settings if settings is not None else GuideSettings()
+        self.config_revision = None
+        self.next_config_refresh = 0
         self.presence = PresenceTracker(clock, wall_clock)
         self.voice_connections = {}
         self.voice_by_device = {}
@@ -241,6 +248,8 @@ class GuideRuntime:
             state.announcement_task.cancel()
         if reset_baseline:
             state.baseline_mac = None
+            state.baseline_beacon = None
+            state.confirmed_zone = None
         if state.owner is not None:
             state.owner.beacon_location = None
         self.location_updates.notify(state)
@@ -249,9 +258,11 @@ class GuideRuntime:
         now = self.clock()
         if state.current is not None and (not state.policy or not state.policy.valid(now)
                                           or now - state.last_position_at >= self.settings.position_ttl_ms / 1000):
+            self._announcement_status(state, "position_expired")
             self._invalidate(state)
         if state.pending and now >= state.pending.deadline:
             state.pending = None
+            self._announcement_status(state, "pending_expired")
 
     def _apply_policy(self, state, policy):
         if state.policy and state.policy.revision != policy.revision:
@@ -272,7 +283,8 @@ class GuideRuntime:
             beacons = await self.client.wire_whitelist(policy, venue) if policy.valid(self.clock()) else []
             config = {key: value for key, value in policy.data.items() if key not in {"expires_at", "beacon_allowlist"}}
             config["auto_announce"] = config.get("auto_announce") is True and self.settings.auto_announce_enabled
-            config["filter"] = {**config.get("filter", {}), "min_announce_interval_ms": self.settings.min_announce_interval_ms}
+            if not config.get("config_revision"):
+                config["filter"] = {**config.get("filter", {}), "min_announce_interval_ms": self.settings.min_announce_interval_ms}
             config["current_venue_id"] = venue
             manifest_json = json.dumps(config, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
             digest = hashlib.sha256((manifest_json + "\n").encode())
@@ -366,7 +378,7 @@ class GuideRuntime:
                     elif action == "observation":
                         raise GuideError("beacon_required")
                     elif action == "lost":
-                        self._invalidate(state)
+                        self._invalidate(state, reset_baseline=True)
                     elif action == "ready":
                         self._ready(state, message, transport, udp_ready, conn)
                 state.rejection = None
@@ -401,6 +413,17 @@ class GuideRuntime:
                 state.responses.popitem(last=False)
             return {"messages": messages}
 
+    def _announcement_status(self, state, status):
+        if state.announcement_status != status:
+            state.announcement_status = status
+            log.info("Guide narration device=%s beacon=%s place=%s status=%s", state.mac,
+                     state.current.mac if state.current else None,
+                     state.current.place_id if state.current else None, status)
+
+    def _beacon_cooling(self, state, beacon):
+        return (self.clock() - state.location_announce_times.get(beacon.zone, float("-inf"))
+                < self.settings.same_beacon_cooldown_ms / 1000)
+
     async def _observe(self, state, data, *, legacy=False):
         observed = beacon_identity(data)
         if legacy:
@@ -413,27 +436,41 @@ class GuideRuntime:
             raise GuideError("policy_changed")
         if not policy.allows(beacon):
             raise GuideError("beacon_not_allowed")
-        previous = state.baseline_mac
-        should_announce = (
-            (previous is not None or self.settings.announce_on_first_beacon)
-            and previous != beacon.mac
-            and self.settings.auto_announce_enabled
-            and policy.data.get("auto_announce") is True
-            and bool(beacon.to_prompt_context())
-        )
-        if should_announce and self.settings.interrupt_on_beacon_change:
-            await self._interrupt_announcement(state)
+        previous = state.baseline_beacon
+        same_place = previous is not None and previous.zone == beacon.zone
+        confirmed = ((previous is not None and previous.mac != beacon.mac)
+                     or (previous is None and self.settings.announce_on_first_beacon))
+        if not same_place:
+            state.confirmed_zone = None
+            state.pending = None
+        if confirmed:
+            state.confirmed_zone = beacon.zone
         state.current = beacon
         state.last_position_at = self.clock()
         if state.owner is not None:
             state.owner.beacon_location = beacon
-        if previous != beacon.mac:
+        if state.baseline_mac != beacon.mac:
             state.location_revision += 1
             state.baseline_mac = beacon.mac
+            if state.pending:
+                state.pending.location_revision = state.location_revision
+        state.baseline_beacon = beacon
+        if state.confirmed_zone != beacon.zone:
+            self._announcement_status(state, "first_beacon_disabled")
+        elif state.last_announced_zone == beacon.zone:
             state.pending = None
-            if should_announce:
+            self._announcement_status(state, "same_location")
+        elif self._beacon_cooling(state, beacon):
+            state.pending = None
+            state.confirmed_zone = None
+            self._announcement_status(state, "location_cooldown")
+        elif self.settings.auto_announce_enabled and policy.data.get("auto_announce") is True and beacon.to_prompt_context():
+            if state.pending is None:
                 state.pending = Pending(uuid4().hex, state.location_revision, policy.revision,
                                         self.clock() + self.settings.pending_ttl_ms / 1000, state.owner_attempt + 1)
+            self._announcement_status(state, "pending")
+        else:
+            self._announcement_status(state, "auto_announce_disabled")
         self.location_updates.notify(state)
 
     async def _interrupt_announcement(self, state):
@@ -452,7 +489,6 @@ class GuideRuntime:
         await handleAbortMessage(owner)
         owner.sentence_id = uuid4().hex
         state.announcement_sentence_id = None
-        state.last_announce_at = float("-inf")
         if task_active:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
@@ -497,6 +533,10 @@ class GuideRuntime:
             return False
         metadata = metadata or {}
         async with state.lock:
+            try:
+                self._apply_policy(state, await self.client.policy(state.mac))
+            except GuideError:
+                self._expire(state)
             activation_id = metadata.get("activation_id")
             if activation_id:
                 self._expire(state)
@@ -579,12 +619,22 @@ class GuideRuntime:
         return state.current
 
     def context(self, device_mac):
-        beacon = self.location(device_mac)
-        if beacon is None:
+        try:
+            state = self.devices.get(mac_address(device_mac))
+        except GuideError:
             return {}
-        state = self.devices[mac_address(device_mac)]
-        return {"last_beacon_id": beacon.beacon_id, "venue_id": beacon.venue_id,
-                "beacon_mac": beacon.mac, "guide_policy_revision": state.policy.revision}
+        if state is None or not state.policy or not state.policy.valid(self.clock()):
+            return {}
+        result = {}
+        venue = state.policy.data.get("venue_context")
+        if venue:
+            result.update(venue_id=venue["id"], venue_context=dict(venue),
+                          guide_policy_revision=state.policy.revision)
+        beacon = self.location(device_mac)
+        if beacon is not None:
+            result.update(last_beacon_id=beacon.beacon_id, venue_id=beacon.venue_id,
+                          beacon_mac=beacon.mac, guide_policy_revision=state.policy.revision)
+        return result
 
     def activity(self, conn, message):
         state = self.devices.get(mac_address(conn.device_id))
@@ -608,18 +658,39 @@ class GuideRuntime:
         pending = state.pending
         owner = state.owner
         now = self.clock()
-        if not pending or not owner or not state.owner_ready or not state.current or not state.policy:
+        if not pending or not state.current or not state.policy:
+            return
+        if not owner or not state.owner_ready:
+            self._announcement_status(state, "session_not_ready")
             return
         if pending.location_revision != state.location_revision or pending.policy_revision != state.policy.revision:
             state.pending = None
             return
-        if (now - state.last_announce_at < self.settings.min_announce_interval_ms / 1000
-                or now < state.activity_until or getattr(owner, "need_bind", True)
-                or getattr(owner, "tts", None) is None or getattr(owner, "client_is_speaking", False)
-                or getattr(owner, "client_have_voice", False) or getattr(owner, "calling", False)
-                or getattr(owner, "guide_chat_count", 0)
-                or (state.announcement_task is not None and not state.announcement_task.done())
-                or getattr(getattr(owner, "vision_sessions", None), "active", None) is not None):
+        if self._beacon_cooling(state, state.current):
+            state.pending = None
+            self._announcement_status(state, "location_cooldown")
+            return
+        vision = getattr(getattr(owner, "vision_sessions", None), "active", None)
+        guards = (
+            ("announce_interval", now - state.last_announce_at < self.settings.min_announce_interval_ms / 1000),
+            ("user_quiet", now < state.activity_until),
+            ("device_unbound", getattr(owner, "need_bind", True)),
+            ("tts_not_ready", getattr(owner, "tts", None) is None),
+            ("voice_active", getattr(owner, "client_have_voice", False)),
+            ("tool_active", getattr(owner, "calling", False)),
+            ("chat_active", getattr(owner, "guide_chat_count", 0)),
+            ("vision_active", vision is not None and not getattr(vision, "finished", False)
+             and not getattr(vision, "cancelled", False)),
+        )
+        for reason, blocked in guards:
+            if blocked:
+                self._announcement_status(state, reason)
+                return
+        if self.settings.interrupt_on_beacon_change:
+            await self._interrupt_announcement(state)
+        if (getattr(owner, "client_is_speaking", False)
+                or (state.announcement_task is not None and not state.announcement_task.done())):
+            self._announcement_status(state, "playback_active")
             return
         state.pending = None
         state.last_announce_at = now
@@ -627,10 +698,22 @@ class GuideRuntime:
         async def announce():
             if state.owner is not owner or state.location_revision != pending.location_revision or self.location(state.mac) is not beacon:
                 return
+            cutoff = now - self.settings.same_beacon_cooldown_ms / 1000
+            state.location_announce_times = {zone: at for zone, at in state.location_announce_times.items() if at > cutoff}
+            state.location_announce_times[beacon.zone] = now
+            previous_zone = state.last_announced_zone
+            state.last_announced_zone = beacon.zone
+            self._announcement_status(state, "started")
             try:
-                await self.announcer(owner, beacon)
+                if await self.announcer(owner, beacon) is False:
+                    state.location_announce_times.pop(beacon.zone, None)
+                    state.last_announced_zone = previous_zone
+                    self._announcement_status(state, "announcement_not_started")
             except Exception:
                 state.rejection = "announcement_failed"
+                state.location_announce_times.pop(beacon.zone, None)
+                state.last_announced_zone = previous_zone
+                self._announcement_status(state, "announcement_failed")
                 log.exception("Guide announcement failed")
         task = asyncio.create_task(announce())
         state.announcement_task = task
@@ -644,7 +727,7 @@ class GuideRuntime:
 
         limit = getattr(conn, "max_output_size", 0)
         if limit > 0 and check_device_output_limit(conn.device_id, limit):
-            return
+            return False
         sentence_id = conn.sentence_id
         socket = conn.websocket
         cancelled = False
@@ -653,21 +736,30 @@ class GuideRuntime:
             return (conn.websocket is socket and conn.sentence_id == sentence_id
                     and not conn.client_abort and connection_is_open(conn))
 
+        def valid_position(state):
+            current = self.location(state.mac) if state is not None else None
+            return (state is not None and state.owner is conn and current is not None
+                    and current.zone == beacon.zone
+                    and current.to_prompt_context() == beacon.to_prompt_context()
+                    and state.policy.allows(current))
+
         def chat():
             state = self.devices.get(mac_address(conn.device_id))
             if (not cancelled and owns_playback() and state and state.owner is conn
                     and not getattr(conn, "client_have_voice", False)
                     and not getattr(conn, "guide_chat_count", 0)
-                    and self.location(state.mac) is beacon):
+                    and valid_position(state)):
                 def valid():
-                    return not cancelled and state.owner is conn and self.location(state.mac) is beacon
+                    return not cancelled and valid_position(state)
 
                 with guide_announcement(conn, beacon, self.settings, valid):
-                    result = conn.chat(f"[位置变化] 用户当前位于{beacon.to_prompt_context()}。设备已播报位置，请只生成后续简短介绍，不要问候、自我介绍或重复位置；没有可靠资料时不补充，不要编造。")
+                    result = conn.chat(f"[位置变化] 用户当前位于{beacon.to_prompt_context()}。设备已播报位置，请进入讲解模式，完整讲解此处有依据的展项、用途、特点与背景，不受默认字数和一两句限制。不要问候、自我介绍或重复位置；没有可靠资料时不补充，不要编造。")
                 state = self.devices.get(mac_address(conn.device_id))
                 if (result is not False and state and state.owner is conn
                         and getattr(conn, "client_is_speaking", False)):
                     state.announcement_sentence_id = conn.sentence_id
+                return result is not False
+            return False
 
         conn.client_abort = False
         conn.client_is_speaking = True
@@ -675,7 +767,8 @@ class GuideRuntime:
         try:
             await send_tts_message(conn, "start")
             if owns_playback():
-                await asyncio.wrap_future(conn.executor.submit(chat))
+                return await asyncio.wrap_future(conn.executor.submit(chat))
+            return False
         finally:
             cancelled = True
             if owns_playback():
@@ -701,16 +794,52 @@ class GuideRuntime:
             return result
         result.update({
             "location_observed_at": self.wall_clock() - max(0, self.clock() - state.last_position_at) if state.current else None,
+            "config_revision": self.config_revision,
             "policy_revision": state.policy.revision if state.policy else None,
             "applied_policy_revision": state.ack_revision, "compatibility": state.compatibility,
             "current_venue_id": state.current.venue_id if state.current else None,
             "current_beacon_id": state.current.id if state.current else None,
             "location_revision": state.location_revision, "last_error": state.rejection,
+            "announcement_status": state.announcement_status,
+            "diagnostics": {"announcement_status": state.announcement_status,
+                            "last_error": state.rejection,
+                            "compatibility_mode": state.compatibility == "legacy"},
             "rejected_count": state.rejected_count,
         })
         return result
 
+    async def refresh_configuration(self):
+        fetch = getattr(self.client, "beacon_configuration", None)
+        if not self.guide_enabled or fetch is None or self.clock() < self.next_config_refresh:
+            return False
+        self.next_config_refresh = self.clock() + 5
+        try:
+            payload = await fetch()
+            revision = payload.get("revision")
+            if (not isinstance(revision, str) or len(revision) != 64
+                    or any(c not in "0123456789abcdef" for c in revision)):
+                raise ValueError("Invalid management configuration revision")
+            if revision == self.config_revision:
+                return False
+            settings = GuideSettings.from_management(payload["config"]["guide"])
+        except (GuideError, ValueError, KeyError, TypeError, AttributeError):
+            log.warning("Guide configuration refresh unavailable; keeping last valid settings")
+            return False
+        self.settings = settings
+        self.config_revision = revision
+        for state in list(self.devices.values()):
+            async with state.lock:
+                state.manifest = None
+                if not settings.auto_announce_enabled:
+                    self._invalidate(state)
+                self._expire(state)
+        self._mark_reports(self.devices)
+        log.info("Guide configuration applied: %s", revision[:12])
+        return True
+
     async def tick(self, *, refresh=False):
+        changed = await self.refresh_configuration()
+        refresh = refresh or changed
         if self.clock() >= self.next_connection_snapshot:
             self.snapshot_connections()
             self.next_connection_snapshot = self.clock() + 10

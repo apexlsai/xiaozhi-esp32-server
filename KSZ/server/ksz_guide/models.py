@@ -57,6 +57,16 @@ class Policy:
         for field in ("venue_ids", "beacon_ids"):
             if not isinstance(data.get(field), list) or not all(isinstance(item, str) for item in data[field]):
                 raise GuideError("invalid_policy_scope")
+        venue = data.get("venue_context")
+        if venue is not None:
+            if (not isinstance(venue, dict) or data.get("mode") != "venue"
+                    or venue.get("id") not in data["venue_ids"]
+                    or not isinstance(venue.get("name"), str) or not venue["name"].strip()):
+                raise GuideError("invalid_policy_venue")
+            for key, maximum in (("id", 128), ("code", 20), ("name", 200), ("description", 6000)):
+                if (not isinstance(venue.get(key), str) or len(venue[key]) > maximum
+                        or key != "description" and not venue[key].strip()):
+                    raise GuideError("invalid_policy_venue")
         duration = min(60, max(0, expiry - (time.time() if wall_time is None else wall_time)))
         return cls(dict(data), (time.monotonic() if now is None else now) + duration)
 
@@ -82,22 +92,30 @@ class Beacon:
     area_id: str | None
     floor: str
     area: str
-    location_description: str
+    place_id: str
+    place_name: str
     uuid: str | None = None
     major: int | None = None
     minor: int | None = None
+    place_beacon_count: int = 1
 
     @classmethod
     def parse(cls, item):
         if not isinstance(item, dict) or not all(isinstance(item.get(key), str) and item[key] for key in ("id", "venue_id", "beacon_id")):
             raise GuideError("invalid_catalog")
         identity = beacon_identity({key: item.get(key) for key in ("mac", "uuid", "major", "minor")})
+        count = item.get("place_beacon_count", 1)
+        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+            raise GuideError("invalid_catalog_place_count")
+        for key in ("place_id", "place_name"):
+            if not isinstance(item.get(key), str) or not item[key].strip():
+                raise GuideError("invalid_catalog_place")
         return cls(
             id=item["id"], mac=identity["mac"], beacon_id=item["beacon_id"],
             venue_id=item["venue_id"], area_id=item.get("area_id"),
             floor=str(item.get("floor") or ""), area=str(item.get("area") or ""),
-            location_description=str(item.get("location_description") or ""),
             uuid=identity.get("uuid"), major=identity.get("major"), minor=identity.get("minor"),
+            place_id=item["place_id"], place_name=item["place_name"].strip(), place_beacon_count=count,
         )
 
     def matches(self, observed):
@@ -109,10 +127,10 @@ class Beacon:
 
     @property
     def zone(self):
-        return (self.venue_id, self.area_id or ((self.floor, self.area) if self.area else self.id))
+        return (self.venue_id, self.place_id)
 
     def to_prompt_context(self):
-        return "，".join(part for part in (self.floor, self.area, self.location_description) if part)
+        return "，".join(part.strip() for part in (self.floor, self.area, self.place_name) if part.strip())
 
     def wire(self):
         return {key: value for key, value in vars(self).items() if value is not None}

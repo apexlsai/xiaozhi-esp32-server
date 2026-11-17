@@ -21,12 +21,34 @@ from .feedback import (
     finish_camera_feedback,
 )
 from .models import GuideError, mac_address
-from .prompt import prepare_system_prompt, prompt_template_path, response_language
+from .idle_greeting import (
+    cancel_idle_greeting, close_idle_greeting, greeting_session,
+    handle_idle_greeting, interrupt_idle_greeting,
+)
+from .prompt import prepare_system_prompt, prompt_template_path, response_language, venue_prompt
+from .prompt_owner import agent_owned, internal_turn, request_messages, trim_connection
 from .role_patch import handle_profile_change, handle_role_rebind, on_hello as role_on_hello
 from .runtime import GuideRuntime
 from .settings import GuideSettings
 from .vision import vision_message, vision_read_timeout
+from .visual_context import (
+    begin_visual_request, close_visual_context, finish_visual_request,
+    ensure_visual_request, prepare_visual_request, visual_chat_context,
+    visual_request_payload, visual_state,
+)
 from .tts import tts_complete_sentence
+from .thinking import (
+    close_thinking, finish_thinking, finish_thinking_later, send_response_emotion,
+    start_thinking, thinking_scope,
+)
+from .geographic_location import (
+    apply_location, close_location, location_context, location_description, location_value,
+    start_location, wait_location,
+)
+from .playback import (
+    begin_response, commit_playback_message, handle_playback_progress, interrupt_response,
+    playback_context_messages, prepare_playback_message, record_response_delta, record_response_text,
+)
 
 
 log = logging.getLogger(__name__)
@@ -122,29 +144,41 @@ async def on_hello(conn, message):
     role_on_hello(conn)
     runtime = runtime_for(conn)
     if runtime is None:
+        await wait_location(conn)
         return True
     try:
-        accepted = await runtime.bind(conn, message.get("guide"))
+        accepted, _ = await asyncio.gather(runtime.bind(conn, message.get("guide")), wait_location(conn))
     except GuideError:
         accepted = False
     if not accepted:
         await conn.websocket.close()
+    else:
+        apply_location(conn)
     return accepted
 
 
 def on_connect(conn):
+    start_location(conn)
+    greeting_session(conn)
+    visual_state(conn)
     runtime = runtime_for(conn, guide_only=False)
     if runtime:
         runtime.connection_opened(conn)
 
 
 def on_hello_complete(conn):
+    greeting_session(conn).ready = True
     runtime = runtime_for(conn)
     if runtime:
         runtime.location_updates.start(conn)
 
 
 def on_disconnect(conn):
+    close_thinking(conn)
+    interrupt_response(conn, "disconnected")
+    close_location(conn)
+    close_idle_greeting(conn)
+    close_visual_context(conn)
     runtime = runtime_for(conn, guide_only=False)
     if runtime:
         runtime.connection_closed(conn)
@@ -153,6 +187,9 @@ def on_disconnect(conn):
 
 
 async def handle_control_message(conn, message):
+    if handle_playback_progress(conn, message):
+        return True
+    await interrupt_idle_greeting(conn, message)
     runtime = runtime_for(conn)
     if runtime is None:
         return False
@@ -174,7 +211,15 @@ async def handle_control_message(conn, message):
     return True
 
 
+def response_options(conn):
+    runtime = runtime_for(conn)
+    settings = runtime.settings if runtime else GuideSettings.from_env()
+    return {"max_tokens": settings.narration_max_tokens}
+
+
 async def handle_legacy_event(conn, message):
+    if await handle_idle_greeting(conn, message, runtime_for(conn)):
+        return True
     if await handle_profile_change(conn, message):
         return True
     if await handle_role_rebind(conn, message):
@@ -204,6 +249,13 @@ def refresh_location(conn):
 
 def filter_context(conn, values):
     runtime = runtime_for(conn)
+    location = location_value(conn)
+    if runtime is not None or location is not None:
+        apply_location(conn)
+    values = visual_chat_context(conn, values)
+    values.pop("device_location", None)
+    if location is not None:
+        values["device_location"] = location
     if runtime is None:
         return values
     return validated_context(runtime, conn.device_id, values)
@@ -211,7 +263,7 @@ def filter_context(conn, values):
 
 def validated_context(runtime, device_mac, values):
     result = dict(values)
-    for key in ("last_beacon_id", "venue_id", "beacon_mac", "guide_policy_revision"):
+    for key in ("last_beacon_id", "venue_id", "venue_context", "beacon_mac", "guide_policy_revision"):
         result.pop(key, None)
     result.update(runtime.context(device_mac))
     return result
@@ -219,26 +271,47 @@ def validated_context(runtime, device_mac, values):
 
 def vision_context(server, device_mac, values):
     runtime = getattr(server, "guide_runtime", None)
-    return validated_context(runtime, device_mac, values) if isinstance(runtime, GuideRuntime) and runtime.guide_enabled else values
+    result = validated_context(runtime, device_mac, values) if isinstance(runtime, GuideRuntime) and runtime.guide_enabled else values
+    find = getattr(server, "find_device_connection", None)
+    conn = find({"device_id": device_mac}) if callable(find) else None
+    location = location_value(conn) if conn is not None else None
+    if "device_location" in result or location is not None:
+        result = dict(result)
+        result.pop("device_location", None)
+        if location is not None:
+            result["device_location"] = location
+    return result
 
 
 def extend_vision_payload(payload, kwargs):
-    for key in ("venue_id", "beacon_mac", "guide_policy_revision"):
+    for key in ("ksz_prompt_context", "venue_id", "venue_context", "beacon_mac", "guide_policy_revision",
+                "device_location", "session_id", "image_id", "image_seq", "captured_at"):
         if kwargs.get(key) is not None:
             payload[key] = kwargs[key]
+    if kwargs.get("history"):
+        payload["messages"] = [*kwargs["history"], *payload["messages"]]
+    if kwargs.get("ksz_prompt_context") is not None:
+        return payload
+    context = venue_prompt("", kwargs.get("venue_context"))
+    if location := kwargs.get("device_location"):
+        context += "\n" + location_description(location)
+    if context.strip():
+        payload["messages"] = [{"role": "system", "content": context.strip()}, *payload["messages"]]
     return payload
 
 
 def track_chat(function):
     @functools.wraps(function)
     def tracked(conn, *args, **kwargs):
-        if runtime_for(conn) is None:
-            return function(conn, *args, **kwargs)
-        with chat_lock:
-            conn.guide_chat_count = getattr(conn, "guide_chat_count", 0) + 1
-        try:
-            return function(conn, *args, **kwargs)
-        finally:
+        cancel_idle_greeting(conn)
+        with thinking_scope():
+            if runtime_for(conn) is None:
+                return function(conn, *args, **kwargs)
             with chat_lock:
-                conn.guide_chat_count -= 1
+                conn.guide_chat_count = getattr(conn, "guide_chat_count", 0) + 1
+            try:
+                return function(conn, *args, **kwargs)
+            finally:
+                with chat_lock:
+                    conn.guide_chat_count -= 1
     return tracked

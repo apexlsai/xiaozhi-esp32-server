@@ -65,6 +65,18 @@ def test_unknown_language_uses_chinese():
     assert vision_language(connection("unknown")) == "zh-CN"
 
 
+@pytest.mark.parametrize("value,expected", [("ja-JP", "ja"), ("ko_KR", "ko")])
+def test_visual_language_aliases_follow_the_bound_language(value, expected):
+    assert vision_language(connection(value)) == expected
+
+
+def test_visual_language_uses_config_bound_agent_when_attributes_are_missing():
+    conn = connection("zh-CN")
+    conn.device_attributes = {}
+    conn.config = {"agent_name": "儿童-韩语"}
+    assert vision_language(conn) == "ko"
+
+
 def test_visual_http_waits_beyond_old_30_second_limit():
     async def run():
         provider = VLLMProvider({"base_url": "http://vision.test/v1", "api_key": "test", "model_name": "museum-guide-vision"})

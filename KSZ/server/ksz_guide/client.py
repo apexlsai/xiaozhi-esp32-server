@@ -40,6 +40,9 @@ class ManagementClient:
         if self.session is not None:
             await self.session.close()
 
+    async def beacon_configuration(self):
+        return await self._request("GET", "/beacon-config")
+
     async def _request(self, method, path, **kwargs):
         if self.session is None:
             self.session = aiohttp.ClientSession(

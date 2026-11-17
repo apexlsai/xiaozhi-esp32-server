@@ -14,13 +14,17 @@ from aiohttp import ClientSession, web
 
 from ksz_guide.client import ManagementClient
 from ksz_guide.integration import (
-    filter_context, handle_legacy_event, register_routes, track_chat, vision_context,
+    extend_vision_payload, filter_context, handle_legacy_event, on_hello, register_routes, track_chat, vision_context,
 )
+from ksz_guide.geographic_location import close_location
 from ksz_guide.models import Beacon, GuideError, Policy, beacon_identity
+from ksz_guide.prompt import prepare_system_prompt
 from ksz_guide.runtime import GuideRuntime
+from ksz_guide.settings import GuideSettings
 
 
 DEVICE = "AA:BB:CC:DD:EE:FF"
+VENUE = {"id": "venue1", "code": "0755001", "name": "Test venue", "description": "Display solutions"}
 
 
 class Clock:
@@ -44,7 +48,7 @@ def beacon(number=1, **changes):
     return Beacon.parse({
         "id": f"beacon{number}", "mac": f"DA:01:16:{number >> 16 & 255:02X}:{number >> 8 & 255:02X}:{number & 255:02X}",
         "beacon_id": f"asset-{number}", "venue_id": "venue1", "area_id": f"area{number}",
-        "floor": "1F", "area": f"展区{number}", "location_description": "展柜旁", **changes,
+        "floor": "1F", "area": f"展区{number}", "place_id": f"place{number}", "place_name": "展柜旁", **changes,
     })
 
 
@@ -143,11 +147,10 @@ async def test_unknown_cross_venue_and_disabled_never_mutate_or_announce():
 
 
 @pytest.mark.asyncio
-async def test_idle_transition_waits_for_udp_and_tts_readiness():
+async def test_idle_first_beacon_waits_for_udp_and_tts_readiness():
     h = Harness()
     await h.sync()
-    assert not any(item["action"] == "request_hello" for item in await h.observe(1))
-    messages = await h.observe(2)
+    messages = await h.observe(1)
     wake = next(item for item in messages if item["action"] == "request_hello")
     h.announce.assert_not_awaited()
     conn = h.conn()
@@ -161,7 +164,7 @@ async def test_idle_transition_waits_for_udp_and_tts_readiness():
     h.announce.assert_not_awaited()
     conn.tts = object()
     await h.runtime.tick()
-    h.announce.assert_awaited_once_with(conn, beacon(2))
+    h.announce.assert_awaited_once_with(conn, beacon(1))
     await h.runtime.tick()
     h.announce.assert_awaited_once()
 
@@ -170,8 +173,7 @@ async def test_idle_transition_waits_for_udp_and_tts_readiness():
 async def test_fallback_owner_and_late_disconnect_do_not_duplicate_announcement():
     h = Harness()
     await h.sync()
-    await h.observe(1)
-    wake = next(item for item in await h.observe(2) if item["action"] == "request_hello")
+    wake = next(item for item in await h.observe(1) if item["action"] == "request_hello")
     first = h.conn()
     second = h.conn("session2")
     metadata = {"activation_id": wake["activation_id"], "boot_id": "boot1", "connection_id": "connection1"}
@@ -186,7 +188,7 @@ async def test_fallback_owner_and_late_disconnect_do_not_duplicate_announcement(
            "session_id": "session2", "session_attempt": 2}
     await h.runtime.process(DEVICE, "ws:session2", msg, transport="websocket", conn=second)
     await h.runtime.process(DEVICE, "ws:session2", msg, transport="websocket", conn=second)
-    h.announce.assert_awaited_once_with(second, beacon(2))
+    h.announce.assert_awaited_once_with(second, beacon(1))
 
 
 @pytest.mark.asyncio
@@ -194,8 +196,7 @@ async def test_fallback_owner_and_late_disconnect_do_not_duplicate_announcement(
 async def test_stale_pending_activation_cannot_restore_position(failure):
     h = Harness()
     await h.sync()
-    await h.observe(1)
-    wake = next(item for item in await h.observe(2) if item["action"] == "request_hello")
+    wake = next(item for item in await h.observe(1) if item["action"] == "request_hello")
     if failure == "lost":
         await h.send("lost")
     elif failure == "expired":
@@ -212,21 +213,31 @@ async def test_stale_pending_activation_cannot_restore_position(failure):
 async def test_same_beacon_heartbeat_and_reconnect_do_not_count_as_movement():
     h = Harness()
     await h.sync()
-    await h.observe(1)
+    wake = next(item for item in await h.observe(1) if item["action"] == "request_hello")
+    conn = h.conn()
+    metadata = {"activation_id": wake["activation_id"], "session_attempt": 1,
+                "boot_id": "boot1", "connection_id": "connection1"}
+    assert await h.runtime.bind(conn, metadata)
+    await h.send("ready", activation_id=wake["activation_id"], session_attempt=1,
+                 session_id=conn.session_id, udp_ready=True)
+    h.announce.assert_awaited_once_with(conn, beacon(1))
+    assert await h.runtime.bind(conn, {**metadata, "activation_id": None})
+    await h.runtime.tick()
+    h.announce.assert_awaited_once()
     for _ in range(4):
         h.clock.now += 5
         messages = await h.send("heartbeat", beacon={"mac": beacon(1).mac})
         assert all(item["action"] != "request_hello" for item in messages)
     await h.observe(1)
     assert h.runtime.state(DEVICE).pending is None
-    conn = h.conn()
-    await h.runtime.bind(conn)
     h.runtime.unbind(conn)
-    await h.runtime.bind(h.conn("session2"))
+    reconnected = h.conn("session2")
+    assert await h.runtime.bind(reconnected, {**metadata, "activation_id": None, "session_attempt": 2})
+    await h.send("ready", session_attempt=2, session_id=reconnected.session_id, udp_ready=True)
     await h.observe(1)
     await h.runtime.tick()
     assert h.runtime.state(DEVICE).pending is None
-    h.announce.assert_not_awaited()
+    h.announce.assert_awaited_once_with(conn, beacon(1))
 
 
 @pytest.mark.asyncio
@@ -235,7 +246,7 @@ async def test_same_beacon_heartbeat_and_reconnect_do_not_count_as_movement():
 async def test_different_beacons_in_same_area_announce_each_transition(transport, area_id):
     first = beacon(1, area_id=area_id)
     second = beacon(2, area_id=area_id, area=first.area)
-    h = Harness(items=[first, second])
+    h = Harness(settings=GuideSettings(announce_on_first_beacon=False), items=[first, second])
     if transport != "legacy":
         await h.sync()
     conn = h.conn()
@@ -313,7 +324,8 @@ async def test_active_conversation_is_not_interrupted(busy):
 @pytest.mark.parametrize("same_area", [False, True])
 async def test_new_beacon_preempts_active_guide_announcement(monkeypatch, same_area):
     items = [beacon(number, area_id="area1") if same_area else beacon(number) for number in (1, 2, 3)]
-    h = Harness(items=items)
+    h = Harness(settings=GuideSettings(announce_on_first_beacon=False, interrupt_on_beacon_change=True,
+                                      min_announce_interval_ms=0), items=items)
     await h.sync()
     conn = h.conn()
     conn.sentence_id = "guide-turn"
@@ -370,14 +382,125 @@ async def test_text_and_vision_strip_untrusted_persisted_attributes():
     h = Harness()
     conn = h.conn()
     raw = {"device_id": DEVICE, "language": "zh-CN", "last_beacon_id": "untrusted", "venue_id": "wrong"}
-    assert filter_context(conn, raw) == {"device_id": DEVICE, "language": "zh-CN"}
-    assert vision_context(conn.server, DEVICE, raw) == filter_context(conn, raw)
+    assert filter_context(conn, raw) == {"device_id": DEVICE, "language": "zh-CN", "session_id": conn.session_id}
+    assert vision_context(conn.server, DEVICE, raw) == {"device_id": DEVICE, "language": "zh-CN"}
     await h.sync()
     await h.observe(1)
     safe = filter_context(conn, raw)
     assert safe["last_beacon_id"] == "asset-1" and safe["venue_id"] == "venue1"
     h.clock.now += 15
     assert "last_beacon_id" not in vision_context(conn.server, DEVICE, raw)
+
+
+@pytest.mark.asyncio
+async def test_bound_venue_survives_missing_or_expired_position_but_not_policy_expiry():
+    h = Harness(venue_context=VENUE)
+    conn = h.conn()
+    raw = {"venue_id": "forged", "venue_context": {"name": "Forged venue"}}
+    await h.sync()
+    context = filter_context(conn, raw)
+    assert context["venue_context"] == VENUE and context["venue_id"] == VENUE["id"]
+    assert "last_beacon_id" not in context and "beacon_mac" not in context
+    await h.observe(1)
+    h.clock.now += 15
+    context = vision_context(conn.server, DEVICE, raw)
+    assert context["venue_context"] == VENUE and "last_beacon_id" not in context
+    h.clock.now += 45
+    assert vision_context(conn.server, DEVICE, raw) == {}
+
+
+@pytest.mark.asyncio
+async def test_venue_reassignment_and_disable_clear_the_previous_model_context():
+    h = Harness(venue_context=VENUE)
+    await h.sync()
+    state = h.runtime.state(DEVICE)
+    replacement = {**VENUE, "id": "venue2", "name": "Another venue"}
+    for changes, expected in [
+        ({"venue_ids": ["venue2"], "venue_context": replacement}, replacement),
+        ({"mode": "consumer", "venue_ids": [], "venue_context": None}, None),
+        ({"enabled": False, "venue_context": VENUE}, None),
+    ]:
+        policy = Policy.parse(policy_data(revision="2:1", **changes), h.clock(), h.clock())
+        h.runtime._apply_policy(state, policy)
+        assert h.runtime.context(DEVICE).get("venue_context") == expected
+
+
+@pytest.mark.parametrize("changes", [
+    {"mode": "consumer"}, {"venue_ids": ["another"]},
+    {"venue_context": {**VENUE, "name": ""}},
+    {"venue_context": {**VENUE, "description": "x" * 6001}},
+])
+def test_invalid_bound_venue_context_is_rejected(changes):
+    with pytest.raises(GuideError, match="invalid_policy_venue"):
+        Policy.parse(policy_data(venue_context=VENUE) | changes)
+
+
+def test_bound_venue_is_forwarded_into_the_vision_model_request():
+    payload = {"messages": [{"role": "user", "content": "image"}]}
+    result = extend_vision_payload(payload, {"venue_context": VENUE, "venue_id": VENUE["id"]})
+    assert result["venue_context"] == VENUE and result["venue_id"] == VENUE["id"]
+    assert result["messages"][0]["role"] == "system"
+    assert VENUE["name"] in result["messages"][0]["content"]
+    assert result["messages"][-1] == {"role": "user", "content": "image"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("location_first", [True, False])
+async def test_hello_waits_for_both_initial_sources_and_first_request_contains_them(monkeypatch, location_first):
+    h = Harness(venue_context=VENUE)
+    conn = h.conn()
+    conn.read_config_from_api = True
+    conn.device_attributes = {}
+    conn.prompt = "Configured role."
+    conn.change_system_prompt = lambda prompt: setattr(conn, "prompt", prepare_system_prompt(conn, prompt))
+    policy_started, location_started = asyncio.Event(), asyncio.Event()
+    policy_ready, location_ready = asyncio.Event(), asyncio.Event()
+
+    async def policy(mac):
+        policy_started.set()
+        await policy_ready.wait()
+        return h.client.policies[mac]
+
+    async def location(_):
+        location_started.set()
+        await location_ready.wait()
+        return {"source": "cell", "city": "深圳市", "position": {
+            "city": "深圳市", "address": "深圳市宝安区", "lat": 22.767094, "lng": 113.863019, "radius": 1414,
+        }}
+
+    monkeypatch.setattr(h.client, "policy", policy)
+    monkeypatch.setattr("ksz_guide.geographic_location.fetch_location", location)
+    hello = asyncio.create_task(on_hello(conn, {}))
+    await asyncio.wait_for(asyncio.gather(policy_started.wait(), location_started.wait()), timeout=1)
+    first, second = (location_ready, policy_ready) if location_first else (policy_ready, location_ready)
+    first.set()
+    await asyncio.sleep(0)
+    assert not hello.done()
+    second.set()
+    assert await hello
+    assert VENUE["name"] in conn.prompt and "深圳市宝安区" in conn.prompt
+    context = filter_context(conn, {})
+    assert context["venue_context"] == VENUE
+    assert context["device_location"]["position"]["radius"] == 1414
+    assert all(text in conn.prompt for text in (VENUE["name"], VENUE["description"], "深圳市宝安区"))
+    assert all(text not in conn.prompt for text in ("22.767094", "113.863019", "1414"))
+    assert conn.prompt.count("<ksz_device_venue>") == 1
+    h.clock.now += 60
+    filter_context(conn, {})
+    assert VENUE["name"] not in conn.prompt and "深圳市宝安区" in conn.prompt
+    close_location(conn)
+    await conn.ksz_geographic_location.task
+
+
+@pytest.mark.asyncio
+async def test_management_failure_on_hello_preserves_conversation_without_expired_venue():
+    h = Harness(venue_context=VENUE)
+    h.client.failed = True
+    h.clock.now += 60
+    conn = h.conn()
+    assert await on_hello(conn, {})
+    assert h.runtime.context(DEVICE) == {}
+    conn.websocket.close.assert_not_awaited()
 
 
 @pytest.mark.asyncio

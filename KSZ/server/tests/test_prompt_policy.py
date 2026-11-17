@@ -7,7 +7,7 @@ from jinja2 import Template
 
 from core.connection import ConnectionHandler
 from core.utils.prompt_manager import PromptManager
-from ksz_guide.prompt import LANGUAGE_NAMES, prepare_system_prompt, prompt_template_path, response_language
+from ksz_guide.prompt import LANGUAGE_NAMES, MODE_SCOPE, prepare_system_prompt, prompt_template_path, response_language
 
 
 def connection(**attributes):
@@ -29,7 +29,7 @@ def test_each_supported_language_has_a_single_policy_and_preserves_the_role(lang
     conn = connection(language=language)
     role = "A carefully configured museum role, including its name and expertise."
     prompt = prepare_system_prompt(conn, role)
-    assert prompt.startswith(role + "\n\n")
+    assert prompt.startswith(MODE_SCOPE + role + "\n\n")
     assert f"Write every spoken reply in {LANGUAGE_NAMES[language]}" in prompt
     assert prepare_system_prompt(conn, prompt) == prompt
 
@@ -39,7 +39,7 @@ def test_rebinding_replaces_previous_language_policy_without_repeating_or_removi
     prompt = prepare_system_prompt(conn, "Configured museum role.")
     conn.device_attributes = {"agent_name": "青年-日语", "language": "en"}
     updated = prepare_system_prompt(conn, prompt)
-    assert updated.startswith("Configured museum role.")
+    assert updated.startswith(MODE_SCOPE + "Configured museum role.")
     assert updated.count("<ksz_response_policy>") == 1
     assert "Write every spoken reply in Japanese" in updated
     assert "Write every spoken reply in English" not in updated
@@ -59,6 +59,12 @@ def test_initial_prompt_uses_device_language_when_attributes_are_not_ready():
     ConnectionHandler.change_system_prompt(conn, "Initial configured role.")
     assert "Write every spoken reply in English" in conn.prompt
     assert ConnectionHandler._build_llm_extra_body(conn)["language"] == "en"
+
+
+def test_config_bound_agent_name_is_used_before_device_attributes_refresh():
+    conn = connection()
+    conn.config = {"agent_name": "儿童-韩语"}
+    assert response_language(conn) == "ko"
 
 
 @pytest.mark.parametrize("path", [None, "agent-base-prompt.txt", "./agent-base-prompt.txt"])

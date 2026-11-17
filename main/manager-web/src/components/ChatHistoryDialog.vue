@@ -3,6 +3,7 @@
         :title="$t('chatHistory.with') + agentName + $t('chatHistory.dialogTitle')"
         :visible.sync="dialogVisible"
         width="80%"
+        size="large"
         :footer="false"
         :close-on-click-modal="false"
         custom-class="chat-history-dialog">
@@ -413,7 +414,8 @@ export default {
 <style scoped>
 .chat-container {
     display: flex;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
 }
 
 .session-list {
@@ -610,10 +612,6 @@ export default {
     display: flex;
     gap: 10px;
     border-top: 1px solid #eee;
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
     background-color: white;
 }
 
@@ -624,24 +622,18 @@ export default {
 
 <style>
 .chat-history-dialog {
-    display: flex;
-    flex-direction: column;
     min-width: 700px;
-    margin: 0 !important;
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    height: 98vh;
     max-width: 85vw;
-    border-radius: 12px;
-    overflow: hidden;
+    /* 兜底，防止 size="large" 那个 height 没有生效时弹框缩成内容高度 */
+    height: calc(100vh - 20px) !important;
 }
 
 .chat-history-dialog .el-dialog__body {
     padding: 0;
     overflow: hidden;
-    height: calc(90vh - 54px);
-    /* 减去标题栏的高度 */
+    display: flex;
+    flex-direction: column;
+    /* 顶开 size="large" 默认的 100vh - 130px，让 body 真正撑到弹框底部，flex: 1 会自动填满 */
+    max-height: calc(100vh - 74px) !important;
 }
 </style>

@@ -3,7 +3,7 @@
     <el-dialog
       :title="$t('agentSnapshot.title')"
       :visible="visible"
-      width="860px"
+      width="960px"
       class="agent-snapshot-dialog"
       :before-close="guardRestoreInFlightClose"
       :close-on-click-modal="!restoring"
@@ -126,7 +126,7 @@
     <el-dialog
       :title="detailDialogTitle"
       :visible.sync="detailVisible"
-      width="860px"
+      width="960px"
       class="snapshot-detail-dialog"
     >
       <template slot="title">
@@ -269,8 +269,21 @@
               </div>
               <div v-else class="value-empty">{{ $t('agentSnapshot.noFunctionChange') }}</div>
             </div>
+            <div v-else-if="shouldUseCodeDiff(item)" class="diff-code-wrapper">
+              <CodeDiff
+                :old-string="item.beforeText"
+                :new-string="item.afterText"
+                :language="codeDiffLanguage(item)"
+                output-format="side-by-side"
+                diff-style="word"
+                :context="8"
+                max-height="320px"
+                :filename="item.beforeTitle"
+                :new-filename="item.afterTitle"
+              />
+            </div>
             <div v-else class="diff-values" :class="{ 'is-complex': item.complex }">
-              <div class="diff-pane diff-before">
+              <div class="diff-pane diff-before 1">
                 <div class="diff-pane-title">{{ item.beforeTitle }}</div>
                 <div class="diff-value" :class="valueClass(item)">
                   <div
@@ -306,7 +319,7 @@
     <el-dialog
       :title="restorePreviewTitle"
       :visible.sync="restorePreviewVisible"
-      width="860px"
+      width="960px"
       class="snapshot-detail-dialog"
       :before-close="guardRestoreInFlightClose"
       :close-on-click-modal="!restoring"
@@ -401,8 +414,21 @@
               </div>
               <div v-else class="value-empty">{{ $t('agentSnapshot.noFunctionChange') }}</div>
             </div>
+            <div v-else-if="shouldUseCodeDiff(item)" class="diff-code-wrapper">
+              <CodeDiff
+                :old-string="item.beforeText"
+                :new-string="item.afterText"
+                :language="codeDiffLanguage(item)"
+                output-format="side-by-side"
+                diff-style="word"
+                :context="8"
+                max-height="320px"
+                :filename="item.beforeTitle"
+                :new-filename="item.afterTitle"
+              />
+            </div>
             <div v-else class="diff-values" :class="{ 'is-complex': item.complex }">
-              <div class="diff-pane diff-before">
+              <div class="diff-pane diff-before 2">
                 <div class="diff-pane-title">{{ item.beforeTitle }}</div>
                 <div class="diff-value" :class="valueClass(item)">
                   <div
@@ -485,12 +511,16 @@
 import Api from "@/apis/api";
 import correctWord from "@/apis/module/correctWord";
 import { formatDate } from "@/utils/date";
+import { CodeDiff, hljs } from "v-code-diff";
+import markdown from "highlight.js/lib/languages/markdown";
 import {
   hasValidCurrentStateToken,
   normalizeSnapshotOrderedValue,
   redactSnapshotDisplayValue,
   SNAPSHOT_SECRET_REDACTED
 } from "./agentSnapshotDisplayUtils.mjs";
+
+hljs.registerLanguage("markdown", markdown);
 
 const FALLBACK_PLUGIN_NAME_KEYS = {
   SYSTEM_PLUGIN_WEATHER: "agentSnapshot.plugin.SYSTEM_PLUGIN_WEATHER",
@@ -559,6 +589,9 @@ const CHAT_HISTORY_CONF_LABEL_KEYS = {
 };
 export default {
   name: "AgentSnapshotDialog",
+  components: {
+    CodeDiff
+  },
   props: {
     visible: {
       type: Boolean,
@@ -1543,6 +1576,18 @@ export default {
       }
       return "text";
     },
+    shouldUseCodeDiff(item) {
+      return Boolean(
+        item &&
+        !item.single &&
+        (item.displayType === "markdown" || item.complex || item.field === "summaryMemory")
+      );
+    },
+    codeDiffLanguage(item) {
+      return item?.displayType === "markdown" || item?.field === "summaryMemory"
+        ? "markdown"
+        : "json";
+    },
     valueClass(item) {
       return [`is-${item.displayType || "text"}`];
     },
@@ -2067,10 +2112,21 @@ export default {
 @import '@/styles/global.scss';
 
 ::v-deep .el-dialog {
-  margin-top: 6vh !important;
-  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
+  margin: 10px auto !important;
+  border-radius: 10px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  height: calc(100vh - 20px);
+  max-height: calc(100vh - 20px);
+}
+
+::v-deep .el-dialog__wrapper {
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  overflow: hidden;
 }
 
 ::v-deep .el-dialog__header {
@@ -2139,6 +2195,7 @@ export default {
 }
 
 ::v-deep .el-dialog__body {
+  overflow-y: auto;
   padding: 20px;
 }
 
@@ -2226,9 +2283,7 @@ export default {
 }
 
 .snapshot-table-wrapper {
-  max-height: 62vh;
-  overflow: auto;
-  @include scrollbar-style;
+  min-height: 420px;
 }
 
 .version-cell {
@@ -2272,11 +2327,8 @@ export default {
 }
 
 .snapshot-diff {
-  min-height: 220px;
-  max-height: 62vh;
-  overflow: auto;
+  min-height: 420px;
   padding-right: 2px;
-  @include scrollbar-style;
 }
 
 .restore-risk-alert {
@@ -2341,6 +2393,12 @@ export default {
   border-left: 0;
 }
 
+.diff-code-wrapper {
+  padding: 0 14px 1px;
+  text-align: left;
+  background: #fff;
+}
+
 .diff-pane-title {
   margin-bottom: 8px;
   color: #3d4566;
@@ -2386,6 +2444,43 @@ export default {
   line-height: 1.45;
   white-space: pre-wrap;
   text-align: left;
+}
+
+::v-deep .code-diff-view,
+::v-deep .code-diff-view .blob-num,
+::v-deep .code-diff-view .blob-code-inner,
+::v-deep .code-diff-view .file-header {
+  font-family: Avenir, Helvetica, Arial, sans-serif;
+}
+
+::v-deep .code-diff-view::-webkit-scrollbar {
+  width: 6px;
+}
+
+::v-deep .code-diff-view::-webkit-scrollbar-thumb {
+  background: #a1c9fd;
+  border-radius: 3px;
+}
+
+::v-deep .code-diff-view::-webkit-scrollbar-track {
+  background: #f0f3fe;
+  border-radius: 3px;
+}
+
+::v-deep .code-diff-view .blob-code-inner {
+  font-size: 13px;
+  line-height: 1.45;
+  font-style: normal;
+}
+
+::v-deep .code-diff-view .hljs-emphasis,
+::v-deep .code-diff-view em {
+  font-style: normal !important;
+}
+
+::v-deep .code-diff-view .diff-table .blob-code-deletion .x,
+::v-deep .code-diff-view .diff-table .blob-code-addition .x {
+  background-color: transparent;
 }
 
 .function-change-view {

@@ -1,0 +1,52 @@
+diff --git a/core/connection.py b/core/connection.py
+--- a/core/connection.py
++++ b/core/connection.py
+@@ -728,6 +728,8 @@
+         负样本（直接回答示例）放在动态 system 之后、紧挨真实用户消息，
+         确保模型在处理用户消息前最后看到的是"不调工具"的行为模式。
+         """
++        if guide and guide.agent_owned(self):
++            return
+         enabled = self.config.get("tool_call_fewshot_enabled", False)
+         if isinstance(enabled, str):
+             enabled = enabled.strip().lower() in {"1", "true", "yes", "on"}
+@@ -1330,7 +1332,10 @@
+                     if sessions.active and sessions.active.sentence_id != self.sentence_id:
+                         sessions.cancel("new_turn")
+                 self.loop.call_soon_threadsafe(cancel_previous_vision)
+-            self.dialogue.put(Message(role="user", content=query))
++            if not (guide and guide.internal_turn(self)):
++                self.dialogue.put(Message(role="user", content=query))
++            if guide:
++                guide.trim_connection(self)
+             self.tts.tts_text_queue.put(
+                 TTSMessageDTO(
+                     sentence_id=current_sentence_id,
+@@ -1357,12 +1362,13 @@
+             )
+             force_final_answer = True
+             # 添加系统指令，要求 LLM 基于现有信息回答
+-            self.dialogue.put(
+-                Message(
+-                    role="user",
+-                    content="[系统提示] 已达到最大工具调用次数限制，请你基于目前已经获取的所有信息，直接给出最终答案。不要再尝试调用任何工具。",
+-                )
+-            )
++            if not (guide and guide.agent_owned(self)):
++                self.dialogue.put(
++                    Message(
++                        role="user",
++                        content="[系统提示] 已达到最大工具调用次数限制，请你基于目前已经获取的所有信息，直接给出最终答案。不要再尝试调用任何工具。",
++                    )
++                )
+ 
+         # Define intent functions
+         functions = None
+@@ -1415,6 +1421,7 @@
+             if guide:
+                 llm_dialogue = guide.guide_announcement_messages(self, llm_dialogue, current_sentence_id)
+                 llm_dialogue = guide.playback_context_messages(self, llm_dialogue, current_sentence_id)
++                llm_dialogue = guide.request_messages(self, llm_dialogue, llm_extra_body, depth)
+ 
+             if self.intent_type == "function_call" and functions is not None:
+                 # 使用支持functions的streaming接口

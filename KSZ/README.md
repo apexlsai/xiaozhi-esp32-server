@@ -4,15 +4,27 @@
 
 测试命令、单次请求延时诊断、天气缓存对比及验收口径见 [KSZ 测试篇](testing.md)。
 
+普通问答等待模型时可由服务端先下发思考表情，行为、构建和固件要求见[请求等待表情](thinking-expression.md)。
+
 ## 场馆资产联动入口
 
 场馆、区域、信标、设备归属及工程/C端模式统一由 management 管理。启用方法、缓存生效规则和验证见 [场馆与设备联动](guide-management.md)，固件团队对接见 [导览控制协议](guide-protocol.md)。
 
 活动会话可通过 `hello.features.location_updates=true` 订阅服务端确认的位置，屏幕按独立 `guide_control/location` 消息显示楼层、区域及位置描述，并在失位、断线或有效期到达时清空；WS 与 MQTT+UDP 使用同一消息契约，详见[位置显示协议](guide-protocol.md#活动会话的位置显示)。部署时同步更新 KSZ server 和 MQTT 网关镜像：网关沿用 JSON 透传，并保证先发送设备 `hello`、后发送位置快照。未声明能力的设备保持原协议。
 
-信标自动讲解、首次播报、切换打断、冷却、位置/待播有效期和交互静默时间统一在 `KSZ/.env` 配置，变量及默认值见[信标讲解规则](guide-management.md#信标讲解规则)。修改后通过 `KSZ/compose.yml` 重新创建 server 容器；单独 `restart` 不会更新环境变量。
+屏幕位置下发同时提供 `place_name` 和旧固件兼容字段 `location_description`，两者均取当前绑定位置名称；字段更名不会要求旧固件立即升级显示解析。
+
+信标扫描、上报/保活和自动讲解参数统一在管理后端“信标配置”维护，与持久化的 `config.toml` 双向同步；小智每 5 秒通过现有鉴权接口热加载。`KSZ/.env` 的讲解参数仅作启动回退，变量及默认值见[信标讲解规则](guide-management.md#信标讲解规则)。统一由一枚有效信标触发；同位置默认共享60秒冷却、两次讲解默认间隔15秒。设备扫描与上报参数须由固件应用策略，旧固件可能需要升级。首次接入本功能需构建并重新创建 server 容器，之后调整上述配置无需重启。
 
 信标播报采用固定位置开场加模型正文，中文默认“您现在位于{location}。”；四语模板同样放在 `KSZ/.env`。专用 `guide-announcement.patch` 将开场接入同一轮 TTS，并过滤模型正文开头的问候、自我介绍和重复位置，普通聊天不受影响。
+
+自动讲解从固定开场起增量保存到当前会话历史，追问可引用已生成内容；打断、位置切换或过期后仍保留此前有效讲解。记录不代表用户已经听完，当前会话历史不提供跨连接恢复。
+
+模型按本轮意图选择讲解或简答，讲解解除默认字数限制。打断状态和播放进度可传入下一轮上下文；精确区分用户听过哪些段落需固件回执，接入及 `KSZ_NARRATION_MAX_TOKENS` 配置见[讲解模式与播放进度](narration-playback.md)。
+
+固件可在空闲后通过 `device_event/idle_greeting` 请求绑定角色主动招呼；计时、建链、去重及用户打断约定见[主动招呼协议](idle-greeting.md)。
+
+Agent 统一接管提示词与最近 20 轮历史的配置、接口、构建和回滚见 [提示词接管](prompt-owner.md)。默认不启用，先更新 Agent，再为目标智能体配置 `prompt_owner: agent` 并重新建连。
 
 ## 前置条件
 
@@ -22,6 +34,10 @@
 - 默认使用远程 ASR（Fun-ASR-Flash 或 OpenAI 兼容接口），无需下载或挂载本地 SenseVoice 模型。
 
 ## 首次构建并启动
+
+server、web、MySQL、Redis 和 MQTT 网关的镜像与容器名统一在 `KSZ/.env` 配置，完整模板见 `.env.example` 中的 `XIAOZHI_*_IMAGE` 和 `XIAOZHI_*_CONTAINER_NAME`。首次部署复制模板，已有环境补充或修改对应变量；修改后重新执行 Compose 创建容器。
+
+自定义容器名后，Compose 命令仍使用下方的服务名。延时诊断脚本通过 `--server-container`、`--mqtt-container` 指定对应容器名。
 
 ```bash
 cd /apps/xiaozhi-esp32-server/KSZ
@@ -278,6 +294,8 @@ Museum Guide Agent 接入使用智控台现有的 OpenAI VLLM，无需新增 Pro
 
 KSZ 保留上游完整返回协议：MCP `initialize` 继续下发 `vision.url` 与 `vision.token`，官方固件通过 `file` 字段上传，服务端返回 `success`、`action` 与 `response`；同时兼容旧客户端的 `image` 字段。旧端无需修改即可继续使用完整返回，启用逐句播报需要下述可选适配。
 
+KSZ 向 Agent 的语音与拍照请求统一传递 `session_id`，拍照增加 `image_id`、`image_seq` 和 `captured_at`，成功后供后续追问引用；视觉请求携带最近文字上下文。默认图片引用有效期 180 秒，换图、失败和重连受隔离保护。Agent 需配套实现共享图片缓存、指代解析与身份核验；字段、失效语义、开关和联调要求见[图片会话关联](vision-context.md)。
+
 兼容模式的手动拍照由 KSZ 向原在线连接直推播报，顺序为 `tts:start → sentence_start → 音频帧 → tts:stop`。服务端先完成启动通知并设置播放状态，再提交语音；识别或启动期间换轮、打断、断线，或者出现待处理 MCP 调用时不追加旧结果。MCP 拍照仍沿用已有工具播报链路，不重复直推。此修复无需修改固件上传接口，也不要求启用视觉流式能力。
 
 若“测试网页有声、固件按键无声”，先核对固件收到音频前是否有 `tts:start`；旧版 KSZ 手动直推缺少此通知，应重建并更新 server 后验证。HTTP `success=true` 仅说明识别成功，不保证音频已经送达设备；可使用测试器的严格播放模式检查启停顺序，再进行实机联调。
@@ -318,6 +336,20 @@ KSZ 保留上游完整返回协议：MCP `initialize` 继续下发 `vision.url` 
 - `model_name`：`fun-asr-flash-2026-06-15`
 
 官方预设 `ASR_Qwen3Flash` 的 `qwen3-asr-flash` 同样可用，保持原地址和模型名即可；只有切换 Fun-ASR-Flash 时才需改为上述值。KSZ 适配保留两种请求协议，云端等待采用异步 HTTP，并限制整次请求默认最多60秒，避免识别服务卡住时阻塞所有设备握手。实现位于 `patches/qwen-fun-asr.patch`，由 `Dockerfile-server` 在源码构建阶段检查并应用，上游工作区源码保持原样。
+
+儿童、青年、专家等不同语言角色可共用现有 `ASR_Qwen3Flash`，无需增加韩语专用选项。连接打开音频通道时，Qwen/Fun ASR 按当前绑定角色为该连接设置识别语言：中英日韩分别为 `zh`、`en`、`ja`、`ko`；其他语种保留模型原设置。`qwen3-asr-flash` 发送 `parameters.asr_options.language`，Fun-ASR-Flash 发送 `parameters.language_hints`。公共模型配置、API Key 和其他连接均不受影响。
+
+配置下发始终携带设备实际绑定的智能体名称，避免扩展属性缺失或残留旧名称时误用中文回复。更新镜像后，已有数据库可先备份相关模型、角色和设备属性，再在 `KSZ/` 执行以下迁移，将三个正式韩语角色的通用 OpenAI ASR 或旧韩语专用选项改为现有千问配置，清理无人引用的旧选项并补齐韩语设备属性。下面使用 MySQL `3307`、Redis `6379` 端口，须与实际部署一致：
+
+```bash
+docker compose exec -T xiaozhi-esp32-server-db sh -c \
+  'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -h127.0.0.1 -P3307 -uroot --default-character-set=utf8mb4' \
+  < mysql-init/100-korean-asr.sql
+docker compose exec xiaozhi-esp32-server-redis redis-cli DEL server:config model:data:ASR_Qwen3Flash_Korean
+docker compose restart xiaozhi-esp32-server
+```
+
+模拟器使用正式角色时须关闭“测试智能体”；语言下拉框只选择目标，须点击“切换语言”，等待“已确认”及自动重连后才生效。`dev=true` 请求名称以“-测试”结尾的独立智能体，目标不存在会返回失败。
 
 ASR HTTP 客户端在同一设备会话内跨轮复用，连接默认空闲保留300秒，建连超时20秒，设备断开时释放连接池。可在模型配置 JSON 中设置 `keepalive_expiry`、`connect_timeout`、`timeout`（均以秒计）；空闲保留时间受云端主动断开限制，不能保证连接持续存在，也不会自动发送保活识别请求。整次请求超时与连接空闲过期分别控制。
 
@@ -474,6 +506,78 @@ Body: beacon-abc-123
 ```
 
 兼容的通用接口仍可用：`GET /xiaozhi/device/attribute/{deviceId}` 与 `PUT /xiaozhi/device/attribute/{deviceId}/{attrKey}`。
+
+### 首次 OTA 自动临时绑定
+
+KSZ 默认启用，新设备首次 OTA 自动加入 `儿童-韩语-测试`，不再下发 6 位验证码。`KSZ/.env` 可显式指定目标：
+
+```dotenv
+KSZ_OTA_AUTO_BIND_AGENT_NAME=儿童-韩语-测试
+```
+
+该名称必须在此环境所有账号中唯一存在，设备归属于这个智能体的管理账号。未设置变量时使用默认目标，显式设置 `KSZ_OTA_AUTO_BIND_AGENT_NAME=` 才恢复原有验证码绑定；目标不存在、重名或没有所属账号时，首次 OTA 返回错误，不返回连接配置，也不自动创建智能体。
+
+新设备首次访问现有 `POST /xiaozhi/ota/` 时，后台登记 MAC、硬件型号和固件版本，绑定临时智能体并同步设备属性中的智能体名称，然后直接返回连接配置，无需输入验证码或修改固件。首次上报须包含原有 `application.version`。自动登记设备默认关闭固件自动升级，避免登记时顺带触发刷机；后续可在设备管理中单独开启。
+
+已登记设备保持当前归属，手动改绑后重连不会返回临时智能体；即使临时目标后来被改名或删除，也不影响已有设备获取连接配置。连接前携带 `language_change` 或 `profile_change` 时，先完成首次登记，再沿用现有按钮选择逻辑。同一 MAC 并发首次上报只创建一条登记，不覆盖同时完成的手动绑定。
+
+从该环境的 `KSZ/` 目录重建管理端生效：
+
+```bash
+docker compose up -d --build xiaozhi-esp32-server-web
+```
+
+回退时将配置留空并重建管理端，已登记设备保持不变。删除设备登记后，下次 OTA 会重新按新设备分配；设备停用仍需单独的后台权限控制。
+
+### 蜂窝小区上报与读取
+
+设备启动时向 `POST /xiaozhi/ota/` 上报，使用 `Device-Id` 请求头关联设备，蜂窝信息放在请求体的 `board.cell` 中：
+
+```json
+{"board":{"type":"ksz-traveler-esp32p4","cell":{"valid":1,"stat":1,"op":1,"mcc":"460","mnc":"00","act":7,"lac":10158,"cellid":88090510}}}
+```
+
+上述片段合并到原有 OTA 请求，继续携带 `application` 等字段。`mcc`、`mnc` 保留字符串及前导零，`lac`、`cellid` 使用长整数；兼容小区信息中的可选十六进制字符串 `tac`、`ci`。
+
+最近一次明确携带 `cell` 的上报按设备保存在 Redis 中，有效期24小时；缺少 `cell` 时不覆盖或续期，`valid=0` 会更新为无效状态。查询结果中的 `reportedAt` 是服务端接收时间（Unix 毫秒），表示上报快照；未上报或已过期返回 `data: null`。日志记录 MAC 和 `board.cell`，缓存写入失败不会阻断 OTA。
+
+使用设备所属用户的智控台登录令牌查询：
+
+```bash
+curl 'http://127.0.0.1:8002/xiaozhi/device/80:f1:b2:d4:ce:64/cell' \
+  -H 'Authorization: Bearer <TOKEN>'
+```
+
+成功结果的 `data` 包含 `deviceId`、`boardType`、`reportedAt` 和原始 `cell`。接口仅允许设备所属用户读取，`valid`、`stat` 按设备原值返回。
+
+改动由 `KSZ/Dockerfile-web` 应用补丁并覆盖 `KSZ/manager-api/src`。基站定位同时启用下节的数据库迁移；重建管理端后，设备下次 OTA 上报即可接收：
+
+```bash
+docker compose -f KSZ/compose.yml up -d --build xiaozhi-esp32-server-web
+docker compose -f KSZ/compose.yml logs -f --tail=100 xiaozhi-esp32-server-web | rg '80:f1:b2:d4:ce:64.*board.cell'
+```
+
+### 基站定位、数据库缓存与城市兜底
+
+小智使用设备实际上报的 `board.cell` 查询[探数基站接口](https://www.tanshuapi.com/market/detail-80)。密钥只配置在服务端 `KSZ/.env` 的 `KSZ_TANSHU_API_KEY`，不放入固件、提示词或日志。设置 `KSZ_CELL_LOCATION_ENABLED=1` 后重建管理端和 Python 服务端；默认关闭外部查询。配置项见 `.env.example`。
+
+管理端启动时由 Liquibase 创建 `ksz_device_location` 和 `ksz_cell_location_cache`。前者按设备保存最新 cell 上报、定位模式及配置城市，后者按 MCC、MNC、接入制式、LAC 和 Cell ID 保存基站结果。多个设备连接同一基站时共用结果，服务重启和断线重连不触发重复外部查询。基站缓存默认30天，设备上报默认24小时有效；缓存过期才重查，基站变化先查对应缓存。数据库中的查询租约避免并发重复请求，失败默认60秒后重试。旧 Redis 上报在首次解析时可导入 MySQL，Redis 故障不影响已持久化的有效上报。
+
+Python 服务端每次连接时读取管理端位置，完成首次读取后每分钟检查一次更新。位置到达后更新现有 system 中的位置上下文，不新增历史消息；首次读取超时或失败且尚未取得城市时按未知位置处理。设备定位过期、无效或查询失败时使用该设备的配置城市，再使用显式配置的 `KSZ_LOCATION_DEFAULT_CITY`，均不回退到4G出口 IP。默认城市仅用于本地查询，不声称是实际定位；没有兜底城市时询问用户。没有 cell 上报、使用 `cell` 模式且未配置单设备城市的 WiFi 设备保留原 IP 定位。用户明确指定的查询城市始终优先。
+
+`POST /xiaozhi/config/device-location` 使用小智现有 `server.secret` 服务间鉴权，Body 为 `{"deviceId":"80:f1:b2:d4:ce:64"}`。返回 `source`（`cell`、`fixed`、`default`、`unknown` 或 `ip`）、`city`、`position`、`locatedAt`、`expiresAt`、`cellReported`、`status` 和 `retryAt`；时间均为 Unix 毫秒。城市、位置状态和天气工具共用该结果。
+
+设备连接时并行读取 management 场馆策略与基站定位，在 `hello` 完成前等待首次结果；基站读取最多等待10秒，失败后继续普通对话并在后台重试。绑定场馆名称、简介、业务编号与基站返回的地址、WGS84 坐标、覆盖半径、定位时间和有效期同时进入 Agent 的系统消息，普通问答无需等待信标。普通位置问答按接口地址回答到行政区、街道及附近道路，不主动播报定位来源、坐标和覆盖半径；用户追问详情时再提供。拍照请求复用当前连接的有效位置；每轮重新检查场馆授权和位置有效期。场馆绑定说明服务归属，具体楼层和展区仍以有效信标为准。
+
+同样鉴权的 `POST /xiaozhi/config/device-location/settings` 可保存单设备配置：
+
+```json
+{"deviceId":"80:f1:b2:d4:ce:64","mode":"cell","city":"深圳市"}
+```
+
+`cell` 表示优先基站定位、失败以 `city` 兜底；`fixed` 表示固定场馆城市且不调用基站 API；`disabled` 表示不调用基站 API并使用配置城市或未知位置。`fixed` 必须填写城市。关闭全局查询开关后，蜂窝设备仍遵循兜底规则。清空单设备城市传 `null`，显式传空字符串可禁用全局默认城市对该设备的兜底。模式和城市变更最迟一分钟作用于已连接会话。
+
+当前按已确认的中国移动/联通 MCC/MNC 映射适配探数 `mnc=0/1`，注册状态仅接受 `stat=1/5` 且 `valid=1`；中国电信、其他国家或不支持的制式走配置兜底，不把 LTE MNC 误作电信 SID。`mcc/mnc` 保留原始字符串，API 参数按接口定义转换。返回坐标为 WGS84，`radius` 是基站覆盖半径，不能作为设备精确道路、楼层或房间定位；室内信标定位继续独立使用。移动设备应在小区变化时重新上报，避免持续使用开机位置。
 
 ### 记忆模式选择
 
@@ -706,7 +810,9 @@ HTTP 层恒为 `200`，业务成败看 JSON 的 `code`（`0` 成功，非 `0` �
 
 ### 信标位置语音导览
 
-设备应通过 WebSocket 上报 `device_event` 的 `beacon_change`。信标以 MAC 地址作为 `beacon_mac.beacon_id` 传递，server 会使用该 MAC 查询固定位置接口：
+启用 management 联动时，首次有效定位默认讲解，同信标重复上报不重播；设 `KSZ_GUIDE_ANNOUNCE_ON_FIRST_BEACON=0` 可恢复首次只建立基准。联动模式的校验、有效期和新固件协议见[场馆与设备联动](guide-management.md)及[导览控制协议](guide-protocol.md)。
+
+设备可通过 WebSocket 上报 `device_event` 的 `beacon_change`。信标以 MAC 地址作为 `beacon_mac.beacon_id` 传递；未启用 management 联动时，旧逻辑使用该 MAC 查询固定位置接口：
 
 ```json
 {
@@ -724,7 +830,7 @@ HTTP 层恒为 `200`，业务成败看 JSON 的 `code`（`0` 成功，非 `0` �
 - `beacon_mac.rssi`：可选，随事件持久化，当前不参与服务端导览触发判断。
 - `timestamp`：可选事件时间戳，用于事件记录。
 
-首个有效 MAC 仅建立当前位置上下文；同一设备后续上报不同 MAC 时，才会触发当前位置和附近展品的自动语音导览。原有 `payload.beacon_id` 报文仍兼容，但新接入设备应统一使用 `beacon_mac.beacon_id`。
+未启用 management 联动的旧逻辑中，首个有效 MAC 仅建立当前位置上下文；同一设备后续上报不同 MAC 时，才会触发当前位置和附近展品的自动语音导览。原有 `payload.beacon_id` 报文仍兼容，但新接入设备应统一使用 `beacon_mac.beacon_id`。
 
 位置查询接口：
 
@@ -732,18 +838,18 @@ HTTP 层恒为 `200`，业务成败看 JSON 的 `code`（`0` 成功，非 `0` �
 GET http://127.0.0.1:14000/api/v1/beacons/by-beacon-id/{beaconId}
 ```
 
-接口响应至少应包含匹配的 `beacon_id`，以及 `floor`、`area`、`location_description` 中的一项。例如：
+接口响应至少应包含匹配的 `beacon_id`，以及 绑定位置名称 `place_name`（楼层 `floor` 和区域 `area` 可选）。例如：
 
 ```json
 {
   "beacon_id": "jx-pxm-003",
   "floor": "2F",
   "area": "古代文明展厅",
-  "location_description": "北墙 A12 展柜旁"
+  "place_name": "北墙 A12 展柜旁"
 }
 ```
 
-KSZ Compose 使用 Host 网络，故 `127.0.0.1:14000` 指向宿主机的位置服务。首个信标仅建立当前位置；后续实际变更会自动发起“当前位置与附近展品”的对话，并沿用现有 TTS 输出。用户随后询问当前位置或附近展品时，会使用当前信标位置上下文。
+KSZ Compose 使用 Host 网络，故 `127.0.0.1:14000` 指向宿主机的位置服务。上述旧逻辑中首个信标仅建立当前位置；后续实际变更会自动发起“当前位置与附近展品”的对话，并沿用现有 TTS 输出。用户随后询问当前位置或附近展品时，会使用当前信标位置上下文。
 
 位置服务在 2 秒内未响应、返回 404 或响应无效时，设备属性仍会持久化；自动播报仅提示已进入新区域，不会编造具体位置或展品。每个连接对成功结果缓存 60 秒，失败结果 5 秒后允许重试。
 
@@ -985,6 +1091,8 @@ KSZ 服务镜像构建时应用 `patches/vision-language-timeout.patch`。拍照
 
 `server/ksz_guide/prompt.py` 为快速初始化和增强提示词统一附加语言规则，同时对齐发送给 Museum Guide Agent 的 `language` 参数。语言按当前绑定智能体名称后缀、设备扩展属性 `language`、连接语言依次确定，最终回退 `zh-CN`；不根据游客的 ASR 文本或 TTS 音色猜测语言。游客换用其他语言提问不会修改绑定语言，显式翻译请求允许译文使用目标语言。角色与语言切换继续走智能体换绑流程。
 
+助手以当前设备的可信位置回答“我在哪、你在哪里”，保留角色名称与语气，不虚构感知或设备动作。位置口播只使用行政区、街道、附近道路或有效信标对应的楼层与展区；完整定位字段保留在结构化请求中，模型文字上下文不包含坐标或覆盖半径。询问定位方式时使用“通过 AI 综合计算得到位置信息”的说明。未核验的场馆、产品细节引导咨询现场工作人员，不解释资料或证据不足；已有答案不机械追加该提示。公司名称逐字沿用后台场馆配置，配置拼写错误应修正数据，不能依靠模型猜测纠错。需配套 Agent 的四语事实边界与视觉回答规则；排查实例见 [设备身份与品牌纠错](device-identity.md)。
+
 `patches/multilingual-sentences.patch` 接入 `server/ksz_guide/sentences.py`，供通用 TTS 文本队列和视觉 SSE 共用。每轮 TTS 收到 `FIRST` 时固定当前语言，视觉请求使用该请求解析出的语言：中文及方言、英文、日文、韩文分别选择标点规则，同时兼容混用的句末标点。多句一起到达时逐句处理，不再合并到最后一个同类标点；英文与韩文句号可在整轮结束前触发合成。
 
 分句器保护小数、版本号、域名和常见英文缩写；ASCII 句点处于增量末尾时等待后续字符或流结束，以免将下一块中的小数部分误切开。中文、日文、韩文、英文分别在累计至少 12、8、20、40 个字符后的本语言逗号处分段，括号内枚举及数字分组不切开；英文和韩文超过 120、60 个字符时也可在词间空格处分段，不截断单词，中日文不按字数强切。完整相机等待词仍即时提交，普通聊天首句保留按逗号提前合成的行为。打断、断线和旧轮次消息不会继续播报剩余句子。原生流式 Provider 的供应商内部分句仍由该 Provider 控制。
@@ -992,3 +1100,9 @@ KSZ 服务镜像构建时应用 `patches/vision-language-timeout.patch`。拍照
 回归测试位于 `server/tests/test_prompt_policy.py` 和 `server/tests/test_multilingual_sentences.py`，覆盖四语逐字符/多句增量、缩写与数字跨块、语言换绑、打断、断线及情绪切换。Museum Guide Agent 的配套修改移除追加上下文中的冲突人设，并在下游 Tools 推理载荷末尾按请求语言补充简短系统提醒；提醒不写入对话历史，也不改变工具结果轮的判定或原始工具消息顺序。提示词不能保证模型对所有输入绝不偏离，需结合真实模型验证语言遵循情况。
 
 视觉链路规划、直接回答模式与拍照延迟基线见 [视觉路线](vision-roadmap.md)。Agent 使用 `VISION_ANSWER_MODE=direct`（默认）由 VLM 直接流式回答，`structured` 恢复原两阶段流程；更改 Agent 配置后需重新创建对应容器。
+
+### 新闻与联网检索
+
+新闻播报默认先访问配置主源，失败才切换 RSS；用户指定来源或类别时严格遵守，不混入其他新闻。娱乐圈等话题新闻及具体事件的最新进展使用联网搜索，工具描述兼容旧模板配置并按连接隔离。Agent 需配套新闻路由补丁，保留热搜、事件查询的工具入口，并允许话题误入新闻工具后续调搜索。小智与实际使用的 Agent 实例均需更新；配置、两端构建与验收结果见[新闻与联网检索](news-retrieval.md)。
+
+韩语可使用独立的 `ASR_Qwen3Flash_Korean`（“Qwen3Flash韩语专用”）配置：复制现有千问 API 地址、密钥和模型参数，在配置 JSON 中增加 `"language": "ko"`，再让儿童、青年、专家三个韩语智能体选择该语音识别模型。`qwen3-asr-flash` 会将其发送为 `parameters.asr_options.language: ko`；Fun-ASR-Flash 对应 `parameters.language_hints: [ko]`。当前表单未展示独立语言字段，需要在模型配置 JSON 中维护。指定语种适合固定韩语输入，混合语言输入应使用自动识别配置。

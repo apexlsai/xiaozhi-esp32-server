@@ -9,6 +9,7 @@ from core.utils.tts_emotion import strip_emotion_markers
 
 from .presence import connection_is_open
 from .prompt import LANGUAGE_NAMES, response_language
+from .playback import record_response_text
 from .tts import tts_complete_sentence
 
 
@@ -88,13 +89,13 @@ class GuideAnnouncement:
         self.socket = conn.websocket
         self.valid = valid
         self.language = response_language(conn)
-        self.location = "，".join(part.strip() for part in (beacon.floor, beacon.area, beacon.location_description)
-                                 if part.strip())
+        self.location = beacon.to_prompt_context()
         template = settings.location_template(self.language)
         self.prefix = template.format(location=self.location)
         self.filter = OpeningFilter(self.location, self.prefix)
         self.sentence_id = None
         self.parts = []
+        self.history_message = None
 
     def owns_turn(self):
         return (self.sentence_id is not None and self.conn.sentence_id == self.sentence_id
@@ -106,6 +107,9 @@ class GuideAnnouncement:
         if not self.owns_turn() or not self.valid() or not self.location:
             return False
         self.parts.append(self.prefix)
+        self.history_message = Message(role="assistant", content=self.prefix)
+        self.conn.dialogue.put(self.history_message)
+        record_response_text(self.conn, self.prefix, sentence_id)
         self.conn.tts.store_tts_text(sentence_id, self.prefix)
         tts_complete_sentence(self.conn, self.prefix, sentence_id)
         return True
@@ -118,7 +122,9 @@ class GuideAnnouncement:
             if len(self.parts) == 1 and self.language in {"en", "ko"}:
                 output = " " + output
             self.parts.append(output)
-            self.conn.tts.store_tts_text(self.sentence_id, "".join(self.parts))
+            self.history_message.content = "".join(self.parts)
+            record_response_text(self.conn, self.history_message.content, self.sentence_id)
+            self.conn.tts.store_tts_text(self.sentence_id, self.history_message.content)
         return output
 
     def finish(self):
@@ -128,8 +134,6 @@ class GuideAnnouncement:
             remaining = self.accept("", final=True)
             if remaining:
                 tts_complete_sentence(self.conn, remaining, self.sentence_id)
-            if self.parts and self.valid():
-                self.conn.dialogue.put(Message(role="assistant", content="".join(self.parts)))
         finally:
             if self.owns_turn():
                 self.conn.tts.tts_text_queue.put(TTSMessageDTO(self.sentence_id, SentenceType.LAST, ContentType.ACTION))
@@ -170,6 +174,9 @@ def filter_guide_announcement_text(conn, text, sentence_id):
 
 
 def guide_announcement_messages(conn, messages, sentence_id):
+    from .prompt_owner import agent_owned
+    if agent_owned(conn):
+        return messages
     turn = _turn(conn, sentence_id)
     if turn is None:
         return messages
@@ -177,12 +184,17 @@ def guide_announcement_messages(conn, messages, sentence_id):
         f"This is an automatic beacon narration in {LANGUAGE_NAMES[turn.language]}. "
         "The device already speaks this exact location introduction: "
         f"{json.dumps(turn.prefix, ensure_ascii=False)}. "
-        "Generate only the continuation: one or two short factual sentences about this location or nearby exhibits. "
+        "Use narration mode. Generate a complete, coherent explanation about this location or nearby exhibits. "
+        "Default word counts and one-or-two-sentence limits do not apply; let reliable evidence determine length. "
         "Do not greet, welcome, introduce yourself, repeat the visitor's location, or ask a follow-up question. "
         "Use available evidence and tools when needed; never invent exhibits or facts. "
         "If no relevant facts are available, return no additional narration."
     )
     result = [dict(message) for message in messages]
+    if (turn.history_message is not None and result
+            and result[-1].get("role") == "assistant"
+            and result[-1].get("content") == turn.history_message.content):
+        result.pop()
     system = next((message for message in result if message.get("role") == "system"), None)
     if system is None:
         result.insert(0, {"role": "system", "content": rule})

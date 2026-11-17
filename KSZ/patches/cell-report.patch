@@ -1,0 +1,59 @@
+diff --git a/main/manager-api/src/main/java/xiaozhi/modules/device/dto/DeviceReportReqDTO.java b/main/manager-api/src/main/java/xiaozhi/modules/device/dto/DeviceReportReqDTO.java
+--- a/main/manager-api/src/main/java/xiaozhi/modules/device/dto/DeviceReportReqDTO.java
++++ b/main/manager-api/src/main/java/xiaozhi/modules/device/dto/DeviceReportReqDTO.java
+@@ -157,5 +157,8 @@
+ 
+         @Schema(description = "MAC 地址")
+         private String mac;
++
++        @Schema(description = "蜂窝小区信息")
++        private DeviceCellInfo cell;
+     }
+ }
+diff --git a/main/manager-api/src/main/java/xiaozhi/modules/device/controller/OTAController.java b/main/manager-api/src/main/java/xiaozhi/modules/device/controller/OTAController.java
+--- a/main/manager-api/src/main/java/xiaozhi/modules/device/controller/OTAController.java
++++ b/main/manager-api/src/main/java/xiaozhi/modules/device/controller/OTAController.java
+@@ -30,6 +30,7 @@
+ import xiaozhi.modules.device.dto.DeviceReportReqDTO;
+ import xiaozhi.modules.device.dto.DeviceReportRespDTO;
+ import xiaozhi.modules.device.entity.DeviceEntity;
++import xiaozhi.modules.device.service.DeviceCellService;
+ import xiaozhi.modules.device.service.DeviceService;
+ import xiaozhi.modules.sys.service.SysParamsService;
+ 
+@@ -41,6 +42,7 @@
+ public class OTAController {
+     private final DeviceService deviceService;
+     private final SysParamsService sysParamsService;
++    private final DeviceCellService deviceCellService;
+ 
+     @Operation(summary = "OTA版本和设备激活状态检查")
+     @PostMapping
+@@ -63,6 +65,7 @@
+         if (eventError != null) {
+             return createResponse(eventError);
+         }
++        deviceCellService.record(deviceId, deviceReportReqDTO);
+         return createResponse(deviceService.checkDeviceActive(deviceId, clientId, deviceReportReqDTO));
+     }
+ 
+diff --git a/main/manager-api/src/test/java/xiaozhi/modules/device/controller/OTAControllerTest.java b/main/manager-api/src/test/java/xiaozhi/modules/device/controller/OTAControllerTest.java
+--- a/main/manager-api/src/test/java/xiaozhi/modules/device/controller/OTAControllerTest.java
++++ b/main/manager-api/src/test/java/xiaozhi/modules/device/controller/OTAControllerTest.java
+@@ -14,6 +14,7 @@
+ 
+ import xiaozhi.modules.device.dto.DeviceReportReqDTO;
+ import xiaozhi.modules.device.dto.DeviceReportRespDTO;
++import xiaozhi.modules.device.service.DeviceCellService;
+ import xiaozhi.modules.device.service.DeviceService;
+ import xiaozhi.modules.sys.service.SysParamsService;
+ 
+@@ -73,7 +74,7 @@
+     }
+ 
+     private OTAController controller(DeviceService deviceService) {
+-        return new OTAController(deviceService, mock(SysParamsService.class));
++        return new OTAController(deviceService, mock(SysParamsService.class), mock(DeviceCellService.class));
+     }
+ 
+     private DeviceReportReqDTO request() {

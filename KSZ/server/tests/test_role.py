@@ -31,6 +31,11 @@ def handler_module(*, rebind=None, send=None):
     module = ModuleType("core.handle.deviceEventHandle")
     module._do_rebind = rebind or AsyncMock()
     module._send_json = send or AsyncMock()
+
+    async def resolve_current_agent_name(conn, current_agent_name):
+        return current_agent_name or (conn.device_attributes or {}).get("agent_name")
+
+    module._resolve_current_agent_name = resolve_current_agent_name
     return module
 
 
@@ -74,6 +79,39 @@ class RoleRebindTests(unittest.IsolatedAsyncioTestCase):
             conn, "agent_rebind", "儿童-英语", "青年-英语", "role-1", confirm=True,
         )
         self.assertEqual(role_patch._pending_reconnects[DEVICE]["target"], "青年-英语")
+
+    async def test_refreshes_missing_current_agent(self):
+        rebind = AsyncMock(return_value={"agentName": "青年-汉语", "reconnectRequired": True})
+        module = handler_module(rebind=rebind)
+        conn = SimpleNamespace(
+            device_id=DEVICE,
+            device_attributes={},
+            read_config_from_api=True,
+        )
+
+        async def resolve_current_agent_name(connection, current_agent_name):
+            if current_agent_name:
+                return current_agent_name
+            await connection._refresh_device_attributes()
+            return connection.device_attributes.get("agent_name")
+
+        module._resolve_current_agent_name = resolve_current_agent_name
+
+        async def refresh_attributes():
+            conn.device_attributes = {"agent_name": "儿童-汉语", "language": "zh-CN"}
+
+        conn._refresh_device_attributes = refresh_attributes
+        with patch.dict(sys.modules, {"core.handle.deviceEventHandle": module}):
+            handled = await role_patch.handle_role_rebind(conn, {
+                "event": "agent_rebind",
+                "request_id": "role-refresh",
+                "payload": {"role": "youth"},
+            })
+
+        self.assertTrue(handled)
+        module._do_rebind.assert_awaited_once_with(
+            conn, "agent_rebind", "儿童-汉语", "青年-汉语", "role-refresh", confirm=True,
+        )
 
     async def test_falls_back_to_agent_language_suffix(self):
         rebind = AsyncMock(return_value={"agentName": "专家-粤语-测试"})

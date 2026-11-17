@@ -1,0 +1,18 @@
+{"roles": ["system", "user"], "systems": 1, "compiled": true, "tools": [], "tool_ids_nonempty": true, "user_rounds": 1}
+{"roles": ["system", "user"], "systems": 1, "compiled": true, "tools": [], "tool_ids_nonempty": true, "user_rounds": 1}
+{"roles": ["system", "user", "assistant", "user"], "systems": 1, "compiled": true, "tools": [], "tool_ids_nonempty": true, "user_rounds": 2}
+{"roles": ["system", "user"], "systems": 1, "compiled": true, "tools": [], "tool_ids_nonempty": true, "user_rounds": 1}
+{"roles": ["system", "user"], "systems": 1, "compiled": true, "tools": [], "tool_ids_nonempty": true, "user_rounds": 1}
+{"roles": ["system", "user"], "systems": 1, "compiled": true, "tools": [], "tool_ids_nonempty": true, "user_rounds": 1}
+{"roles": ["system", "user"], "systems": 1, "compiled": true, "tools": [], "tool_ids_nonempty": true, "user_rounds": 1}
+{"roles": ["system", "user"], "systems": 1, "compiled": true, "tools": ["get_weather", "handle_exit_intent", "web_search", "get_lunar", "get_news_from_newsnow", "play_music"], "tool_ids_nonempty": true, "user_rounds": 1}
+{"roles": ["system", "user", "assistant", "tool"], "systems": 1, "compiled": true, "tools": [], "tool_ids_nonempty": true, "user_rounds": 1}
+{"roles": ["system", "user"], "systems": 1, "compiled": true, "tools": ["get_weather", "handle_exit_intent", "web_search", "get_lunar", "get_news_from_newsnow", "play_music"], "tool_ids_nonempty": true, "user_rounds": 1}
+{"roles": ["system", "user", "assistant", "tool"], "systems": 1, "compiled": true, "tools": [], "tool_ids_nonempty": true, "user_rounds": 1}
+{"roles": ["system", "user"], "systems": 1, "compiled": true, "tools": ["get_weather", "handle_exit_intent", "web_search", "get_lunar", "get_news_from_newsnow", "play_music"], "tool_ids_nonempty": true, "user_rounds": 1}
+{"roles": ["system", "user", "assistant", "tool"], "systems": 1, "compiled": true, "tools": [], "tool_ids_nonempty": true, "user_rounds": 1}
+{"roles": ["system", "user"], "systems": 1, "compiled": true, "tools": ["get_weather", "handle_exit_intent", "web_search", "get_lunar", "get_news_from_newsnow", "play_music"], "tool_ids_nonempty": true, "user_rounds": 1}
+{"roles": ["system", "user", "assistant", "tool"], "systems": 1, "compiled": true, "tools": [], "tool_ids_nonempty": true, "user_rounds": 1}
+{"roles": ["system", "user"], "systems": 1, "compiled": true, "tools": ["get_weather", "handle_exit_intent", "web_search", "get_lunar", "get_news_from_newsnow", "play_music"], "tool_ids_nonempty": true, "user_rounds": 1}
+{"roles": ["system", "user", "assistant", "tool"], "systems": 1, "compiled": true, "tools": [], "tool_ids_nonempty": true, "user_rounds": 1}
+{"roles": ["system", "user", "assistant", "user", "assistant", "user", "assistant", "user", "assistant", "user", "assistant", "user", "assistant", "user", "assistant", "user", "assistant", "user", "assistant", "user", "assistant", "user", "assistant", "user", "assistant", "user", "assistant", "user", "assistant", "user", "assistant", "user", "assistant", "user", "assistant", "user", "assistant", "user", "assistant", "user"], "systems": 1, "compiled": true, "tools": [], "tool_ids_nonempty": true, "user_rounds": 20}

@@ -180,7 +180,7 @@ async def test_presence_only_preserves_all_legacy_guide_paths():
     assert not await handle_legacy_event(conn, {"event": "beacon_change", "payload": {"beacon_id": beacon().mac}})
     assert not await handle_control_message(conn, {"type": "guide_control"})
     values = {"last_beacon_id": "legacy-beacon", "venue_id": "legacy-venue"}
-    assert filter_context(conn, values) is values
+    assert filter_context(conn, values) == {**values, "session_id": conn.session_id}
     assert vision_context(server, DEVICE, values) is values
     assert refresh_location(conn) is False
     await runtime.tick(refresh=True)

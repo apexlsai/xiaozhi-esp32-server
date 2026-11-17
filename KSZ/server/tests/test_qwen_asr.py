@@ -11,7 +11,7 @@ import unittest
 import wave
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 
@@ -170,6 +170,41 @@ class QwenASRTests(unittest.IsolatedAsyncioTestCase):
         with self.client(handler):
             result = await self.provider(model_name="fun-asr-flash-2026-06-15").speech_to_text_wrapper([self.pcm], "probe")
         self.assertEqual(result[0], "Fun识别成功。")
+
+    async def test_shared_model_uses_each_connections_bound_language(self):
+        extension = ModuleType("core.utils.ksz_extension")
+        extension.guide = SimpleNamespace(response_language=lambda conn: conn.language)
+        languages = {"zh-CN": "zh", "en": "en", "ja": "ja", "ko": "ko"}
+        for model in ("qwen3-asr-flash", "fun-asr-flash-2026-06-15"):
+            shared = {"model_name": model, "language": "auto"}
+            providers = [self.provider(**shared) for _ in languages]
+            with patch.dict(sys.modules, {extension.__name__: extension}), patch.object(
+                ASRProvider.__mro__[1], "open_audio_channels", new_callable=AsyncMock,
+            ) as opened:
+                await asyncio.gather(*(
+                    provider.open_audio_channels(SimpleNamespace(language=language))
+                    for provider, language in zip(providers, languages)
+                ))
+            self.assertEqual(opened.await_count, len(languages))
+            for provider, expected in zip(providers, languages.values()):
+                parameters = provider._build_payload("audio")["parameters"]
+                if model == "qwen3-asr-flash":
+                    self.assertEqual(parameters["asr_options"]["language"], expected)
+                else:
+                    self.assertEqual(parameters["language_hints"], [expected])
+            self.assertEqual(shared["language"], "auto")
+
+    async def test_unmapped_binding_or_missing_extension_preserves_model_language(self):
+        extension = ModuleType("core.utils.ksz_extension")
+        for guide in (None, SimpleNamespace(response_language=lambda conn: "zh-CN-yue")):
+            extension.guide = guide
+            provider = self.provider(language="en")
+            with patch.dict(sys.modules, {extension.__name__: extension}), patch.object(
+                ASRProvider.__mro__[1], "open_audio_channels", new_callable=AsyncMock,
+            ) as opened:
+                await provider.open_audio_channels(SimpleNamespace())
+            self.assertEqual(provider.language, "en")
+            opened.assert_awaited_once()
 
     async def test_stalled_cloud_request_keeps_loop_running_and_expires(self):
         entered = asyncio.Event()

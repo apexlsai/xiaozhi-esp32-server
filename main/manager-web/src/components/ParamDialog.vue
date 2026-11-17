@@ -2,11 +2,13 @@
   <CustomDialog
     :title="title"
     :visible.sync="visible"
-    width="600px"
+    width="720px"
     class="param-dialog-wrapper"
     @confirm="submit"
     @close="cancel"
     :confirmLoading="saving"
+    :confirmText="$t('button.ok')"
+    :cancelText="$t('button.cancel')"
   >
     <div class="dialog-container">
       <el-form :model="form" :rules="rules" ref="form" label-width="auto" label-position="left" class="param-form">
@@ -147,6 +149,7 @@ export default {
     cancel() {
       this.saving = false; // 取消时重置状态
       this.dialogKey = Date.now();
+      this.$emit('update:visible', false);
       this.$emit('cancel');
     },
 
@@ -183,36 +186,19 @@ export default {
 };
 </script>
 
-<style>
-.custom-param-dialog {
-  border-radius: 16px !important;
-  overflow: hidden;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15) !important;
-  border: none !important;
-
-  .el-dialog__header {
-    display: none;
-  }
-
-  .el-dialog__body {
-    padding: 0 !important;
-    border-radius: 16px;
-  }
-}
-</style>
-
 <style scoped lang="scss">
 .param-dialog-wrapper {
   .param-form {
     .form-item {
-      margin-bottom: 20px;
+      margin-bottom: 28px;
       :deep(.el-form-item__label) {
         color: #475569;
         font-weight: 500;
-        padding-right: 12px;
+        padding-right: 14px;
         text-align: right;
-        font-size: 14px;
+        font-size: 15px;
         letter-spacing: 0.2px;
+        line-height: 44px;
       }
     }
 
@@ -221,7 +207,7 @@ export default {
         background-color: #ffffff;
         border-radius: 8px;
         border: 1px solid #e2e8f0;
-        height: 42px;
+        height: 44px;
         padding: 0 14px;
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         font-size: 14px;
@@ -248,7 +234,7 @@ export default {
         background-color: #ffffff;
         border-radius: 8px;
         border: 1px solid #e2e8f0;
-        height: 42px;
+        height: 44px;
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         font-size: 14px;
         color: #334155;
@@ -272,7 +258,7 @@ export default {
         background-color: #ffffff;
         border-radius: 8px;
         border: 1px solid #e2e8f0;
-        padding: 12px 14px;
+        padding: 10px 14px;
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         font-size: 14px;
         color: #334155;
@@ -290,10 +276,6 @@ export default {
           font-weight: 400;
         }
       }
-    }
-
-    .remark-item :deep(.el-form-item__label) {
-      margin-top: -4px;
     }
   }
 }

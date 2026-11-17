@@ -2,6 +2,12 @@
 !KSZ/
 !KSZ/patches/
 !KSZ/patches/prompt-limit.patch
+!KSZ/patches/cell-report.patch
+!KSZ/patches/cell-location-api.patch
+!KSZ/patches/bound-agent-language.patch
+!KSZ/patches/ota-auto-bind.patch
+!KSZ/manager-api/
+!KSZ/manager-api/**
 !main/
 !main/manager-web/
 !main/manager-web/**

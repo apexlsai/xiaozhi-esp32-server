@@ -107,10 +107,16 @@ async def handle_role_rebind(conn, message):
         return True
 
     attributes = conn.device_attributes or {}
-    current_agent_name = attributes.get("agent_name")
+    from core.handle.deviceEventHandle import _resolve_current_agent_name
+
+    current_agent_name = await _resolve_current_agent_name(
+        conn, attributes.get("agent_name")
+    )
     if not isinstance(current_agent_name, str) or not current_agent_name:
         await _send_error(conn, "agent_rebind", request_id, "无法获取设备当前绑定智能体")
         return True
+
+    attributes = conn.device_attributes or attributes
 
     language = attributes.get("language")
     if not isinstance(language, str) or language not in LANGUAGE_AGENT_SUFFIXES:

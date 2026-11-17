@@ -1,0 +1,91 @@
+--- a/core/connection.py
++++ b/core/connection.py
+@@ -1290,10 +1290,10 @@
+                     )
+                 elif (self.features or {}).get("emoji", True):
+                     asyncio.run_coroutine_threadsafe(
+-                        textUtils.send_emotion(
+-                            self,
+-                            event.context.emoji,
+-                            event.context.emotion,
++                        guide.send_response_emotion(
++                            self, event.context.emoji, event.context.emotion, sentence_id
++                        ) if guide else textUtils.send_emotion(
++                            self, event.context.emoji, event.context.emotion
+                         ),
+                         self.loop,
+                     )
+@@ -1326,6 +1326,8 @@
+             self.sentence_id = current_sentence_id  # 更新共享属性
+             if guide:
+                 guide.begin_response(self, current_sentence_id, query)
++                if query:
++                    guide.start_thinking(self, current_sentence_id)
+             sessions = getattr(self, "vision_sessions", None)
+             if sessions is not None and self.loop is not None:
+                 def cancel_previous_vision():
+@@ -1441,6 +1443,8 @@
+                 )
+         except Exception as e:
+             self.logger.bind(tag=TAG).error(f"LLM 处理出错 {query}: {e}")
++            if guide:
++                guide.finish_thinking_later(self, current_sentence_id)
+             return None
+ 
+         # 处理流式响应
+--- a/core/handle/sendAudioHandle.py
++++ b/core/handle/sendAudioHandle.py
+@@ -27,6 +27,10 @@
+ ):
+     if sentence_id is not None and (sentence_id != conn.sentence_id or conn.client_abort):
+         return
++    if guide:
++        await guide.finish_thinking(conn, sentence_id, restore=emotion_context is None)
++        if sentence_id is not None and (sentence_id != conn.sentence_id or conn.client_abort):
++            return
+     emotion_marker = (sentence_id, emotion_context)
+     if (
+         emotion_context is not None
+@@ -93,7 +97,7 @@
+     # 发送结束消息（如果是最后一个文本）
+     # 通话需要维持speaking状态
+     if not conn.calling and sentenceType == SentenceType.LAST:
+-        await send_tts_message(conn, "stop", None)
++        await send_tts_message(conn, "stop", None, sentence_id=sentence_id)
+         if conn.close_after_chat:
+             await conn.close()
+ 
+@@ -324,8 +328,10 @@
+     flow_control["sequence"] = sequence + 1
+ 
+ 
+-async def send_tts_message(conn: "ConnectionHandler", state, text=None):
++async def send_tts_message(conn: "ConnectionHandler", state, text=None, sentence_id=None):
+     """发送 TTS 状态消息"""
++    if sentence_id is not None and sentence_id != conn.sentence_id:
++        return
+     if text is None and state == "sentence_start":
+         return
+     message = {"type": "tts", "state": state, "session_id": conn.session_id}
+@@ -335,7 +341,9 @@
+     # TTS播放结束
+     if state == "stop":
+         # 保存当前的 sentence_id，用于后续判断是否是当前轮次
+-        current_sentence_id = conn.sentence_id
++        current_sentence_id = sentence_id or conn.sentence_id
++        if guide:
++            await guide.finish_thinking(conn, current_sentence_id)
+         # 播放提示音
+         tts_notify = conn.config.get("enable_stop_tts_notify", False)
+         if tts_notify:
+--- a/core/handle/abortHandle.py
++++ b/core/handle/abortHandle.py
+@@ -22,6 +22,8 @@
+     if feedback is not None:
+         feedback.cancel_all()
+     conn.clear_queues()
++    if guide:
++        await guide.finish_thinking(conn, sentence_id)
+     # 打断客户端说话状态
+     stop_message = {"type": "tts", "state": "stop", "session_id": conn.session_id}
+     if guide:
