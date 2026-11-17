@@ -68,3 +68,60 @@ index eecb5ea..7cff671 100644
                  if new_attrs != self.device_attributes:
                      self.device_attributes = new_attrs
                      self.device_language = self.device_attributes.get("language")
+--- a/core/handle/deviceEventHandle.py
++++ b/core/handle/deviceEventHandle.py
+@@ -165,6 +165,33 @@
+         logger.bind(tag=TAG).error(f"发送设备事件结果失败: {e}")
+ 
+ 
++async def _resolve_current_agent_name(
++    conn: "ConnectionHandler", current_agent_name: Optional[str]
++) -> Optional[str]:
++    candidates = [current_agent_name]
++    attributes = getattr(conn, "device_attributes", None)
++    if isinstance(attributes, dict):
++        candidates.append(attributes.get("agent_name"))
++    config = getattr(conn, "config", None)
++    if isinstance(config, dict):
++        candidates.append(config.get("agent_name"))
++
++    for candidate in candidates:
++        if isinstance(candidate, str) and candidate.strip():
++            return candidate.strip()
++
++    refresh = getattr(conn, "_refresh_device_attributes", None)
++    if callable(refresh) and getattr(conn, "read_config_from_api", False):
++        await refresh()
++        attributes = getattr(conn, "device_attributes", None)
++        if isinstance(attributes, dict):
++            candidate = attributes.get("agent_name")
++            if isinstance(candidate, str) and candidate.strip():
++                return candidate.strip()
++
++    return None
++
++
+ async def apply_language_change(
+     conn: "ConnectionHandler",
+     language: str,
+@@ -180,9 +207,7 @@
+             f"language 必须使用规范码: {', '.join(LANGUAGE_AGENT_SUFFIXES)}"
+         )
+ 
+-    resolved_current = current_agent_name or (conn.device_attributes or {}).get(
+-        "agent_name"
+-    )
++    resolved_current = await _resolve_current_agent_name(conn, current_agent_name)
+     resolved_target = target_agent_name or resolve_language_agent_name(
+         resolved_current, language, dev
+     )
+@@ -223,7 +248,8 @@
+ ):
+     """语言变更：改为触发智能体换绑，语言切换=智能体切换。
+ 
+-    目标智能体只按 language/dev 推导；current_agent_name 缺省从设备扩展属性读取。
++    目标智能体只按 language/dev 推导；current_agent_name 缺省从设备扩展属性读取，
++    缺少绑定名称时刷新 manager-api 后再解析。
+     language 以基础规范码随换绑事务持久化，不再用于强制翻译。
+     """
+     language = payload.get("language")
