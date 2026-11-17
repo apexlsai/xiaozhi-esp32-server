@@ -70,10 +70,11 @@ class BoundAgentLanguageTest {
         when(agents.getAgentById(agent.getId())).thenReturn(agent);
         when(attributes.getAttributesByDeviceId(device.getMacAddress())).thenReturn(stored);
 
-        Map<?, ?> result = (Map<?, ?>) service.getAgentModels(device.getMacAddress(), Map.of())
-                .get("device_attributes");
+        Map<?, ?> config = service.getAgentModels(device.getMacAddress(), Map.of());
+        Map<?, ?> result = (Map<?, ?>) config.get("device_attributes");
 
         assertEquals("青年-韩语", result.get("agent_name"));
+        assertEquals("青年-韩语", config.get("agent_name"));
         stored.forEach((key, value) -> {
             if (!key.equals("agent_name")) {
                 assertEquals(value, result.get(key));

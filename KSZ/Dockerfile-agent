@@ -12,6 +12,9 @@ RUN git apply --check /tmp/agent-news-routing.patch \
 COPY KSZ/patches/agent-prompt-owner.patch /tmp/agent-prompt-owner.patch
 RUN git apply --check /tmp/agent-prompt-owner.patch \
     && git apply /tmp/agent-prompt-owner.patch
+COPY KSZ/patches/agent-language-contract.patch /tmp/agent-language-contract.patch
+RUN git apply --check /tmp/agent-language-contract.patch \
+    && git apply /tmp/agent-language-contract.patch
 
 FROM agent-base
 COPY --from=patched-source /src/src/api/ /app/src/api/

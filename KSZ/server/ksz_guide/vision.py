@@ -1,4 +1,4 @@
-from core.utils.language import resolve_language_code_from_agent_name
+from .prompt import response_language
 
 
 VISION_MESSAGES = {
@@ -22,11 +22,8 @@ VISION_MESSAGES = {
 
 
 def vision_language(conn=None):
-    attributes = getattr(conn, "device_attributes", None) or {}
-    language = resolve_language_code_from_agent_name(attributes.get("agent_name"))
-    if language is None:
-        language = attributes.get("language") or getattr(conn, "device_language", None)
-    return language if isinstance(language, str) and language in VISION_MESSAGES else "zh-CN"
+    language = response_language(conn)
+    return language if language in VISION_MESSAGES else "zh-CN"
 
 
 def vision_message(conn=None, kind="unavailable"):

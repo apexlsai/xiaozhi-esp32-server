@@ -61,6 +61,12 @@ def test_initial_prompt_uses_device_language_when_attributes_are_not_ready():
     assert ConnectionHandler._build_llm_extra_body(conn)["language"] == "en"
 
 
+def test_config_bound_agent_name_is_used_before_device_attributes_refresh():
+    conn = connection()
+    conn.config = {"agent_name": "儿童-韩语"}
+    assert response_language(conn) == "ko"
+
+
 @pytest.mark.parametrize("path", [None, "agent-base-prompt.txt", "./agent-base-prompt.txt"])
 def test_default_template_is_replaced_without_reusing_the_upstream_template_cache(path):
     manager = PromptManager.__new__(PromptManager)

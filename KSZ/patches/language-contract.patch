@@ -1,0 +1,70 @@
+diff --git a/core/connection.py b/core/connection.py
+index eecb5ea..7cff671 100644
+--- a/core/connection.py
++++ b/core/connection.py
+@@ -1007,8 +1007,16 @@ class ConnectionHandler:
+             self.config["context_providers"] = private_config["context_providers"]
+ 
+         # 注入设备扩展属性（语言、蓝牙信标等）
+-        if private_config.get("device_attributes", None) is not None:
+-            self.device_attributes = private_config["device_attributes"] or {}
++        bound_agent_name = private_config.get("agent_name")
++        if private_config.get("device_attributes", None) is not None or (
++            isinstance(bound_agent_name, str) and bound_agent_name.strip()
++        ):
++            device_attributes = private_config.get("device_attributes")
++            if device_attributes is None:
++                device_attributes = self.device_attributes
++            self.device_attributes = dict(device_attributes or {})
++            if isinstance(bound_agent_name, str) and bound_agent_name.strip():
++                self.device_attributes["agent_name"] = bound_agent_name.strip()
+             self.device_language = self.device_attributes.get("language")
+             self.logger.bind(tag=TAG).info(
+                 f"加载设备扩展属性: {self.device_attributes}"
+@@ -1153,10 +1161,7 @@ class ConnectionHandler:
+ 
+     def _build_llm_extra_body(self) -> dict:
+         """构造传给 LLM 网关的额外设备上下文参数"""
+-        from core.handle.deviceEventHandle import (
+-            LANGUAGE_AGENT_SUFFIXES,
+-            resolve_language_code_from_agent_name,
+-        )
++        from core.handle.deviceEventHandle import resolve_language_code_from_agent_name
+ 
+         extra_body = {}
+         if self.device_id:
+@@ -1167,12 +1172,14 @@ class ConnectionHandler:
+                 self.device_attributes.get("agent_name")
+             )
+             attr_language = self.device_attributes.get("language")
+-            if language is None and attr_language in LANGUAGE_AGENT_SUFFIXES:
++            if language is None and isinstance(attr_language, str) and attr_language.strip():
+                 language = attr_language
+             if language:
+                 extra_body["language"] = language
+             if self.device_attributes.get("last_beacon_id"):
+                 extra_body["last_beacon_id"] = self.device_attributes.get("last_beacon_id")
++        if "language" not in extra_body and isinstance(self.device_language, str) and self.device_language.strip():
++            extra_body["language"] = self.device_language
+         if guide:
+             extra_body["language"] = guide.response_language(self)
+             return guide.filter_context(self, extra_body)
+@@ -1237,8 +1244,16 @@ class ConnectionHandler:
+             private_config = await get_private_config_from_api(
+                 self.config, self.device_id, client_id
+             )
+-            if private_config.get("device_attributes", None) is not None:
+-                new_attrs = private_config["device_attributes"] or {}
++            bound_agent_name = private_config.get("agent_name")
++            if private_config.get("device_attributes", None) is not None or (
++                isinstance(bound_agent_name, str) and bound_agent_name.strip()
++            ):
++                new_attrs = private_config.get("device_attributes")
++                if new_attrs is None:
++                    new_attrs = self.device_attributes
++                new_attrs = dict(new_attrs or {})
++                if isinstance(bound_agent_name, str) and bound_agent_name.strip():
++                    new_attrs["agent_name"] = bound_agent_name.strip()
+                 if new_attrs != self.device_attributes:
+                     self.device_attributes = new_attrs
+                     self.device_language = self.device_attributes.get("language")

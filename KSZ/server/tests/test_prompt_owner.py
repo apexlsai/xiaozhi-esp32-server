@@ -5,6 +5,7 @@ import pytest
 from core.utils.dialogue import Dialogue, Message
 from ksz_guide.prompt import prepare_system_prompt
 from ksz_guide.prompt_owner import agent_owned, request_messages, trim_connection
+from ksz_prompt import validate_context
 
 
 def connection(owner="agent"):
@@ -50,6 +51,30 @@ def test_internal_greeting_is_request_state_not_user_history():
     assert request_messages(conn, [], values, kind="idle_greeting") == []
     assert values["ksz_prompt_context"]["turn"]["kind"] == "idle_greeting"
     assert conn.dialogue.dialogue == []
+
+
+def test_context_uses_bound_agent_language_when_request_metadata_is_missing():
+    conn = connection()
+    conn.device_attributes = {"agent_name": "儿童-日语", "language": "zh-CN"}
+    values = {}
+    request_messages(conn, [], values)
+    assert values["ksz_prompt_context"]["language"] == "ja"
+
+
+def test_context_uses_config_bound_agent_before_stale_request_language():
+    conn = connection()
+    conn.config["agent_name"] = "儿童-韩语"
+    values = {"language": "zh-CN"}
+    request_messages(conn, [], values)
+    assert values["ksz_prompt_context"]["language"] == "ko"
+
+
+def test_prompt_context_canonicalizes_language_aliases():
+    context = validate_context({
+        "version": 1, "base_prompt": "role", "language": "ko_KR",
+        "state": {}, "turn": {},
+    })
+    assert context["language"] == "ko"
 
 
 def test_other_connections_and_legacy_history_are_not_modified():

@@ -11,6 +11,9 @@ RUN git apply --check /tmp/vision-complete-tts.patch \
 COPY KSZ/patches/ksz-prompt.patch /tmp/ksz-prompt.patch
 RUN git apply --check /tmp/ksz-prompt.patch \
     && git apply /tmp/ksz-prompt.patch
+COPY KSZ/patches/language-contract.patch /tmp/language-contract.patch
+RUN git apply --check /tmp/language-contract.patch \
+    && git apply /tmp/language-contract.patch
 COPY KSZ/patches/multilingual-sentences.patch /tmp/multilingual-sentences.patch
 RUN git apply --check /tmp/multilingual-sentences.patch \
     && git apply /tmp/multilingual-sentences.patch

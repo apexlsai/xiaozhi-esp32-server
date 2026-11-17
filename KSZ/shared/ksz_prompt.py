@@ -4,6 +4,38 @@ from copy import deepcopy
 
 
 SYSTEM_MARKER = "<ksz_agent_system_v1>"
+LANGUAGE_ALIASES = {
+    "zh": "zh-CN", "cn": "zh-CN", "chinese": "zh-CN", "zh-cn": "zh-CN",
+    "zh-tw": "zh-CN", "en": "en", "en-us": "en", "en-gb": "en", "english": "en",
+    "ja": "ja", "jp": "ja", "japanese": "ja", "ja-jp": "ja", "jp-jp": "ja",
+    "ko": "ko", "kr": "ko", "korean": "ko", "ko-kr": "ko", "ko-kp": "ko",
+    "zh-cn-yue": "zh-CN-yue", "yue": "zh-CN-yue", "zh-hk": "zh-CN-yue",
+    "zh-cn-sichuan": "zh-CN-sichuan", "zh-cn-shanghai": "zh-CN-shanghai",
+    "zh-cn-minnan": "zh-CN-minnan", "zh-cn-shanxi": "zh-CN-shanxi",
+    "中文": "zh-CN", "普通话": "zh-CN", "汉语": "zh-CN", "英语": "en",
+    "日语": "ja", "韩语": "ko", "粤语": "zh-CN-yue", "四川话": "zh-CN-sichuan",
+    "上海话": "zh-CN-shanghai", "闽南语": "zh-CN-minnan", "陕西话": "zh-CN-shanxi",
+}
+LANGUAGE_CODES = {
+    "zh-CN", "en", "ja", "ko", "zh-CN-yue", "zh-CN-sichuan", "zh-CN-shanghai",
+    "zh-CN-minnan", "zh-CN-shanxi",
+}
+
+
+def canonicalize_language(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    normalized = value.strip().replace("_", "-")
+    if normalized in LANGUAGE_CODES:
+        return normalized
+    lowered = normalized.lower()
+    if lowered in LANGUAGE_ALIASES:
+        return LANGUAGE_ALIASES[lowered]
+    if lowered.startswith("zh-cn-") and lowered[len("zh-cn-"):].isalpha():
+        return f"zh-CN-{lowered[len('zh-cn-'):]}"
+    primary = lowered.split("-", 1)[0]
+    return LANGUAGE_ALIASES.get(primary)
+
 POLICY = """Answer the user's actual question naturally. Preserve the configured identity and tone.
 Answer general knowledge, everyday questions, fiction and confidently known background directly; local retrieval is not required for these. Public knowledge about other museums, cities, companies and their history is allowed. The configured service venue describes your identity, not the permitted scope of questions. Follow the venue explicitly named by the user and their corrections; never replace it with your service venue. The subject being discussed never changes your configured identity or affiliation. Do not claim to be an official representative of another museum simply because the user asks about it.
 Verify specific venue ownership, local services, product specifications, current location and time-sensitive facts using the supplied trusted state or relevant evidence. A missing local search result does not prove an event or fact is false. Specific museum holdings, provenance, donors, dates, dimensions and current display locations need evidence connecting the exact object to the exact institution. An article about an object alone does not establish that this museum owns it. A loan or past exhibition is not permanent ownership or a current display. Do not turn old exhibition information into a current visitor route.
@@ -21,7 +53,8 @@ If tools_available is false or tool_depth_exhausted is true, answer from availab
 def validate_context(value):
     if not isinstance(value, dict) or type(value.get("version")) is not int or value["version"] != 1:
         raise ValueError("ksz_prompt_context: unsupported version")
-    if not isinstance(value.get("base_prompt"), str) or not isinstance(value.get("language"), str) or not value["language"].strip():
+    language = canonicalize_language(value.get("language"))
+    if not isinstance(value.get("base_prompt"), str) or language is None:
         raise ValueError("ksz_prompt_context: base_prompt and language are required strings")
     if not isinstance(value.get("state", {}), dict) or not isinstance(value.get("turn", {}), dict):
         raise ValueError("ksz_prompt_context: state and turn must be objects")
@@ -29,7 +62,9 @@ def validate_context(value):
         raise ValueError("ksz_prompt_context: invalid turn kind")
     if type(value.get("turn", {}).get("tool_depth_exhausted", False)) is not bool:
         raise ValueError("ksz_prompt_context: invalid depth flag")
-    return deepcopy(value)
+    context = deepcopy(value)
+    context["language"] = language
+    return context
 
 
 def trim_history(messages, limit=20):

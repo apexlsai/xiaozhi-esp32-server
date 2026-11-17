@@ -30,6 +30,7 @@ def trim_connection(conn):
 def context(conn, values, *, kind=None, depth=0):
     from .playback import playback_state
     from .integration import refresh_location
+    from .prompt import response_language
     refresh_location(conn)
     state = {key: value for key, value in values.items() if key in {
         "device_id", "venue_id", "venue_context", "last_beacon_id", "beacon_mac",
@@ -45,8 +46,9 @@ def context(conn, values, *, kind=None, depth=0):
             reply = next((item for item in reversed(playback.replies.values()) if item.interrupted), None)
             if reply is not None:
                 state["playback"] = reply.snapshot()
+    language = response_language(conn, values.get("language"))
     return {"version": 1, "base_prompt": conn.config.get("prompt") or "",
-            "language": values.get("language", "zh-CN"), "state": state,
+            "language": language, "state": state,
             "turn": {"kind": kind or ("narration" if internal_turn(conn) else "user"),
                      "tool_depth_exhausted": depth >= 5}}
 

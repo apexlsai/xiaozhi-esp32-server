@@ -1,0 +1,61 @@
+diff --git a/src/api/chat_service.py b/src/api/chat_service.py
+index 5970f18..97178f3 100644
+--- a/src/api/chat_service.py
++++ b/src/api/chat_service.py
+@@ -22,9 +22,6 @@ from src.prompts import (
+     render_language_prompt,
+     resolve_prompt_language,
+ )
+-from src.prompts.language_prompts import (
+-    canonicalize_language,
+-)
+ from src.tools.qa import (
+     build_scope_hint,
+     format_knowledge_chunks,
+@@ -32,6 +29,7 @@ from src.tools.qa import (
+ )
+ from src.dev.prompt_trace import trace_prompt_step
+ from src.tools.rag import retrieve_knowledge_tool, _build_retrieve_query
++from ksz_prompt import canonicalize_language as canonicalize_contract_language
+ from src.vision.intent import is_contextual_followup, is_conversation_recall, is_venue_location_question
+ from src.api.topic_context import answer_stays_on_topic
+ 
+@@ -541,7 +539,7 @@ def _resolve_request_language(extra_body: Optional[Dict[str, Any]]) -> str:
+     if not isinstance(raw, str) or not raw.strip():
+         logger.info("[API-CHAT] extra_body.language 缺失，回退 zh-CN")
+         return "zh-CN"
+-    canonical = canonicalize_language(raw)
++    canonical = canonicalize_contract_language(raw) or "zh-CN"
+     family = resolve_prompt_language(canonical)
+     logger.info(
+         f"[API-CHAT] extra_body.language={raw!r} → canonical={canonical} Prompt={family}"
+diff --git a/src/api/server.py b/src/api/server.py
+index cdc4fe8..df9634e 100644
+--- a/src/api/server.py
++++ b/src/api/server.py
+@@ -34,6 +34,7 @@ from pydantic import BeforeValidator
+ from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
+ 
+ from config.settings import get_settings
++from ksz_prompt import canonicalize_language as canonicalize_contract_language
+ from src.bootstrap import API_PREFLIGHT_ENV, check_api_services
+ from src.prompts import (
+     TOOLS_RESULT_FALLBACK_QUESTION,
+@@ -578,6 +579,8 @@ def _request_extra_body(body: ChatCompletionRequest) -> Dict[str, Any]:
+         value = getattr(body, key, None)
+         if value is not None:
+             extra_body.setdefault(key, value)
++    if body.ksz_prompt_context is not None:
++        extra_body["language"] = body.ksz_prompt_context["language"]
+     return extra_body
+ 
+ 
+@@ -743,7 +746,7 @@ def _tools_rag_payload(
+     messages = _inject_museum_context(messages, context)
+     language = _request_extra_body(body).get("language")
+     if isinstance(language, str) and language.strip():
+-        language = canonicalize_language(language)
++        language = canonicalize_contract_language(language) or "zh-CN"
+         messages.append({
+             "role": "system",
+             "content": render_language_prompt(language, "reply_language_guard", language=language),
