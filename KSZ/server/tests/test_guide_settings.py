@@ -31,6 +31,7 @@ def test_invalid_guide_settings_fail_with_environment_key(key, value):
 async def test_environment_configures_runtime_and_effective_device_policy(monkeypatch):
     values = {
         "KSZ_GUIDE_ENABLED": "1", "KSZ_GUIDE_PRESENCE_ENABLED": "0",
+        "KSZ_DEVICE_ENVIRONMENT": "museum",
         "KSZ_MANAGEMENT_API_URL": "http://unused/api/v1/integration",
         "KSZ_MANAGEMENT_API_TOKEN": "test-token", "KSZ_GUIDE_CONTROL_TOKEN": "x" * 32,
         "KSZ_GUIDE_AUTO_ANNOUNCE_ENABLED": " off ",

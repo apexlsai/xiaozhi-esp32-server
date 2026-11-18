@@ -296,6 +296,7 @@ async def test_management_runtime_redis_failure_is_retriable():
 async def test_presence_env_and_authenticated_http_route(monkeypatch):
     monkeypatch.setenv("KSZ_GUIDE_ENABLED", "0")
     monkeypatch.setenv("KSZ_GUIDE_PRESENCE_ENABLED", "1")
+    monkeypatch.setenv("KSZ_DEVICE_ENVIRONMENT", "museum")
     monkeypatch.setenv("KSZ_MANAGEMENT_API_URL", "http://unused/api/v1/integration")
     monkeypatch.setenv("KSZ_MANAGEMENT_API_TOKEN", "test-token")
     monkeypatch.setenv("KSZ_GUIDE_CONTROL_TOKEN", "x" * 32)
