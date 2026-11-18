@@ -6,6 +6,11 @@
 
 ## [Unreleased]
 
+### 新增
+
+- 设备元数据批量接口受 `server.secret` 保护，从 OTA 已落库的型号和固件版本读取；认证连接后及在线每30秒同步 management，MQTT 待机设备同样适用，失败保留版本并重试。
+- 新增 `KSZ_DEVICE_ENVIRONMENT` 服务端环境标识，普通实例为 `museum`、展厅为 `showroom`；元数据和运行态由服务端标记环境，与首次注册缓存独立，配套 management 冲突保护、版本展示及管理员迁移。
+
 ### 修复
 
 - 位置下发恢复 `location_description` 作为 `place_name` 的同值兼容字段，修复旧固件收到位置却读不到名称的问题；两者统一取当前绑定位置名称，覆盖 WS 与 MQTT 转发。
