@@ -14,6 +14,8 @@ RUN git apply --check /tmp/bound-agent-language.patch && git apply /tmp/bound-ag
 COPY KSZ/patches/ota-auto-bind.patch /tmp/ota-auto-bind.patch
 RUN git apply --check /tmp/ota-auto-bind.patch && git apply /tmp/ota-auto-bind.patch
 COPY KSZ/manager-api/src ./main/manager-api/src
+COPY KSZ/patches/management-navigation.patch /tmp/management-navigation.patch
+RUN git apply --check /tmp/management-navigation.patch && git apply /tmp/management-navigation.patch
 
 FROM node:18 AS web-builder
 WORKDIR /app

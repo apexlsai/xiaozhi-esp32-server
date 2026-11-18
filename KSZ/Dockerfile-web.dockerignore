@@ -6,6 +6,7 @@
 !KSZ/patches/cell-location-api.patch
 !KSZ/patches/bound-agent-language.patch
 !KSZ/patches/ota-auto-bind.patch
+!KSZ/patches/management-navigation.patch
 !KSZ/manager-api/
 !KSZ/manager-api/**
 !main/

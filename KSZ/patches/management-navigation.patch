@@ -1,0 +1,35 @@
+--- a/main/manager-web/src/components/HeaderBar.vue
++++ b/main/manager-web/src/components/HeaderBar.vue
+@@ -156,6 +156,7 @@
+ 
+       <!-- 右侧元素 -->
+       <div class="header-right">
++        <a class="management-link" href="https://manage.apexlsai.com/admin/">← 返回管理中心</a>
+         <img loading="lazy" alt="" src="@/assets/home/avatar.png" class="avatar-img" @click="handleAvatarClick" />
+         <span class="el-user-dropdown" @click="handleAvatarClick">
+           {{ userInfo.username || "加载中..." }}
+@@ -536,6 +537,14 @@
+   padding: 4px;
+ }
+ 
++.management-link {
++  color: #286553;
++  text-decoration: none;
++  font-size: 12px;
++  white-space: nowrap;
++  margin-right: 12px;
++}
++
+ .header-right {
+   display: flex;
+   align-items: center;
+--- a/main/manager-web/src/views/login.vue
++++ b/main/manager-web/src/views/login.vue
+@@ -2,6 +2,7 @@
+   <div class="welcome">
+     <el-container style="height: 100%">
+       <el-header>
++        <a href="https://manage.apexlsai.com/admin/" style="float: right; margin: 18px 24px; color: #286553; text-decoration: none; position: relative; z-index: 1;">← 返回管理中心</a>
+         <div style="
+             display: flex;
+             align-items: center;
