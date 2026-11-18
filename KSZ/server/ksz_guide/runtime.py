@@ -90,6 +90,7 @@ class GuideRuntime:
         self.presence_sequence = 0
         self.dirty_reports = {}
         self.pending_registration = set()
+        self.pending_metadata = set()
         self.presence_task = None
         self.presence_lock = asyncio.Lock()
         self.presence_retry_at = 0
@@ -125,6 +126,7 @@ class GuideRuntime:
             if observed is not None:
                 state.last_seen = max(state.last_seen, self.clock() - max(0, self.wall_clock() - observed))
         self.pending_registration.update(touched)
+        self.pending_metadata.update(mac for mac in changed if self.presence.fields(mac)["online"])
         self._mark_reports(changed)
         if self.pending_registration or self.dirty_reports:
             self._schedule_presence()
@@ -142,6 +144,7 @@ class GuideRuntime:
         self.voice_connections[conn] = (entry, is_mqtt_bridge(conn))
         self.voice_by_device.setdefault(state.mac, set()).add(conn)
         self.pending_registration.add(state.mac)
+        self.pending_metadata.add(state.mac)
         self._mark_reports({state.mac})
         self._update_ws_presence(conn)
         self._schedule_presence()
@@ -198,6 +201,10 @@ class GuideRuntime:
                             if state and policy:
                                 async with state.lock:
                                     self._apply_policy(state, policy)
+                metadata = set(self.pending_metadata)
+                if metadata and getattr(self.client, "metadata_config", None):
+                    await self.client.sync_metadata(metadata)
+                self.pending_metadata.difference_update(metadata)
                 versions = dict(self.dirty_reports)
                 reports = [self.report(self.devices[mac]) for mac in versions if mac in self.devices]
                 if reports:
@@ -845,6 +852,10 @@ class GuideRuntime:
             self.next_connection_snapshot = self.clock() + 10
         self._mark_reports(self.presence.sweep())
         states = list(self.devices.values())
+        if refresh and getattr(self.client, "metadata_config", None):
+            active = [state.mac for state in states if self.presence.fields(state.mac)["online"]
+                      or any(connection_is_open(conn) for conn in self.voice_by_device.get(state.mac, ()))]
+            await self.client.sync_metadata(active)
         if refresh and self.guide_enabled:
             macs = [state.mac for state in states if self.clock() - state.last_seen < 60 or state.owner is not None]
             try:
