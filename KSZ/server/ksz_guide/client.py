@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import time
 from collections import OrderedDict
 from urllib.parse import quote
@@ -6,12 +7,20 @@ from urllib.parse import quote
 import aiohttp
 
 from .models import Beacon, GuideError, Policy, mac_address
+from .metadata import fetch_device_metadata
+
+
+log = logging.getLogger(__name__)
 
 
 class ManagementClient:
-    def __init__(self, base_url, token, *, clock=time.monotonic, wall_clock=time.time, session=None):
+    def __init__(self, base_url, token, *, clock=time.monotonic, wall_clock=time.time, session=None,
+                 environment=None, metadata_config=None):
         self.base_url = base_url.rstrip("/")
         self.token = token
+        self.environment = environment
+        self.metadata_config = metadata_config
+        self.metadata_lock = asyncio.Lock()
         self.clock = clock
         self.wall_clock = wall_clock
         self.session = session
@@ -110,6 +119,24 @@ class ManagementClient:
         if missing:
             await asyncio.gather(*(self._fetch_policy(mac) for mac in missing))
 
+    async def sync_metadata(self, macs):
+        if not self.metadata_config or not macs:
+            return
+        async with self.metadata_lock:
+            macs = sorted({mac_address(mac) for mac in macs})
+            for start in range(0, len(macs), 100):
+                batch = macs[start:start + 100]
+                try:
+                    metadata = await fetch_device_metadata(self.metadata_config, batch)
+                    devices = [{"device_mac": mac, "environment": self.environment, **metadata[mac]}
+                               for mac in batch if mac in metadata]
+                    if devices:
+                        result = await self._request("POST", "/devices/sync", json={"devices": devices})
+                        for conflict in result.get("conflicts", []):
+                            log.warning("Device metadata environment conflict: %s", conflict)
+                except GuideError as error:
+                    log.warning("Device metadata synchronization unavailable; retrying: %s", error)
+
     async def _fetch_policy(self, mac, metadata=None):
         async def fetch():
             future = asyncio.get_running_loop().create_future()
@@ -134,6 +161,8 @@ class ManagementClient:
                             if mac in self.registered:
                                 continue
                             device = {"device_mac": mac}
+                            if self.environment is not None:
+                                device["environment"] = self.environment
                             metadata = queued[mac][0]
                             for field in ("model", "hardware_version", "firmware_version"):
                                 value = (metadata or {}).get(field) if isinstance(metadata, dict) else None
@@ -305,6 +334,8 @@ class ManagementClient:
         return beacons
 
     async def report(self, reports):
+        if self.environment is not None:
+            reports = [{**report, "environment": self.environment} for report in reports]
         for start in range(0, len(reports), 100):
             result = await self._request("POST", "/runtime-reports", json={"reports": reports[start:start + 100]})
             if result.get("runtime_available") is False:

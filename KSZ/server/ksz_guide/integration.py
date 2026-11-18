@@ -63,8 +63,13 @@ def create_runtime(server):
         raise ValueError("KSZ_MANAGEMENT_API_URL must be an HTTP(S) integration API URL")
     if not token or len(control_token) < 32:
         raise ValueError("KSZ guide requires a management token and a control token of at least 32 characters")
+    environment = os.environ.get("KSZ_DEVICE_ENVIRONMENT")
+    if environment not in {"museum", "showroom"}:
+        raise ValueError("KSZ_DEVICE_ENVIRONMENT must be museum or showroom")
     settings = GuideSettings.from_env()
-    runtime = GuideRuntime(ManagementClient(base_url, token), server, guide_enabled=guide_enabled, settings=settings)
+    client = ManagementClient(base_url, token, environment=environment,
+                              metadata_config=getattr(server, "config", {}).get("manager-api"))
+    runtime = GuideRuntime(client, server, guide_enabled=guide_enabled, settings=settings)
     runtime.control_token = control_token
     return runtime
 

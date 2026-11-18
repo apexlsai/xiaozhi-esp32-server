@@ -29,6 +29,16 @@ docker compose --env-file .env --profile mqtt up -d --no-build --pull never xiao
 
 更新源码后必须重新构建 server 和 MQTT 网关镜像；单独 `restart` 不会更新代码或容器环境变量。management 修改环境变量后也需要通过其 Compose 重新创建 API 容器。
 
+## 设备版本与环境
+
+启用导览或在线状态同步时必须设置 `KSZ_DEVICE_ENVIRONMENT`：普通实例使用 `museum`，展厅实例使用 `showroom`。该标识由服务端配置，不读取设备自报值或推断固件版本后缀。管理端先执行最新数据库迁移，再升级本实例的 manager-api 和 Python server，并重新创建 server 容器使环境变量生效。
+
+新增 `POST /xiaozhi/config/device-metadata` 批量读取接口，沿用 `/config/**` 的 `server.secret` 鉴权；请求为 `{"deviceIds":["AA:BB:CC:DD:EE:FF"]}`，每批1～100台。响应 `data` 仅包含 `device_mac`、`model`、`firmware_version`，来源为 OTA 已保存的设备记录，未知设备不返回，不暴露用户或智能体配置。
+
+设备认证连接后同步实际版本，在线设备每30秒重新读取并同步，包括 MQTT 待机。该更新独立于首次注册缓存，无需固件新增报文；短暂失败保留管理端已知版本，之后自动重试，空值不清除已知版本。
+
+管理端首次收到有效环境后固定设备归属。不同环境或缺失环境的元数据和运行态写入会在 `conflicts` 中逐设备返回原因并写入日志，保留原信息，同批其他设备继续处理。需要切换时，在管理页“设备管理”点击“迁移环境”，填写原因并确认，同时配置目标环境固件；保留资产、场馆与用途配置，新环境重新上报版本和运行态。此校验保护管理数据，接入仍沿用固件现有分流。
+
 ## 信标讲解规则
 
 扫描、上报/保活和讲解规则统一在 management 管理页“信标配置”，与其持久化目录中的 `config.toml` 双向同步。小智复用 `KSZ_MANAGEMENT_API_URL` 和服务令牌读取 `GET /beacon-config`，每 5 秒按版本热更新；管理端读取失败或返回无效数据时保留本进程最近有效配置，不延长设备授权租期。配置变化后立即批量刷新在线设备策略，设备下次上报时取得新版并重新确认；设备扫描/保活频率须由支持这些字段的固件实际应用。
