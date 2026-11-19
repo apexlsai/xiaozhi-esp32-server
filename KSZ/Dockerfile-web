@@ -16,6 +16,8 @@ RUN git apply --check /tmp/ota-auto-bind.patch && git apply /tmp/ota-auto-bind.p
 COPY KSZ/manager-api/src ./main/manager-api/src
 COPY KSZ/patches/management-navigation.patch /tmp/management-navigation.patch
 RUN git apply --check /tmp/management-navigation.patch && git apply /tmp/management-navigation.patch
+COPY KSZ/patches/yuanbao-search-management.patch /tmp/yuanbao-search-management.patch
+RUN git apply --check /tmp/yuanbao-search-management.patch && git apply /tmp/yuanbao-search-management.patch
 
 FROM node:18 AS web-builder
 WORKDIR /app

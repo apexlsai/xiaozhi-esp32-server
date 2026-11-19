@@ -1,0 +1,229 @@
+diff --git a/plugins_func/functions/yuanbao_search.py b/plugins_func/functions/yuanbao_search.py
+new file mode 100644
+--- /dev/null
++++ b/plugins_func/functions/yuanbao_search.py
+@@ -0,0 +1,224 @@
++import hashlib
++import hmac
++import json
++import time
++from datetime import datetime, timezone
++from typing import TYPE_CHECKING
++
++import httpx
++
++from config.logger import setup_logging
++from plugins_func.register import register_function, ToolType, ActionResponse, Action
++
++if TYPE_CHECKING:
++    from core.connection import ConnectionHandler
++
++
++TAG = __name__
++logger = setup_logging()
++HOST = "wsa.tencentcloudapi.com"
++ENDPOINT = f"https://{HOST}/"
++SERVICE = "wsa"
++ACTION_NAME = "SearchPro"
++VERSION = "2025-05-08"
++CONTENT_TYPE = "application/json; charset=utf-8"
++
++YUANBAO_SEARCH_FUNCTION_DESC = {
++    "type": "function",
++    "function": {
++        "name": "yuanbao_search",
++        "description": (
++            "使用腾讯元宝搜索检索互联网信息，适用于具体事件、人物、政策、活动、价格和其他需要实时核实的问题。"
++            "搜索词保留用户指定的话题和时间范围；稳定常识、闲聊和创作无需调用。"
++        ),
++        "parameters": {
++            "type": "object",
++            "properties": {
++                "query": {
++                    "type": "string",
++                    "description": "搜索关键词或问题",
++                }
++            },
++            "required": ["query"],
++        },
++    },
++}
++
++
++def _sign(key: bytes, message: str) -> bytes:
++    return hmac.new(key, message.encode("utf-8"), hashlib.sha256).digest()
++
++
++def _build_headers(
++    secret_id: str,
++    secret_key: str,
++    payload: str,
++    timestamp: int,
++    token: str = "",
++) -> dict:
++    date = datetime.fromtimestamp(timestamp, timezone.utc).strftime("%Y-%m-%d")
++    canonical_headers = (
++        f"content-type:{CONTENT_TYPE}\n"
++        f"host:{HOST}\n"
++        f"x-tc-action:{ACTION_NAME.lower()}\n"
++    )
++    signed_headers = "content-type;host;x-tc-action"
++    canonical_request = "\n".join(
++        [
++            "POST",
++            "/",
++            "",
++            canonical_headers,
++            signed_headers,
++            hashlib.sha256(payload.encode("utf-8")).hexdigest(),
++        ]
++    )
++    credential_scope = f"{date}/{SERVICE}/tc3_request"
++    string_to_sign = "\n".join(
++        [
++            "TC3-HMAC-SHA256",
++            str(timestamp),
++            credential_scope,
++            hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
++        ]
++    )
++    secret_date = _sign(("TC3" + secret_key).encode("utf-8"), date)
++    secret_service = _sign(secret_date, SERVICE)
++    secret_signing = _sign(secret_service, "tc3_request")
++    signature = hmac.new(
++        secret_signing,
++        string_to_sign.encode("utf-8"),
++        hashlib.sha256,
++    ).hexdigest()
++    authorization = (
++        f"TC3-HMAC-SHA256 Credential={secret_id}/{credential_scope}, "
++        f"SignedHeaders={signed_headers}, Signature={signature}"
++    )
++    headers = {
++        "Authorization": authorization,
++        "Content-Type": CONTENT_TYPE,
++        "Host": HOST,
++        "X-TC-Action": ACTION_NAME,
++        "X-TC-Timestamp": str(timestamp),
++        "X-TC-Version": VERSION,
++    }
++    if token:
++        headers["X-TC-Token"] = token
++    return headers
++
++
++def _decode_page(page):
++    if isinstance(page, dict):
++        return page
++    if not isinstance(page, str):
++        return None
++    try:
++        decoded = json.loads(page)
++    except (TypeError, json.JSONDecodeError):
++        return None
++    return decoded if isinstance(decoded, dict) else None
++
++
++def _format_results(query: str, pages: list, max_results: int, message: str = "") -> str:
++    lines = [f"【元宝搜索结果】\n检索问题：{query}"]
++    for index, raw_page in enumerate(pages[:max_results], 1):
++        page = _decode_page(raw_page)
++        if not page:
++            continue
++        title = str(page.get("title") or page.get("passage") or "无标题").strip()
++        snippet = str(page.get("content") or page.get("passage") or "").strip()
++        if len(snippet) > 1200:
++            snippet = snippet[:1200] + "…"
++        url = str(page.get("url") or "").strip()
++        site = str(page.get("site") or "").strip()
++        date = str(page.get("date") or "").strip()
++        lines.append(f"{index}. 标题：{title}")
++        if site:
++            lines.append(f"   来源：{site}")
++        if date:
++            lines.append(f"   日期：{date}")
++        if url:
++            lines.append(f"   链接：{url}")
++        if snippet:
++            lines.append(f"   摘要：{snippet}")
++    if len(lines) == 1:
++        return f"元宝搜索未找到相关结果。{message}".strip()
++    return "\n".join(lines)
++
++
++async def _search_yuanbao(
++    secret_id: str,
++    secret_key: str,
++    query: str,
++    max_results: int,
++    token: str = "",
++) -> str:
++    payload = json.dumps({"Query": query}, ensure_ascii=False, separators=(",", ":"))
++    timestamp = int(time.time())
++    headers = _build_headers(secret_id, secret_key, payload, timestamp, token)
++    logger.bind(tag=TAG).debug(
++        f"元宝搜索请求 | query={query} | max_results={max_results}"
++    )
++    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=5.0)) as client:
++        response = await client.post(ENDPOINT, content=payload.encode("utf-8"), headers=headers)
++    try:
++        data = response.json()
++    except (TypeError, ValueError):
++        return f"元宝搜索请求失败（HTTP {response.status_code}）。"
++    if response.status_code != 200:
++        return f"元宝搜索请求失败（HTTP {response.status_code}）。"
++    response_data = data.get("Response") if isinstance(data, dict) else None
++    if not isinstance(response_data, dict):
++        return "元宝搜索返回数据格式异常。"
++    error = response_data.get("Error")
++    if isinstance(error, dict):
++        code = str(error.get("Code") or "未知错误").strip()
++        message = str(error.get("Message") or "请求失败").strip()
++        logger.bind(tag=TAG).error(f"元宝搜索失败 | code={code} | message={message}")
++        return f"元宝搜索失败（{code}）：{message}"
++    pages = response_data.get("Pages")
++    if not isinstance(pages, list):
++        pages = []
++    return _format_results(query, pages, max_results, str(response_data.get("Msg") or ""))
++
++
++@register_function("yuanbao_search", YUANBAO_SEARCH_FUNCTION_DESC, ToolType.SYSTEM_CTL)
++async def yuanbao_search(conn: "ConnectionHandler", query: str = None):
++    if not query or not str(query).strip():
++        return ActionResponse(Action.REQLLM, "请提供搜索关键词。", None)
++
++    plugins = conn.config.get("plugins", {})
++    config = plugins.get("yuanbao_search", {}) if isinstance(plugins, dict) else {}
++    if not isinstance(config, dict):
++        config = {}
++    secret_id = str(config.get("secret_id") or "").strip()
++    secret_key = str(config.get("secret_key") or "").strip()
++    if not secret_id or not secret_key:
++        return ActionResponse(
++            Action.REQLLM,
++            "元宝搜索未配置 Secret ID 或 Secret Key，请在智控台的元宝搜索插件中填写。",
++            None,
++        )
++    try:
++        max_results = min(max(int(config.get("max_results", 5)), 1), 10)
++    except (TypeError, ValueError):
++        max_results = 5
++    token = str(config.get("token") or "").strip()
++    try:
++        result = await _search_yuanbao(
++            secret_id,
++            secret_key,
++            str(query).strip(),
++            max_results,
++            token,
++        )
++    except httpx.TimeoutException:
++        logger.bind(tag=TAG).error("元宝搜索请求超时")
++        result = "元宝搜索请求超时，请稍后重试。"
++    except httpx.HTTPError as error:
++        logger.bind(tag=TAG).error(f"元宝搜索请求失败: {error}")
++        result = "元宝搜索请求失败，请稍后重试。"
++    except Exception as error:
++        logger.bind(tag=TAG).error(f"元宝搜索异常: {error}")
++        result = "元宝搜索出现异常，请稍后重试。"
++    return ActionResponse(Action.REQLLM, result, None)

@@ -13,7 +13,7 @@ diff --git a/src/api/server.py b/src/api/server.py
 +            r"current.*(?:news|policy|price)|検索|調べ|최신|검색",
 +            re.IGNORECASE,
 +        ),
-+        re.compile(r"^web_search(?:\s|$)", re.IGNORECASE),
++        re.compile(r"^(?:web_search|yuanbao_search)(?:\s|$)", re.IGNORECASE),
 +    ),
 +    (
          "news",
@@ -40,7 +40,7 @@ diff --git a/src/api/server.py b/src/api/server.py
 +def _news_search_retry(body: ChatCompletionRequest) -> bool:
 +    return (
 +        body.tool_choice in (None, "auto")
-+        and "web_search" in _offered_tool_names(body)
++        and {"web_search", "yuanbao_search"} & _offered_tool_names(body)
 +        and _latest_tool_name(body) == "get_news_from_newsnow"
 +        and _message_content_text(body.messages[-1].content).startswith("未配置新闻来源或类别：")
 +        and not re.search(r"来源|来自|只用|只要|source|from", _latest_user_text(body), re.IGNORECASE)
@@ -60,7 +60,7 @@ diff --git a/src/api/server.py b/src/api/server.py
 +    elif tool_result_turn:
 +        payload["tools"] = [
 +            tool for tool in payload.get("tools", [])
-+            if tool.get("function", {}).get("name") == "web_search"
++            if tool.get("function", {}).get("name") in {"web_search", "yuanbao_search"}
 +        ]
 +        payload["tool_choice"] = "auto"
      elif visual_intent(_latest_user_text(body)) not in {"capture", "identity"}:

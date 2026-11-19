@@ -1,0 +1,14 @@
+diff --git a/main/manager-api/src/main/resources/db/changelog/db.changelog-master.yaml b/main/manager-api/src/main/resources/db/changelog/db.changelog-master.yaml
+--- a/main/manager-api/src/main/resources/db/changelog/db.changelog-master.yaml
++++ b/main/manager-api/src/main/resources/db/changelog/db.changelog-master.yaml
+@@ -823,3 +823,10 @@
+         - sqlFile:
+             encoding: utf8
+             path: classpath:db/changelog/ksz-cell-location.sql
++  - changeSet:
++      id: 202611191350
++      author: JacobNg1
++      changes:
++        - sqlFile:
++            encoding: utf8
++            path: classpath:db/changelog/202611191350.sql

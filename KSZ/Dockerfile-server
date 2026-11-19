@@ -47,6 +47,9 @@ RUN git apply --check /tmp/weather-api-compat.patch \
 COPY KSZ/patches/news-retrieval.patch /tmp/news-retrieval.patch
 RUN git apply --check /tmp/news-retrieval.patch \
     && git apply /tmp/news-retrieval.patch
+COPY KSZ/patches/yuanbao-search.patch /tmp/yuanbao-search.patch
+RUN git apply --check /tmp/yuanbao-search.patch \
+    && git apply /tmp/yuanbao-search.patch
 COPY KSZ/patches/prompt-owner.patch /tmp/prompt-owner.patch
 RUN git apply --check /tmp/prompt-owner.patch \
     && git apply /tmp/prompt-owner.patch

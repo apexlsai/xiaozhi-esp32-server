@@ -2,7 +2,7 @@
 
 ## 行为与配置
 
-新闻播报使用 `get_news_from_newsnow(source, detail, lang)`；娱乐圈等话题新闻、具体事件或人物的最新进展使用 `web_search(query)`。不新增搜索供应商或依赖。
+新闻播报使用 `get_news_from_newsnow(source, detail, lang)`；娱乐圈等话题新闻、具体事件或人物的最新进展使用已启用的 `web_search(query)` 或 `yuanbao_search(query)`。服务端沿用现有 HTTP 客户端，不新增 Python 依赖。
 
 | 请求 | 行为 |
 | --- | --- |
@@ -11,7 +11,7 @@
 | 指定类别 | `source` 传类别，例如 `国际`；直接请求对应 RSS，不请求默认 NewsNow 来源 |
 | 类别或来源未配置 | 明确反馈，不改播其他新闻 |
 | 追问详情 | 同一工具设置 `detail=true`，使用本连接最近成功新闻的原链接 |
-| 具体事件最新进展 | 使用 `web_search`，保留话题与时间范围 |
+| 具体事件最新进展 | 使用已启用的 `web_search` 或 `yuanbao_search`，保留话题与时间范围 |
 
 RSS 使用已有 `plugins.get_news_from_chinanews` 配置。`society_rss_url`、`world_rss_url`、`finance_rss_url` 分别提供社会、国际、财经类别；仅向模型声明非空且已配置的类别。默认备用源使用 `default_rss_url`，缺省为中新网社会 RSS。智控台模式需在该智能体的插件配置中提供这些字段，本地默认配置不会自动补入智能体私有配置。
 
@@ -25,7 +25,7 @@ RSS 使用已有 `plugins.get_news_from_chinanews` 配置。`society_rss_url`、
 
 真实验收发现，当前普通环境的 Agent 会根据关键词预先决定是否保留工具。“百度热搜”及未包含“新闻”字样的具体事件查询可能在到达模型前被移除工具，单改工具描述无法解决。
 
-`patches/agent-news-routing.patch` 增加热搜意图与联网查询意图，并以实际提供的 `web_search` 函数名判定可用性，避免仅在其他工具描述中提及 `web_search` 就误判其存在。沿用场馆、产品知识的优先级。话题误填来源而返回“未配置新闻来源或类别”时，仅保留 `web_search` 供续调；未启用搜索、禁用或强制选择工具、明确指定来源，以及已知来源或 RSS 类别未配置时不启用此分支。实际搜索结果续答仍禁用工具。
+`patches/agent-news-routing.patch` 增加热搜意图与联网查询意图，并以实际提供的 `web_search` 或 `yuanbao_search` 函数名判定可用性，避免仅在其他工具描述中提及搜索工具就误判其存在。沿用场馆、产品知识的优先级。话题误填来源而返回“未配置新闻来源或类别”时，仅保留已启用的搜索工具供续调；未启用搜索、禁用或强制选择工具、明确指定来源，以及已知来源或 RSS 类别未配置时不启用此分支。实际搜索结果续答仍禁用工具。
 
 小智构建继续使用唯一 Compose 入口：
 
