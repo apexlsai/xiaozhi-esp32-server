@@ -234,6 +234,21 @@ def test_evidence_search_respects_owner_event_depth_and_actual_tools(override, t
     assert not permits_evidence_search(body, SimpleNamespace(route="tool"))
 
 
+def test_evidence_search_accepts_yuanbao_tool():
+    from src.api.prompt_owner import permits_evidence_search
+    from types import SimpleNamespace
+    yuanbao = {"type": "function", "function": {
+        "name": "yuanbao_search", "parameters": {"type": "object"},
+    }}
+    body = ChatCompletionRequest(
+        model="museum-guide-chat",
+        messages=[{"role": "user", "content": "请核实深圳博物馆的最新展览。"}],
+        tools=[yuanbao],
+        ksz_prompt_context=context(),
+    )
+    assert permits_evidence_search(body, SimpleNamespace(route="rag"))
+
+
 def test_final_tool_answer_explicitly_disables_calls_without_changing_context():
     from src.api.prompt_owner import owned_payload
     body = ChatCompletionRequest(model="museum-guide-chat", messages=[{"role":"user","content":"深圳博物馆"}],

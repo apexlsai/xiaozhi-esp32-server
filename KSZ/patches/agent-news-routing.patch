@@ -66,6 +66,17 @@ diff --git a/src/api/server.py b/src/api/server.py
      elif visual_intent(_latest_user_text(body)) not in {"capture", "identity"}:
          payload["tools"] = [
              tool for tool in payload.get("tools", [])
+@@ -758,4 +787,10 @@
+         if not payload["tools"]:
+             for key in ("tools", "tool_choice", "parallel_tool_calls"):
+                 payload.pop(key, None)
++    search_tools = [
++        tool for tool in payload.get("tools", [])
++        if tool.get("function", {}).get("name") in {"web_search", "yuanbao_search"}
++    ]
++    if len(search_tools) > 1 and payload.get("parallel_tool_calls") is None:
++        payload["parallel_tool_calls"] = True
+     return payload
 @@ -1898,8 +1927,7 @@
      rag_question = _tool_result_rag_query(body, question)
      use_rag = decision.rag_decision == "retrieve"

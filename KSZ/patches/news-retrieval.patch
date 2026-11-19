@@ -49,7 +49,7 @@ diff --git a/plugins_func/functions/get_news_from_newsnow.py b/plugins_func/func
 +        "description": (
 +            "随机播报一条新闻，适用于'来条新闻''今天有什么新闻'，可按已配置来源或类别播报。"
 +            "用户未指定来源和类别时必须省略source，主源失败才使用备用RSS；指定来源或类别时严格遵守，不混入其他来源。"
-+            "娱乐圈等具体话题的新闻、具体事件或人物的最新进展及事实查询应使用web_search。"
++            "娱乐圈等具体话题的新闻、具体事件或人物的最新进展及事实查询应使用可用的联网搜索工具。"
 +            "追问本工具刚播报新闻的详情时再次调用本工具，设置detail=true。"
 +        ),
          "parameters": {
@@ -115,7 +115,7 @@ diff --git a/plugins_func/functions/get_news_from_newsnow.py b/plugins_func/func
 +        if source and category in RSS_CATEGORIES:
 +            if category not in get_news_categories_from_config(conn):
 +                return ActionResponse(
-+                    Action.REQLLM, f"未配置{source}对应的新闻类别，不能用其他类别代替。具体话题可使用web_search检索。", None
++                    Action.REQLLM, f"未配置{source}对应的新闻类别，不能用其他类别代替。具体话题可使用联网搜索工具检索。", None
 +                )
 +            source_id = "chinanews"
 +            source_name = "中新网"
@@ -126,7 +126,7 @@ diff --git a/plugins_func/functions/get_news_from_newsnow.py b/plugins_func/func
 +                    Action.REQLLM, f"未配置新闻来源：{source}，不能用其他来源代替。", None
 +                )
 +            return ActionResponse(
-+                Action.REQLLM, f"未配置新闻来源或类别：{source}，不能用其他新闻代替。具体话题可使用web_search检索。", None
++                Action.REQLLM, f"未配置新闻来源或类别：{source}，不能用其他新闻代替。具体话题可使用联网搜索工具检索。", None
 +            )
 +        else:
 +            source = source or next(
@@ -214,7 +214,7 @@ diff --git a/plugins_func/functions/get_news_from_chinanews.py b/plugins_func/fu
 -            "如果没有指定，默认播报社会新闻。"
 +            "中新网RSS专用新闻播报。用户明确指定中新网时使用。"
 +            "若同时提供get_news_from_newsnow，未指定来源或按类别播报时优先使用get_news_from_newsnow。"
-+            "仅支持已配置类别；具体事件或话题的最新进展应使用web_search检索。"
++            "仅支持已配置类别；具体事件或话题的最新进展应使用可用的联网搜索工具检索。"
 +            "追问本工具刚播报新闻的详情时设置detail=true。"
          ),
          "parameters": {
@@ -233,7 +233,7 @@ diff --git a/plugins_func/functions/get_news_from_chinanews.py b/plugins_func/fu
          mapped_category = map_category(category)
 +        if category and (mapped_category not in rss_config or not rss_config[mapped_category]):
 +            return ActionResponse(
-+                Action.REQLLM, f"未配置{category}对应的新闻类别，不能用其他类别代替。具体话题可使用web_search检索。", None
++                Action.REQLLM, f"未配置{category}对应的新闻类别，不能用其他类别代替。具体话题可使用联网搜索工具检索。", None
 +            )
  
          # 如果提供了类别，尝试从配置中获取对应的URL
@@ -295,7 +295,7 @@ diff --git a/plugins_func/functions/web_search.py b/plugins_func/functions/web_s
 diff --git a/core/providers/tools/server_plugins/plugin_executor.py b/core/providers/tools/server_plugins/plugin_executor.py
 --- a/core/providers/tools/server_plugins/plugin_executor.py
 +++ b/core/providers/tools/server_plugins/plugin_executor.py
-@@ -1,12 +1,24 @@
+@@ -1,12 +1,25 @@
  """服务端插件工具执行器"""
  
  import asyncio
@@ -310,6 +310,7 @@ diff --git a/core/providers/tools/server_plugins/plugin_executor.py b/core/provi
 +
 +LEGACY_DESCRIPTIONS = {
 +    "web_search": "联网搜索工具。当用户明确需要联网搜索问题时使用此工具。",
++    "yuanbao_search": "使用腾讯元宝搜索检索互联网信息，适用于具体事件、人物、政策、活动、价格和其他需要实时核实的问题。搜索词保留用户指定的话题和时间范围；稳定常识、闲聊和创作无需调用。",
 +    "get_news_from_newsnow": "当用户要求查看或收听新闻时调用（如'来条新闻''今天有什么新闻'）。",
 +    "get_news_from_chinanews": (
 +        "当用户要求查看或收听新闻时调用（如'来条新闻''今天有什么新闻'）。"
@@ -363,7 +364,7 @@ diff --git a/core/providers/tools/server_plugins/plugin_executor.py b/core/provi
 +            f"用户明确指定的新闻来源或类别。来源可选：{sources_str}。"
 +            "只指定类别时必须传类别，例如'国际新闻'传'国际'，不可改填默认来源。"
 +            "用户未指定来源和类别时必须省略此参数，不要代填默认来源；指定来源失败时不切换其他来源。"
-+            "娱乐圈等话题新闻使用web_search检索，不可将话题填作来源。"
++            "娱乐圈等话题新闻使用可用的联网搜索工具检索，不可将话题填作来源。"
 +        )
 +        description += f"已配置类别：{categories}。" if categories else "未配置可选新闻类别。"
 +        parameter = "source"

@@ -87,7 +87,7 @@
                 v-model="textCache[field.key]" @blur="flushJson(field)" />
 
               <!-- number -->
-              <el-input-number v-else-if="field.type === 'number'" :value="currentFunction.params[field.key]"
+              <el-input-number v-else-if="field.type === 'number'" v-model="currentFunction.params[field.key]"
                 @change="val => handleParamChange(currentFunction, field.key, val)" />
 
               <!-- boolean -->

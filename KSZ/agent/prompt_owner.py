@@ -59,4 +59,4 @@ def permits_evidence_search(body, decision):
                 and not context.get("turn", {}).get("tool_depth_exhausted")
                 and body.messages and body.messages[-1].role == "user"
                 and body.tool_choice != "none"
-                and any(tool.get("function", {}).get("name") == "web_search" for tool in body.tools or []))
+                and any(tool.get("function", {}).get("name") in {"web_search", "yuanbao_search"} for tool in body.tools or []))

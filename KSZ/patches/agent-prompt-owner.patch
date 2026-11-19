@@ -42,10 +42,16 @@
                  "device_location", "beacon_mac", "guide_policy_revision"):
          value = getattr(body, key, None)
          if value is not None:
-@@ -777,6 +788,9 @@
+@@ -777,12 +788,15 @@
          if not payload["tools"]:
              for key in ("tools", "tool_choice", "parallel_tool_calls"):
                  payload.pop(key, None)
+     search_tools = [
+         tool for tool in payload.get("tools", [])
+         if tool.get("function", {}).get("name") in {"web_search", "yuanbao_search"}
+     ]
+     if len(search_tools) > 1 and payload.get("parallel_tool_calls") is None:
+         payload["parallel_tool_calls"] = True
 +    if body.ksz_prompt_context is not None:
 +        from src.api.prompt_owner import owned_payload
 +        payload["messages"] = owned_payload(body, context, disable_tools)["messages"]
@@ -91,7 +97,7 @@
          )
 +        if evidence_search:
 +            payload["tools"] = [tool for tool in payload.get("tools", [])
-+                                if tool.get("function", {}).get("name") == "web_search"]
++                                if tool.get("function", {}).get("name") in {"web_search", "yuanbao_search"}]
          suppress_tool_calls = suppress_tool_calls or not payload.get("tools")
      except Exception as exc:
          logger.exception(f"[API-TOOLS] Museum 上下文构造失败 request_id={request_id}")

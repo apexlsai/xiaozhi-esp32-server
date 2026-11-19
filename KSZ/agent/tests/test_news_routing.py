@@ -8,10 +8,13 @@ from src.api.schemas import ChatCompletionRequest
 
 
 SEARCH = {"type": "function", "function": {
-    "name": "web_search", "description": "联网搜索工具。", "parameters": {"type": "object"},
+    "name": "web_search", "description": "可用的联网搜索工具。", "parameters": {"type": "object"},
+}}
+YUANBAO = {"type": "function", "function": {
+    "name": "yuanbao_search", "description": "可用的联网搜索工具。", "parameters": {"type": "object"},
 }}
 NEWS = {"type": "function", "function": {
-    "name": "get_news_from_newsnow", "description": "随机新闻；具体话题使用web_search。",
+    "name": "get_news_from_newsnow", "description": "随机新闻；具体话题使用可用的联网搜索工具。",
     "parameters": {"type": "object"},
 }}
 
@@ -62,6 +65,19 @@ def test_search_result_turn_does_not_request_another_tool():
     assert decision.route == "tool" and not decision.tool_available
 
 
+def test_available_search_tools_can_run_in_parallel(monkeypatch):
+    from config.settings import get_settings
+    monkeypatch.setattr(server, "get_settings", get_settings)
+    body = ChatCompletionRequest(
+        model="museum-guide-chat",
+        messages=[{"role": "user", "content": "请联网核实最新进展。"}],
+        tools=[SEARCH, YUANBAO],
+    )
+    payload = server._tools_rag_payload(body, context="", tool_result_turn=False)
+    assert payload["tools"] == [SEARCH, YUANBAO]
+    assert payload["parallel_tool_calls"] is True
+
+
 def news_result_body(*, content=None, question="再看看娱乐圈的新闻。", tools=None, choice=None, name="get_news_from_newsnow"):
     return ChatCompletionRequest(model="museum-guide-chat", messages=[
         {"role": "user", "content": question},
@@ -70,7 +86,7 @@ def news_result_body(*, content=None, question="再看看娱乐圈的新闻。",
                 "name": name, "arguments": '{"source":"娱乐圈","lang":"zh_CN"}',
             },
         }]},
-        {"role": "tool", "tool_call_id": "call_news", "content": content or "未配置新闻来源或类别：娱乐圈，不能用其他新闻代替。具体话题可使用web_search检索。"},
+        {"role": "tool", "tool_call_id": "call_news", "content": content or "未配置新闻来源或类别：娱乐圈，不能用其他新闻代替。具体话题可使用联网搜索工具检索。"},
     ], tools=[NEWS, SEARCH] if tools is None else tools, tool_choice=choice)
 
 
@@ -88,11 +104,22 @@ def test_misrouted_news_topic_can_retry_only_search(monkeypatch):
     assert "tools" not in disabled
 
 
+def test_misrouted_news_topic_can_retry_with_yuanbao(monkeypatch):
+    from config.settings import get_settings
+    monkeypatch.setattr(server, "get_settings", get_settings)
+    body = news_result_body(tools=[NEWS, YUANBAO])
+    decision = server._route_chat_request(body)
+    assert decision.reason == "news_search_retry" and decision.tool_available
+    payload = server._tools_rag_payload(body, context="", tool_result_turn=True)
+    assert payload["tools"] == [YUANBAO]
+    assert payload["tool_choice"] == "auto"
+
+
 @pytest.mark.parametrize("kwargs", [
     {"tools": [NEWS]}, {"choice": "none"}, {"choice": "required"},
     {"choice": {"type": "function", "function": {"name": "get_news_from_newsnow"}}},
     {"content": "未配置新闻来源：财联社，不能用其他来源代替。"},
-    {"content": "未配置国际对应的新闻类别，不能用其他类别代替。具体话题可使用web_search检索。"},
+    {"content": "未配置国际对应的新闻类别，不能用其他类别代替。具体话题可使用联网搜索工具检索。"},
     {"content": "抱歉，未能获取澎湃新闻的新闻信息，请稍后再试。"},
     {"content": "实际搜索结果", "name": "web_search"},
     {"question": "新闻来源只要娱乐圈。"},

@@ -78,3 +78,14 @@ test('function dialog footer stays above the expanding MCP tools section', () =>
   assert.ok(footerLayer, 'drawer footer should define its stacking layer');
   assert.ok(Number(footerLayer[1]) > Number(mcpLayer[1]));
 });
+
+test('numeric plugin fields keep edits through two-way binding', () => {
+  assert.match(
+    functionDialogSource,
+    /v-else-if="field\.type === 'number'"\s+v-model="currentFunction\.params\[field\.key\]"/,
+  );
+  assert.doesNotMatch(
+    functionDialogSource,
+    /v-else-if="field\.type === 'number'"\s+:value=/,
+  );
+});
