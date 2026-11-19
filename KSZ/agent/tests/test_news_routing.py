@@ -28,6 +28,9 @@ def gate(monkeypatch):
     "请联网核实中国航展的进展。", "2026年11月最近中国航展有什么最新进展？请联网核实。",
     "这个会议什么时候开？", "这家公司是什么时候成立的？", "帮我搜索当前的政策。",
     "Search the web for the latest policy updates.", "最新の情報を検索して。", "최신 소식을 검색해 주세요.",
+    "搜一下，APEC2026年在哪里举办？", "介绍一下 APEC 会议主场在哪？",
+    "APEC会议2026年在哪儿举办？", "给我说一下附近有什么好吃的。",
+    "说一下安阳市有什么名人？", "给我说一下阿拉伯有什么博物馆？",
 ])
 def test_current_fact_questions_keep_search_tool(query):
     body = ChatCompletionRequest(model="museum-guide-chat", messages=[{"role": "user", "content": query}], tools=[SEARCH, NEWS])

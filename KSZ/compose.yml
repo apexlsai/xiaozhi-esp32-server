@@ -4,7 +4,7 @@
 services:
   xiaozhi-mqtt-gateway:
     profiles: [mqtt]
-    image: ${XIAOZHI_MQTT_GATEWAY_IMAGE:-xiaozhi-esp32-server:mqtt_local}
+    image: ${XIAOZHI_MQTT_GATEWAY_IMAGE:-xiaozhi-esp32-server:${XIAOZHI_IMAGE_TAG:-ksz-dev}-mqtt}
     container_name: ${XIAOZHI_MQTT_GATEWAY_CONTAINER_NAME:-ksz-xiaozhi-mqtt-gateway-1}
     build:
       context: ./mqtt
@@ -29,7 +29,7 @@ services:
       KSZ_GUIDE_CONTROL_TOKEN: ${KSZ_GUIDE_CONTROL_TOKEN:-}
 
   xiaozhi-esp32-server:
-    image: ${XIAOZHI_SERVER_IMAGE:-xiaozhi-esp32-server:server_local}
+    image: ${XIAOZHI_SERVER_IMAGE:-xiaozhi-esp32-server:${XIAOZHI_IMAGE_TAG:-ksz-dev}-server}
     build:
       context: ..
       dockerfile: KSZ/Dockerfile-server
@@ -69,7 +69,7 @@ services:
       # 启用本地 FunASR 时，再恢复 model.pt 文件挂载。
 
   xiaozhi-esp32-server-web:
-    image: ${XIAOZHI_WEB_IMAGE:-xiaozhi-esp32-server:web_local}
+    image: ${XIAOZHI_WEB_IMAGE:-xiaozhi-esp32-server:${XIAOZHI_IMAGE_TAG:-ksz-dev}-web}
     build:
       context: ..
       dockerfile: KSZ/Dockerfile-web

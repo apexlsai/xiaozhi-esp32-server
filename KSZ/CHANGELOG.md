@@ -64,6 +64,8 @@
 
 ### 变更
 
+- `.env.example`、`compose.yml` 与 README 测试命令统一使用 `XIAOZHI_IMAGE_TAG` 作为镜像版本入口；server、web、MQTT 网关分别扩展为 `${XIAOZHI_IMAGE_TAG}-server` / `-web` / `-mqtt`，`compose.yml` 回退默认值同步移除旧的 `*_local` 标签，避免同一镜像名覆盖不同构建。
+
 - 助手以游客当前使用的设备自称，以可信设备地址或室内信标回答自身位置；文字与视觉提示不播报定位来源、坐标和覆盖半径，询问定位方式时使用 AI 综合计算的表述。未经核验的场馆、产品细节引导咨询现场工作人员；场馆与公司名称严格沿用配置，不从导览终端能力推断企业产品。
 
 - server、web、MySQL、Redis 和 MQTT 网关的镜像、容器名统一使用环境变量，补齐 `KSZ/.env.example` 与本地 `.env`，可分别配置多套部署。
@@ -103,6 +105,10 @@
 - VLLM：API Key 仍为占位符时在初始化阶段 fail-fast，避免 httpx 组装 Authorization 头时出现 `'ascii' codec can't encode` 误导性报错。
 
 ### 修复
+
+- 扩大 Agent 联网搜索意图：覆盖「搜一下」、会议举办地、附近美食及「有什么名人/博物馆」等未带「搜索/最新」字样的问题，避免工具在到达模型前被摘掉；场馆/产品 RAG 优先级不变。ce:65 对照见新闻检索文档。
+
+- 修正 `KSZ/patches/yuanbao-search.patch` hunk 行数（`+1,224` → `+1,225`），补齐末尾 `return ActionResponse(...)`，避免 `git apply` 静默截断导致函数返回 `None` 并触发 `'NoneType' object has no attribute 'result'`；补丁校验与 Python 语法检查通过。
 
 - 修复中日韩智能体语言元数据在连接、Agent 接管、工具及视觉路径之间不一致时静默回退中文：管理端同时下发绑定智能体名，xiaozhi 与 Agent 共用规范语言码，接管上下文强制校准语言，旁路沿用同一绑定语言。
 

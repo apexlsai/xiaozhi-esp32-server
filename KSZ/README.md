@@ -35,7 +35,7 @@ Agent 统一接管提示词与最近 20 轮历史的配置、接口、构建和�
 
 ## 首次构建并启动
 
-server、web、MySQL、Redis 和 MQTT 网关的镜像与容器名统一在 `KSZ/.env` 配置，完整模板见 `.env.example` 中的 `XIAOZHI_*_IMAGE` 和 `XIAOZHI_*_CONTAINER_NAME`。首次部署复制模板，已有环境补充或修改对应变量；修改后重新执行 Compose 创建容器。
+server、web、MySQL、Redis 和 MQTT 网关的镜像与容器名统一在 `KSZ/.env` 配置。镜像版本只修改 `XIAOZHI_IMAGE_TAG`；server、web、MQTT 会自动使用带服务后缀的独立镜像名，不能把不同构建的服务设置成同一个完整镜像引用。完整模板见 `.env.example`。首次部署复制模板，已有环境补充或修改对应变量；修改后重新执行 Compose 创建容器。
 
 自定义容器名后，Compose 命令仍使用下方的服务名。延时诊断脚本通过 `--server-container`、`--mqtt-container` 指定对应容器名。
 
@@ -1029,7 +1029,7 @@ node mqtt/verify-ota.cjs http://<HOST_IP>:8002/xiaozhi/ota/ aa:bb:cc:dd:ee:ff
 ```bash
 docker run --rm --network none \
   --mount type=bind,source="$PWD/mqtt/tests",target=/app/tests,readonly \
-  --entrypoint node xiaozhi-esp32-server:mqtt_local \
+  --entrypoint node xiaozhi-esp32-server:${XIAOZHI_IMAGE_TAG:-ksz-dev}-mqtt \
   --test tests/gateway.test.cjs
 ```
 

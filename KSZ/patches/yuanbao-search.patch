@@ -2,7 +2,7 @@ diff --git a/plugins_func/functions/yuanbao_search.py b/plugins_func/functions/y
 new file mode 100644
 --- /dev/null
 +++ b/plugins_func/functions/yuanbao_search.py
-@@ -0,0 +1,224 @@
+@@ -0,0 +1,225 @@
 +import hashlib
 +import hmac
 +import json

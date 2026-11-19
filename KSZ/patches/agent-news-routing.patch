@@ -8,7 +8,10 @@ diff --git a/src/api/server.py b/src/api/server.py
 +        "search",
 +        re.compile(
 +            r"联网|上网|搜索|检索|核实|最新|近期|实时|近况|进展|"
-+            r"(?:会议|大会).*(?:何时|什么时候)|(?:何时|什么时候).*(?:开|举行|成立)|"
++            r"搜一下|搜一搜|搜下|查一下|查一查|查下|"
++            r"(?:会议|大会|APEC).*(?:何时|什么时候|在哪|哪儿|哪里|举办|主场)|"
++            r"(?:何时|什么时候|在哪|哪儿|哪里).*(?:开|举行|成立|举办)|"
++            r"好吃|美食|餐厅|(?:有什么|有哪些).*(?:名人|博物馆)|"
 +            r"web.?search|search.*(?:web|online)|look.*up|latest|recent.*(?:news|updates)|"
 +            r"current.*(?:news|policy|price)|検索|調べ|최신|검색",
 +            re.IGNORECASE,
