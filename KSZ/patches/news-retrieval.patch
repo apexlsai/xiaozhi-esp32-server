@@ -310,7 +310,7 @@ diff --git a/core/providers/tools/server_plugins/plugin_executor.py b/core/provi
 +
 +LEGACY_DESCRIPTIONS = {
 +    "web_search": "联网搜索工具。当用户明确需要联网搜索问题时使用此工具。",
-+    "yuanbao_search": "使用腾讯元宝搜索检索互联网信息，适用于具体事件、人物、政策、活动、价格和其他需要实时核实的问题。搜索词保留用户指定的话题和时间范围；稳定常识、闲聊和创作无需调用。",
++    "yuanbao_search": "使用腾讯元宝搜索检索互联网信息，适用于需要实时核实的问题。",
 +    "get_news_from_newsnow": "当用户要求查看或收听新闻时调用（如'来条新闻''今天有什么新闻'）。",
 +    "get_news_from_chinanews": (
 +        "当用户要求查看或收听新闻时调用（如'来条新闻''今天有什么新闻'）。"

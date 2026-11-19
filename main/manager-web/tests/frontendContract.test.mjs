@@ -14,6 +14,10 @@ const functionDialogSource = await readFile(
   new URL('../src/components/FunctionDialog.vue', import.meta.url),
   'utf8',
 );
+const roleConfigSource = await readFile(
+  new URL('../src/views/roleConfig.vue', import.meta.url),
+  'utf8',
+);
 
 test('address-book permission state consistently uses the target device MAC', () => {
   assert.match(
@@ -87,5 +91,16 @@ test('numeric plugin fields keep edits through two-way binding', () => {
   assert.doesNotMatch(
     functionDialogSource,
     /v-else-if="field\.type === 'number'"\s+:value=/,
+  );
+});
+
+test('plugin parameter defaults survive partial saved configurations', () => {
+  assert.match(
+    roleConfigSource,
+    /const merge = \(value\) => \(\{\s*\.\.\.defaults,\s*\.\.\.\(value && typeof value === 'object'/s,
+  );
+  assert.match(
+    functionDialogSource,
+    /this\.allFunctions\[idx\]\.params = \{\s*\.\.\.this\.allFunctions\[idx\]\.params,\s*\.\.\.\(saved\.params \|\| \{\}\)/s,
   );
 });

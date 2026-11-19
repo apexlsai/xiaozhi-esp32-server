@@ -272,7 +272,10 @@ export default {
           const idx = this.allFunctions.findIndex(f => f.name === saved.name);
           if (idx >= 0) {
             // 保留用户之前在 saved.params 上的改动
-            this.allFunctions[idx].params = { ...saved.params };
+            this.allFunctions[idx].params = {
+              ...this.allFunctions[idx].params,
+              ...(saved.params || {})
+            };
           }
         });
         // 右侧默认指向第一个

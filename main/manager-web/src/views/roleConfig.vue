@@ -607,23 +607,28 @@ export default {
       this.$router.push("/home");
     },
     normalizeFunctionParams(params, fallback = {}) {
+      const defaults = fallback && typeof fallback === 'object' && !Array.isArray(fallback)
+        ? fallback
+        : {};
+      const merge = (value) => ({
+        ...defaults,
+        ...(value && typeof value === 'object' && !Array.isArray(value) ? value : {})
+      });
       if (params === null || params === undefined || params === '') {
-        return { ...fallback };
+        return { ...defaults };
       }
       if (typeof params === 'string') {
         try {
           const parsed = JSON.parse(params);
-          return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-            ? parsed
-            : { ...fallback };
+          return merge(parsed);
         } catch (error) {
-          return { ...fallback };
+          return { ...defaults };
         }
       }
       if (typeof params === 'object' && !Array.isArray(params)) {
-        return { ...params };
+        return merge(params);
       }
-      return { ...fallback };
+      return { ...defaults };
     },
     async saveConfig() {
       if (this.configInteractionBlocked) {
