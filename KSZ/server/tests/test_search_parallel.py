@@ -1,6 +1,12 @@
+import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
+
+import pytest
 
 from ksz_guide.search_parallel import attach_web_search
+from plugins_func.register import Action, ActionResponse
+from test_guide_announcement import conn as chat_conn, spoken, assistant_text
 
 
 def conn(names=("web_search", "yuanbao_search")):
@@ -54,3 +60,39 @@ def test_missing_web_search_plugin_keeps_yuanbao_only():
 
 def test_greeting_does_not_invent_search():
     assert attach_web_search(conn(), [], query="你好") == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model_calls_search", [False, True])
+async def test_search_draft_is_neither_spoken_nor_added_to_history(chat_conn, monkeypatch, model_calls_search):
+    chat_conn.loop = asyncio.get_running_loop()
+    chat_conn.intent_type = "function_call"
+    chat_conn.func_handler.has_tool = lambda name: name in {"web_search", "yuanbao_search"}
+    chat_conn.func_handler.handle_llm_function_call = AsyncMock(return_value=ActionResponse(Action.REQLLM, result="检索事实"))
+    monkeypatch.setattr("core.connection.enqueue_tool_report", Mock())
+    draft = [("尚未核实的旧回答。", None)]
+    if model_calls_search:
+        draft.append((None, [SimpleNamespace(index=0, id="search", function=SimpleNamespace(
+            name="web_search", arguments='{"query":"APEC峰会"}',
+        ))]))
+    chat_conn.llm.response_with_functions.side_effect = [iter(draft), iter([("根据检索结果确认的回答。", None)])]
+    await asyncio.to_thread(chat_conn.chat, "查一下APEC领导人峰会。")
+    assert spoken(chat_conn) == "根据检索结果确认的回答。"
+    assert assistant_text(chat_conn) == ["根据检索结果确认的回答。"]
+    assert {call.args[1]["name"] for call in chat_conn.func_handler.handle_llm_function_call.call_args_list} == {
+        "web_search", "yuanbao_search",
+    }
+
+
+def test_greeting_still_streams_without_waiting_for_the_complete_answer(chat_conn):
+    chat_conn.intent_type = "function_call"
+    chat_conn.func_handler.has_tool = lambda name: True
+
+    def stream():
+        yield "你好。", None
+        assert spoken(chat_conn) == "你好。"
+        yield "可以听到。", None
+
+    chat_conn.llm.response_with_functions.return_value = stream()
+    chat_conn.chat("你好")
+    assert spoken(chat_conn) == "你好。可以听到。"

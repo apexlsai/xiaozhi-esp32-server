@@ -1,7 +1,7 @@
 diff --git a/src/api/server.py b/src/api/server.py
 --- a/src/api/server.py
 +++ b/src/api/server.py
-@@ -340,8 +340,25 @@
+@@ -340,8 +340,26 @@
          re.compile(r"weather|forecast|temperature|天气|气温|预报", re.IGNORECASE),
      ),
      (

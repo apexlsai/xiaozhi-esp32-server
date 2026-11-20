@@ -47,6 +47,19 @@ docker build -f KSZ/Dockerfile-agent \
 
 构建阶段执行 `git apply --check`，基础版本不兼容时构建失败，不直接覆盖运行服务。Agent 仍由其所属项目现有的部署入口管理。此问题需要同时更新小智和 Agent；回退时分别恢复各自原镜像。
 
+已内置搜索路由的新 Agent 使用现有镜像作为基础，并跳过旧兼容补丁：
+
+```bash
+docker build -f KSZ/Dockerfile-agent \
+  --build-arg AGENT_IMAGE=ghcr.io/apexlsai/museum_guide_agent:dev \
+  --build-arg APPLY_AGENT_COMPAT_PATCHES=0 \
+  -t museum-guide-agent:v0.2.0dev20261120 .
+```
+
+馆内检索使用当前请求的 `venue_context.code`（接管模式取 `ksz_prompt_context.state.venue_context.code`），传入 RAG API 的 `museum_id`。内部场馆 ID 不作为检索代号，也不修改全局 `RAG_MUSEUM_ID`。没有绑定场馆的旧客户端沿用原配置；已携带场馆绑定但缺少有效 code 时显式失败，避免误查默认馆。知识查询、藏品列表、普通问答和视觉追问使用同一参数传递链。
+
+小智需要补发搜索时，首轮模型草稿暂不送 TTS 或写入对话历史，两路搜索结果返回后仅播报最终答案。问候等不需搜索的回答继续流式播报。
+
 ## 回归与真实验收
 
 2026-11-10，在 `feature/ksz/news-retrieval` 完成以下验证：

@@ -6,17 +6,23 @@ WORKDIR /src
 COPY --from=agent-base /app/src/api/server.py src/api/server.py
 COPY --from=agent-base /app/src/api/chat_service.py src/api/chat_service.py
 COPY --from=agent-base /app/src/api/schemas.py src/api/schemas.py
+COPY --from=agent-base /app/src/tools/rag.py src/tools/rag.py
+ARG APPLY_AGENT_COMPAT_PATCHES=1
 COPY KSZ/patches/agent-news-routing.patch /tmp/agent-news-routing.patch
-RUN git apply --check /tmp/agent-news-routing.patch \
-    && git apply /tmp/agent-news-routing.patch
 COPY KSZ/patches/agent-prompt-owner.patch /tmp/agent-prompt-owner.patch
-RUN git apply --check /tmp/agent-prompt-owner.patch \
-    && git apply /tmp/agent-prompt-owner.patch
 COPY KSZ/patches/agent-language-contract.patch /tmp/agent-language-contract.patch
-RUN git apply --check /tmp/agent-language-contract.patch \
-    && git apply /tmp/agent-language-contract.patch
+RUN if [ "$APPLY_AGENT_COMPAT_PATCHES" = "1" ]; then \
+      for patch in /tmp/agent-news-routing.patch /tmp/agent-prompt-owner.patch /tmp/agent-language-contract.patch; do \
+        git apply --check "$patch" && git apply "$patch" || exit 1; \
+      done; \
+    fi
+COPY KSZ/patches/agent-venue-scope.patch /tmp/agent-venue-scope.patch
+RUN git apply --unidiff-zero --check /tmp/agent-venue-scope.patch \
+    && git apply --unidiff-zero /tmp/agent-venue-scope.patch
 
 FROM agent-base
 COPY --from=patched-source /src/src/api/ /app/src/api/
+COPY --from=patched-source /src/src/tools/rag.py /app/src/tools/rag.py
 COPY KSZ/agent/prompt_owner.py /app/src/api/prompt_owner.py
+COPY KSZ/agent/venue_scope.py /app/src/api/venue_scope.py
 COPY KSZ/shared/ksz_prompt.py /app/ksz_prompt.py

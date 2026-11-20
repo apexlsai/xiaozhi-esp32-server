@@ -1,0 +1,109 @@
+--- a/src/api/chat_service.py
++++ b/src/api/chat_service.py
+@@ -17,2 +17,3 @@
+ from config.settings import get_settings
++from src.api.venue_scope import request_venue_code
+ from src.models.llm import get_llm_client
+@@ -189,3 +190,3 @@
+ 
+-def retrieve_for_question(question: str, artwork_id: Optional[str]) -> List[Dict]:
++def retrieve_for_question(question: str, artwork_id: Optional[str], museum_id: Optional[str] = None) -> List[Dict]:
+     return retrieve_knowledge_tool.invoke({
+@@ -193,2 +194,3 @@
+         "query": question,
++        **({"museum_id": museum_id} if museum_id is not None else {}),
+     })
+@@ -228,3 +230,4 @@
+ def generate_visual_followup(question: str, record: dict, language: str, external_system=None, *,
+-                             use_rag=True, question_history=None, enable_thinking=False, temperature=None, max_tokens=None, top_p=None):
++                             use_rag=True, question_history=None, enable_thinking=False, temperature=None, max_tokens=None, top_p=None,
++                             museum_id=None):
+     from src.vision.evidence import VisionEvidence
+@@ -243,3 +246,3 @@
+         try:
+-            retrieved = retrieve_chunks(artwork_id=selected.exhibit_id, query=f"{selected.name}：{question}")
++            retrieved = retrieve_chunks(artwork_id=selected.exhibit_id, query=f"{selected.name}：{question}", museum_id=museum_id)
+             chunks.extend({**item, "candidate": selected.name} for item in _apply_rag_gate(retrieved, None)
+@@ -349,2 +352,3 @@
+     metrics: Optional[Dict[str, Any]],
++    museum_id: Optional[str] = None,
+ ) -> List[Dict]:
+@@ -356,3 +360,3 @@
+         return _apply_rag_gate(
+-            retrieve_for_question(question, artwork_id),
++            retrieve_for_question(question, artwork_id, **({"museum_id": museum_id} if museum_id is not None else {})),
+             metrics,
+@@ -373,2 +377,3 @@
+     use_rag: bool = True,
++    museum_id: Optional[str] = None,
+ ) -> Tuple[str, List[Dict]]:
+@@ -415,3 +420,3 @@
+ 
+-    chunks = _retrieve_prompt_chunks(question, artwork_id, metrics)
++    chunks = _retrieve_prompt_chunks(question, artwork_id, metrics, museum_id=museum_id)
+     knowledge_text = format_knowledge_chunks(chunks, language=effective_language)
+@@ -498,3 +503,3 @@
+     )
+-    chunks = _retrieve_prompt_chunks(question, artwork_id, metrics)
++    chunks = _retrieve_prompt_chunks(question, artwork_id, metrics, museum_id=request_venue_code(extra_body))
+     knowledge_text = format_knowledge_chunks(chunks, language=effective_language)
+@@ -569,2 +574,3 @@
+         use_rag=use_rag,
++        museum_id=request_venue_code(extra_body),
+     )
+@@ -654,2 +660,3 @@
+         use_rag=use_rag,
++        museum_id=request_venue_code(extra_body),
+     )
+--- a/src/api/server.py
++++ b/src/api/server.py
+@@ -35,2 +35,3 @@
+ 
+ from config.settings import get_settings
++from src.api.venue_scope import request_venue_code
+@@ -1123,2 +1124,3 @@
+                             use_rag=body.vision_use_rag is not False,
++                            museum_id=request_venue_code(_request_extra_body(body)),
+                             enable_thinking=body.enable_thinking, temperature=body.temperature,
+--- a/src/tools/rag.py
++++ b/src/tools/rag.py
+@@ -78,3 +78,3 @@
+ 
+ 
+-def _api_catalog_overview_chunks(timeout: Optional[float] = None) -> List[Dict]:
++def _api_catalog_overview_chunks(timeout: Optional[float] = None, museum_id: Optional[str] = None) -> List[Dict]:
+@@ -82,3 +82,3 @@
+-    exhibits = get_rag_retrieve_client().list_exhibits(timeout=timeout)
++    exhibits = get_rag_retrieve_client().list_exhibits(timeout=timeout, museum_id=museum_id)
+     if not exhibits:
+         return []
+@@ -110,2 +110,3 @@
+     log_query: bool = True,
++    museum_id: Optional[str] = None,
+ ) -> List[Dict]:
+@@ -113,3 +114,3 @@
+         try:
+-            overview = _api_catalog_overview_chunks(timeout)
++            overview = _api_catalog_overview_chunks(timeout, museum_id=museum_id)
+             if overview:
+@@ -128,2 +129,3 @@
+         effective_query,
++        museum_id=museum_id,
+         collection=settings.rag_collection,
+@@ -142,2 +144,3 @@
+     log_query: bool = True,
++    museum_id: Optional[str] = None,
+ ) -> List[Dict]:
+@@ -151,2 +154,3 @@
+             log_query=log_query,
++            museum_id=museum_id,
+         )
+@@ -176,2 +180,3 @@
+     query: Optional[str] = None,
++    museum_id: Optional[str] = None,
+ ) -> List[Dict]:
+@@ -194,3 +199,3 @@
+     try:
+-        chunks = retrieve_chunks(artwork_id=artwork_id, query=query, top_k=top_k)
++        chunks = retrieve_chunks(artwork_id=artwork_id, query=query, top_k=top_k, museum_id=museum_id)
+         logger.info(f"[TOOL] Retrieved {len(chunks)} knowledge chunks")

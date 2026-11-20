@@ -393,7 +393,7 @@ diff --git a/core/providers/tools/server_plugins/plugin_executor.py b/core/provi
 diff --git a/core/providers/llm/openai/openai.py b/core/providers/llm/openai/openai.py
 --- a/core/providers/llm/openai/openai.py
 +++ b/core/providers/llm/openai/openai.py
-@@ -182,6 +182,12 @@
+@@ -182,7 +182,13 @@
              "stream": True,
              "tools": functions,
          }
@@ -410,30 +410,54 @@ diff --git a/core/providers/llm/openai/openai.py b/core/providers/llm/openai/ope
 diff --git a/core/connection.py b/core/connection.py
 --- a/core/connection.py
 +++ b/core/connection.py
-@@ -1499,6 +1499,10 @@
+@@ -1452,6 +1452,12 @@
+             return None
+ 
+         # 处理流式响应
++        from ksz_guide.search_parallel import attach_web_search
++        search_draft = (
++            [] if functions is not None
++            and attach_web_search(self, [], query=query or "", depth=depth)
++            else None
++        )
+         tool_call_flag = False
+         # 支持多个并行工具调用 - 使用列表存储
+         tool_calls_list = []  # 格式: [{"id": "", "name": "", "arguments": ""}]
+@@ -1501,6 +1507,9 @@
+ 
+                 if content is not None and len(content) > 0:
+                     if not tool_call_flag:
++                        if search_draft is not None:
++                            search_draft.append(content)
++                            continue
+                         cleaned_content = self._queue_emotional_tts_text(
+                             emotion_parser,
+                             content,
+@@ -1531,6 +1540,17 @@
+         if self.client_abort or current_sentence_id != self.sentence_id:
              return False
          # 处理function call
--        if tool_call_flag:
-+        from ksz_guide.search_parallel import attach_web_search
-+        tool_calls_list = attach_web_search(self, tool_calls_list, query=query or "", depth=depth)
++        if functions is not None and not tool_call_flag:
++            tool_calls_list = attach_web_search(self, tool_calls_list, query=query or "", depth=depth)
++        if search_draft is not None and not tool_calls_list:
++            for content in search_draft:
++                cleaned_content = self._queue_emotional_tts_text(
++                    emotion_parser, content, current_sentence_id
++                )
++                if cleaned_content:
++                    response_message.append(cleaned_content)
 +        if tool_calls_list:
 +            tool_call_flag = True
-+        if tool_call_flag:
+         if tool_call_flag:
              bHasError = False
              # 处理基于文本的工具调用格式
-             if len(tool_calls_list) == 0 and content_arguments:
-@@ -1616,6 +1621,11 @@
+@@ -1616,6 +1636,9 @@
                          self.tts.store_tts_text(current_sentence_id, streamed_text)
                          self.dialogue.put(Message(role="assistant", content=streamed_text))
                  response_message.clear()
-+                from ksz_guide.search_parallel import attach_web_search
-+
 +                tool_calls_list = attach_web_search(
 +                    self, tool_calls_list, query=query or "", depth=depth
 +                )
  
                  # 收集所有工具调用的 Future
                  futures_with_data = []
-                 for tool_call_data in tool_calls_list:
-
-

@@ -1,6 +1,6 @@
 --- a/src/api/server.py
 +++ b/src/api/server.py
-@@ -380,6 +380,9 @@
+@@ -388,6 +388,9 @@
  
  
  def _latest_user_text(body: ChatCompletionRequest) -> str:
@@ -10,7 +10,7 @@
      for message in reversed(body.messages):
          if message.role == "user":
              return _message_content_text(message.content)
-@@ -473,6 +476,11 @@
+@@ -481,6 +484,11 @@
      if not body.messages:
          return decide("rag", "empty_messages_default")
  
@@ -22,7 +22,7 @@
      current = body.messages[-1]
      if current.role == "tool":
          if _news_search_retry(body):
-@@ -542,7 +550,8 @@
+@@ -556,7 +564,8 @@
  
  def _uses_tools_protocol(body: ChatCompletionRequest) -> bool:
      return bool(
@@ -32,43 +32,29 @@
          or body.tool_choice is not None
          or any(
              message.role == "tool"
-@@ -555,7 +564,9 @@
+@@ -569,7 +578,10 @@
  
  def _request_extra_body(body: ChatCompletionRequest) -> Dict[str, Any]:
      extra_body = dict(body.extra_body or {})
+-    for key in ("device_id", "last_beacon_id", "language"):
 +    if body.ksz_prompt_context is not None:
 +        extra_body["ksz_prompt_context"] = body.ksz_prompt_context
-     for key in ("device_id", "last_beacon_id", "language", "venue_id", "venue_context",
-                 "device_location", "beacon_mac", "guide_policy_revision"):
++    for key in ("device_id", "last_beacon_id", "language", "venue_id", "venue_context",
++                "device_location", "beacon_mac", "guide_policy_revision"):
          value = getattr(body, key, None)
          if value is not None:
-@@ -805,28 +816,31 @@
-         if not payload["tools"]:
-             for key in ("tools", "tool_choice", "parallel_tool_calls"):
-                 payload.pop(key, None)
-     if _keeps_web_search(body, tool_result_turn):
-         tools = list(payload.get("tools") or [])
-         if not any(tool.get("function", {}).get("name") == "web_search" for tool in tools):
-             tools.extend(
-                 tool for tool in (body.tools or [])
-                 if tool.get("function", {}).get("name") == "web_search"
-             )
-         if tools:
-             payload["tools"] = tools
-             payload.setdefault("tool_choice", "auto")
-     search_tools = [
-         tool for tool in payload.get("tools", [])
-         if tool.get("function", {}).get("name") in {"web_search", "yuanbao_search"}
-     ]
-     if len(search_tools) > 1:
-         payload["parallel_tool_calls"] = True
+             extra_body.setdefault(key, value)
+@@ -860,6 +872,9 @@
+         ]
+         if len(search_tools) > 1:
+             payload["parallel_tool_calls"] = True
 +    if body.ksz_prompt_context is not None:
 +        from src.api.prompt_owner import owned_payload
 +        payload["messages"] = owned_payload(body, context, disable_tools)["messages"]
      return payload
  
  
-@@ -945,6 +959,8 @@
+@@ -1028,6 +1043,8 @@
          request: Request,
          x_museum_artwork_id: Optional[str] = Header(None, alias="X-Museum-Artwork-Id"),
      ):
@@ -77,7 +63,7 @@
          settings = get_settings()
          request.state.queue_ms = _request_queue_ms(request)
          api_log = get_api_logger()
-@@ -957,6 +973,9 @@
+@@ -1040,6 +1057,9 @@
              return _error_response(404, f"Model {body.model} not found", "model_not_found", param="model")
  
          visual_turn = resolve_visual_turn(body, _latest_user_text(body))
@@ -87,7 +73,7 @@
          focus_id = resolve_artwork_id(x_museum_artwork_id, body.model)
          if visual_turn.record and focus_id:
              verification = visual_turn.record.get("verification", {})
-@@ -1915,9 +1934,10 @@
+@@ -2000,11 +2020,12 @@
  
      rag_question = _tool_result_rag_query(body, question)
      use_rag = decision.rag_decision == "retrieve"
@@ -105,7 +91,7 @@
      )
      try:
          context, chunks, language = build_tools_context(
-@@ -1934,6 +1956,9 @@
+@@ -2021,6 +2042,9 @@
              tool_result_turn=tool_result_turn,
              disable_tools=suppress_tool_calls,
          )
@@ -115,7 +101,7 @@
          suppress_tool_calls = suppress_tool_calls or not payload.get("tools")
      except Exception as exc:
          logger.exception(f"[API-TOOLS] Museum 上下文构造失败 request_id={request_id}")
-@@ -1941,7 +1966,9 @@
+@@ -2028,7 +2052,9 @@
          api_log.emit(log_record)
          return _error_response(500, "Museum RAG 上下文构造失败", "tools_context_error")
  
@@ -128,7 +114,7 @@
              return StreamingResponse(
 --- a/src/api/chat_service.py
 +++ b/src/api/chat_service.py
-@@ -45,6 +45,9 @@
+@@ -54,6 +54,9 @@
      external_system: Optional[str], language: Optional[str] = None
  ) -> str:
      """保留上游身份指令，并追加不可被历史覆盖的事实边界。"""
@@ -138,7 +124,7 @@
      return render_language_prompt(
          language,
          "system_grounding",
-@@ -173,6 +176,9 @@
+@@ -182,6 +185,9 @@
  
  
  def _answer_on_topic(prompt, topics, language, external_system, *, source, **options):
@@ -148,12 +134,12 @@
      scope = render_language_prompt(
          language, "topic_scope", topics=json.dumps(topics, ensure_ascii=False), source=source,
      )
-@@ -433,6 +439,11 @@
+@@ -442,6 +448,11 @@
      """为携带 OpenAI Tools 的请求构造 Museum RAG 与空间上下文。"""
      language = _resolve_request_language(extra_body)
      effective_language = resolve_prompt_language(language)
 +    if extra_body and extra_body.get("ksz_prompt_context") is not None:
-+        chunks = _retrieve_prompt_chunks(question, artwork_id, metrics) if use_rag else []
++        chunks = _retrieve_prompt_chunks(question, artwork_id, metrics, museum_id=request_venue_code(extra_body)) if use_rag else []
 +        if not use_rag:
 +            _record_no_rag_metrics(metrics)
 +        return json.dumps(chunks, ensure_ascii=False) if chunks else "", chunks, language
