@@ -98,6 +98,9 @@ class Beacon:
     major: int | None = None
     minor: int | None = None
     place_beacon_count: int = 1
+    guide_mode: str = "rag"
+    fixed_rag_fallback: bool = False
+    museum_code: str = ""
 
     @classmethod
     def parse(cls, item):
@@ -110,12 +113,20 @@ class Beacon:
         for key in ("place_id", "place_name"):
             if not isinstance(item.get(key), str) or not item[key].strip():
                 raise GuideError("invalid_catalog_place")
+        if (not isinstance(item.get("guide_mode", "rag"), str)
+                or item.get("guide_mode", "rag") not in {"rag", "fixed", "off"}
+                or type(item.get("fixed_rag_fallback", False)) is not bool):
+            raise GuideError("invalid_guide_mode")
+        if not isinstance(item.get("museum_code", ""), str) or len(item.get("museum_code", "")) > 20:
+            raise GuideError("invalid_guide_museum")
         return cls(
             id=item["id"], mac=identity["mac"], beacon_id=item["beacon_id"],
             venue_id=item["venue_id"], area_id=item.get("area_id"),
             floor=str(item.get("floor") or ""), area=str(item.get("area") or ""),
             uuid=identity.get("uuid"), major=identity.get("major"), minor=identity.get("minor"),
             place_id=item["place_id"], place_name=item["place_name"].strip(), place_beacon_count=count,
+            guide_mode=item.get("guide_mode", "rag"), fixed_rag_fallback=item.get("fixed_rag_fallback", False),
+            museum_code=str(item.get("museum_code") or ""),
         )
 
     def matches(self, observed):

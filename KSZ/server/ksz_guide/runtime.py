@@ -462,7 +462,10 @@ class GuideRuntime:
             if state.pending:
                 state.pending.location_revision = state.location_revision
         state.baseline_beacon = beacon
-        if state.confirmed_zone != beacon.zone:
+        if beacon.guide_mode == "off":
+            state.pending = None
+            self._announcement_status(state, "place_guide_disabled")
+        elif state.confirmed_zone != beacon.zone:
             self._announcement_status(state, "first_beacon_disabled")
         elif state.last_announced_zone == beacon.zone:
             state.pending = None
@@ -667,6 +670,10 @@ class GuideRuntime:
         now = self.clock()
         if not pending or not state.current or not state.policy:
             return
+        if state.current.guide_mode == "off":
+            state.pending = None
+            self._announcement_status(state, "place_guide_disabled")
+            return
         if not owner or not state.owner_ready:
             self._announcement_status(state, "session_not_ready")
             return
@@ -729,6 +736,25 @@ class GuideRuntime:
         await asyncio.sleep(0)
 
     async def _announce(self, conn, beacon):
+        if beacon.guide_mode == "off":
+            return False
+        if beacon.guide_mode == "fixed":
+            from .fixed import play_fixed
+            try:
+                return await play_fixed(self, conn, beacon)
+            except Exception as error:
+                state = self.devices.get(mac_address(conn.device_id))
+                if state:
+                    state.rejection = str(error) if isinstance(error, GuideError) else "fixed_playback_failed"
+                log.warning("Fixed guide unavailable: %s", type(error).__name__)
+                if not beacon.fixed_rag_fallback or conn.client_abort:
+                    return False
+                current = self.location(conn.device_id)
+                if current is None or current.zone != beacon.zone or current.guide_mode != "fixed":
+                    return False
+        return await self._announce_rag(conn, beacon)
+
+    async def _announce_rag(self, conn, beacon):
         from core.handle.sendAudioHandle import send_tts_message
         from core.utils.output_counter import check_device_output_limit
 

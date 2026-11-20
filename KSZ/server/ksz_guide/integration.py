@@ -179,6 +179,9 @@ def on_hello_complete(conn):
 
 
 def on_disconnect(conn):
+    tour = getattr(conn, "ksz_fixed_tour", None)
+    if tour and tour.task and not tour.task.done():
+        tour.task.cancel()
     close_thinking(conn)
     interrupt_response(conn, "disconnected")
     close_location(conn)
@@ -309,6 +312,14 @@ def track_chat(function):
     @functools.wraps(function)
     def tracked(conn, *args, **kwargs):
         cancel_idle_greeting(conn)
+        if (kwargs.get("depth", args[1] if len(args) > 1 else 0) == 0
+                and getattr(conn, "ksz_fixed_tour", None) is not None
+                and getattr(conn, "loop", None) is not None):
+            from .fixed import resume_fixed_chat, stop_fixed
+            asyncio.run_coroutine_threadsafe(stop_fixed(conn), conn.loop).result()
+            conn.client_abort = False
+            if resume_fixed_chat(conn, args[0] if args else kwargs.get("query")):
+                return True
         with thinking_scope():
             if runtime_for(conn) is None:
                 return function(conn, *args, **kwargs)

@@ -62,6 +62,8 @@ services:
       - KSZ_GUIDE_USER_QUIET_MS=${KSZ_GUIDE_USER_QUIET_MS:-15000}
       - KSZ_MANAGEMENT_API_URL=${KSZ_MANAGEMENT_API_URL:-http://127.0.0.1:14000/api/v1/integration}
       - KSZ_MANAGEMENT_API_TOKEN=${KSZ_MANAGEMENT_API_TOKEN:-}
+      - KSZ_RAG_API_URL=${KSZ_RAG_API_URL:-}
+      - KSZ_RAG_API_KEY=${KSZ_RAG_API_KEY:-}
       - KSZ_GUIDE_CONTROL_TOKEN=${KSZ_GUIDE_CONTROL_TOKEN:-}
     volumes:
       - ${DATA_DIR:-./data}:/opt/xiaozhi-esp32-server/data
