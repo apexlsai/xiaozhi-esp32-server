@@ -106,7 +106,7 @@
 
 ### 修复
 
-- 扩大 Agent 联网搜索意图：覆盖「搜一下」、会议举办地、附近美食及「有什么名人/博物馆」等未带「搜索/最新」字样的问题，避免工具在到达模型前被摘掉；场馆/产品 RAG 优先级不变。ce:65 对照见新闻检索文档。
+- `web_search` 在已配置且非问候/闲聊时强制调用，不再等模型自行决定；明确搜索意图（含「搜/查/联网/这两天大事」等）同时并行触发 `yuanbao_search`，两路结果一并返回。问候与 `tool_choice=none`、工具续答仍关闭。场馆/产品仍先走 RAG，但同样强制 `web_search`。ce:65 对照见新闻检索文档。
 
 - 修正 `KSZ/patches/yuanbao-search.patch` hunk 行数（`+1,224` → `+1,225`），补齐末尾 `return ActionResponse(...)`，避免 `git apply` 静默截断导致函数返回 `None` 并触发 `'NoneType' object has no attribute 'result'`；补丁校验与 Python 语法检查通过。
 

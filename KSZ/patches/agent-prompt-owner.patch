@@ -42,15 +42,25 @@
                  "device_location", "beacon_mac", "guide_policy_revision"):
          value = getattr(body, key, None)
          if value is not None:
-@@ -777,12 +788,15 @@
+@@ -805,28 +816,31 @@
          if not payload["tools"]:
              for key in ("tools", "tool_choice", "parallel_tool_calls"):
                  payload.pop(key, None)
+     if _keeps_web_search(body, tool_result_turn):
+         tools = list(payload.get("tools") or [])
+         if not any(tool.get("function", {}).get("name") == "web_search" for tool in tools):
+             tools.extend(
+                 tool for tool in (body.tools or [])
+                 if tool.get("function", {}).get("name") == "web_search"
+             )
+         if tools:
+             payload["tools"] = tools
+             payload.setdefault("tool_choice", "auto")
      search_tools = [
          tool for tool in payload.get("tools", [])
          if tool.get("function", {}).get("name") in {"web_search", "yuanbao_search"}
      ]
-     if len(search_tools) > 1 and payload.get("parallel_tool_calls") is None:
+     if len(search_tools) > 1:
          payload["parallel_tool_calls"] = True
 +    if body.ksz_prompt_context is not None:
 +        from src.api.prompt_owner import owned_payload
@@ -82,16 +92,20 @@
      rag_question = _tool_result_rag_query(body, question)
      use_rag = decision.rag_decision == "retrieve"
 -    suppress_tool_calls = (
--        decision.route != "tool"
--        or not decision.tool_available
+-        not (
+-            (decision.route == "tool" and decision.tool_available)
+-            or _keeps_web_search(body, tool_result_turn)
+-        )
 +    from src.api.prompt_owner import permits_evidence_search
 +    evidence_search = permits_evidence_search(body, decision)
 +    suppress_tool_calls = not (
-+        (decision.route == "tool" and decision.tool_available) or evidence_search
++        (decision.route == "tool" and decision.tool_available)
++        or evidence_search
++        or _keeps_web_search(body, tool_result_turn)
      )
      try:
          context, chunks, language = build_tools_context(
-@@ -1934,6 +1954,9 @@
+@@ -1934,6 +1956,9 @@
              tool_result_turn=tool_result_turn,
              disable_tools=suppress_tool_calls,
          )
@@ -101,7 +115,7 @@
          suppress_tool_calls = suppress_tool_calls or not payload.get("tools")
      except Exception as exc:
          logger.exception(f"[API-TOOLS] Museum 上下文构造失败 request_id={request_id}")
-@@ -1941,7 +1964,9 @@
+@@ -1941,7 +1966,9 @@
          api_log.emit(log_record)
          return _error_response(500, "Museum RAG 上下文构造失败", "tools_context_error")
  

@@ -263,19 +263,20 @@ diff --git a/plugins_func/functions/get_news_from_chinanews.py b/plugins_func/fu
 diff --git a/plugins_func/functions/web_search.py b/plugins_func/functions/web_search.py
 --- a/plugins_func/functions/web_search.py
 +++ b/plugins_func/functions/web_search.py
-@@ -15,7 +15,10 @@
+@@ -15,7 +15,11 @@
  logger = setup_logging()
  
  _DEFAULT_DESCRIPTION = (
 -    "联网搜索工具。当用户明确需要联网搜索问题时使用此工具。"
 +    "联网搜索工具。用户询问具体事件、人物或话题的最新进展，以及当前政策、活动、价格等时效性事实时，"
 +    "先调用本工具核实，再依据结果回答，不凭记忆断言或直接声称无法确认。"
++    "多个搜索工具都适合且没有来源偏好时并行调用并综合结果。"
 +    "搜索词保留用户指定的话题和时间范围。随机听一条新闻使用新闻播报工具；"
 +    "闲聊、创作和稳定常识无需搜索。"
  )
  
  WEB_SEARCH_FUNCTION_DESC = {
-@@ -63,12 +66,15 @@
+@@ -63,12 +67,15 @@
      if not webpages:
          return "未找到相关搜索结果。"
  
@@ -389,3 +390,50 @@ diff --git a/core/providers/tools/server_plugins/plugin_executor.py b/core/provi
 +                property_schema["enum"] = list(dict.fromkeys(choices)) or [""]
          except (KeyError, TypeError):
              pass
+diff --git a/core/providers/llm/openai/openai.py b/core/providers/llm/openai/openai.py
+--- a/core/providers/llm/openai/openai.py
++++ b/core/providers/llm/openai/openai.py
+@@ -182,6 +182,12 @@
+             "stream": True,
+             "tools": functions,
+         }
++        search_tools = {
++            ((item.get("function") or {}).get("name") if isinstance(item, dict) else None)
++            for item in (functions or [])
++        } & {"web_search", "yuanbao_search"}
++        if len(search_tools) > 1:
++            request_params["parallel_tool_calls"] = True
+ 
+         optional_params = {
+             "max_tokens": kwargs.get("max_tokens", self.max_tokens),
+             "temperature": kwargs.get("temperature", self.temperature),
+diff --git a/core/connection.py b/core/connection.py
+--- a/core/connection.py
++++ b/core/connection.py
+@@ -1499,6 +1499,10 @@
+             return False
+         # 处理function call
+-        if tool_call_flag:
++        from ksz_guide.search_parallel import attach_web_search
++        tool_calls_list = attach_web_search(self, tool_calls_list, query=query or "", depth=depth)
++        if tool_calls_list:
++            tool_call_flag = True
++        if tool_call_flag:
+             bHasError = False
+             # 处理基于文本的工具调用格式
+             if len(tool_calls_list) == 0 and content_arguments:
+@@ -1616,6 +1621,11 @@
+                         self.tts.store_tts_text(current_sentence_id, streamed_text)
+                         self.dialogue.put(Message(role="assistant", content=streamed_text))
+                 response_message.clear()
++                from ksz_guide.search_parallel import attach_web_search
++
++                tool_calls_list = attach_web_search(
++                    self, tool_calls_list, query=query or "", depth=depth
++                )
+ 
+                 # 收集所有工具调用的 Future
+                 futures_with_data = []
+                 for tool_call_data in tool_calls_list:
+
+

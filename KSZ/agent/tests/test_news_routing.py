@@ -17,6 +17,8 @@ NEWS = {"type": "function", "function": {
     "name": "get_news_from_newsnow", "description": "随机新闻；具体话题使用可用的联网搜索工具。",
     "parameters": {"type": "object"},
 }}
+FORCE_WEB = {"type": "function", "function": {"name": "web_search"}}
+FORCE_YUANBAO = {"type": "function", "function": {"name": "yuanbao_search"}}
 
 
 @pytest.fixture(autouse=True)
@@ -31,6 +33,8 @@ def gate(monkeypatch):
     "搜一下，APEC2026年在哪里举办？", "介绍一下 APEC 会议主场在哪？",
     "APEC会议2026年在哪儿举办？", "给我说一下附近有什么好吃的。",
     "说一下安阳市有什么名人？", "给我说一下阿拉伯有什么博物馆？",
+    "最近的深圳会议。", "中慧公司是做什么的？", "附近有什么美食推荐？",
+    "说一下这两天发生了什么大事。",
 ])
 def test_current_fact_questions_keep_search_tool(query):
     body = ChatCompletionRequest(model="museum-guide-chat", messages=[{"role": "user", "content": query}], tools=[SEARCH, NEWS])
@@ -68,17 +72,96 @@ def test_search_result_turn_does_not_request_another_tool():
     assert decision.route == "tool" and not decision.tool_available
 
 
-def test_available_search_tools_can_run_in_parallel(monkeypatch):
+def test_available_search_tools_force_web_and_keep_yuanbao(monkeypatch):
     from config.settings import get_settings
     monkeypatch.setattr(server, "get_settings", get_settings)
     body = ChatCompletionRequest(
         model="museum-guide-chat",
         messages=[{"role": "user", "content": "请联网核实最新进展。"}],
         tools=[SEARCH, YUANBAO],
+        parallel_tool_calls=False,
     )
     payload = server._tools_rag_payload(body, context="", tool_result_turn=False)
     assert payload["tools"] == [SEARCH, YUANBAO]
     assert payload["parallel_tool_calls"] is True
+    assert payload["tool_choice"] == FORCE_WEB
+
+
+def test_smalltalk_does_not_become_search():
+    body = ChatCompletionRequest(
+        model="museum-guide-chat",
+        messages=[{"role": "user", "content": "最近怎么样"}],
+        tools=[SEARCH, NEWS],
+    )
+    decision = server._route_chat_request(body)
+    assert decision.reason != "search_tool_intent"
+
+
+def test_web_search_forced_when_route_is_not_search(monkeypatch):
+    from config.settings import get_settings
+    monkeypatch.setattr(server, "get_settings", get_settings)
+    body = ChatCompletionRequest(
+        model="museum-guide-chat",
+        messages=[{"role": "user", "content": "介绍一下这个展厅。"}],
+        tools=[SEARCH, NEWS],
+    )
+    payload = server._tools_rag_payload(body, context="", tool_result_turn=False, disable_tools=True)
+    assert [tool["function"]["name"] for tool in payload["tools"]] == ["web_search"]
+    assert payload["tool_choice"] == FORCE_WEB
+
+
+def test_real_search_keeps_yuanbao_with_forced_web_search(monkeypatch):
+    from config.settings import get_settings
+    monkeypatch.setattr(server, "get_settings", get_settings)
+    body = ChatCompletionRequest(
+        model="museum-guide-chat",
+        messages=[{"role": "user", "content": "说一下这两天发生了什么大事。"}],
+        tools=[SEARCH, YUANBAO],
+    )
+    payload = server._tools_rag_payload(body, context="", tool_result_turn=False, disable_tools=True)
+    assert [tool["function"]["name"] for tool in payload["tools"]] == ["web_search", "yuanbao_search"]
+    assert payload["tool_choice"] == FORCE_WEB
+    assert payload["parallel_tool_calls"] is True
+
+
+def test_greeting_does_not_force_web_search(monkeypatch):
+    from config.settings import get_settings
+    monkeypatch.setattr(server, "get_settings", get_settings)
+    body = ChatCompletionRequest(
+        model="museum-guide-chat",
+        messages=[{"role": "user", "content": "你好"}],
+        tools=[SEARCH],
+    )
+    payload = server._tools_rag_payload(body, context="", tool_result_turn=False, disable_tools=True)
+    assert "tools" not in payload
+
+
+def test_web_search_stays_off_after_tool_result(monkeypatch):
+    from config.settings import get_settings
+    monkeypatch.setattr(server, "get_settings", get_settings)
+    body = ChatCompletionRequest(
+        model="museum-guide-chat",
+        messages=[
+            {"role": "user", "content": "请联网核实最新进展。"},
+            {"role": "tool", "tool_call_id": "call_test", "content": "实际搜索结果"},
+        ],
+        tools=[SEARCH, NEWS],
+    )
+    payload = server._tools_rag_payload(body, context="", tool_result_turn=True, disable_tools=True)
+    assert "tools" not in payload
+
+
+def test_web_search_respects_tool_choice_none(monkeypatch):
+    from config.settings import get_settings
+    monkeypatch.setattr(server, "get_settings", get_settings)
+    body = ChatCompletionRequest(
+        model="museum-guide-chat",
+        messages=[{"role": "user", "content": "介绍一下这个展厅。"}],
+        tools=[SEARCH],
+        tool_choice="none",
+    )
+    payload = server._tools_rag_payload(body, context="", tool_result_turn=False, disable_tools=True)
+    assert "tools" not in payload
 
 
 def news_result_body(*, content=None, question="再看看娱乐圈的新闻。", tools=None, choice=None, name="get_news_from_newsnow"):
@@ -101,10 +184,11 @@ def test_misrouted_news_topic_can_retry_only_search(monkeypatch):
     assert decision.reason == "news_search_retry" and decision.tool_available
     payload = server._tools_rag_payload(body, context="", tool_result_turn=True)
     assert payload["tools"] == [SEARCH]
-    assert payload["tool_choice"] == "auto"
+    assert payload["tool_choice"] == FORCE_WEB
     assert "再看看娱乐圈的新闻。" in json.dumps(payload, ensure_ascii=False)
     disabled = server._tools_rag_payload(body, context="", tool_result_turn=True, disable_tools=True)
-    assert "tools" not in disabled
+    assert disabled["tools"] == [SEARCH]
+    assert disabled["tool_choice"] == FORCE_WEB
 
 
 def test_misrouted_news_topic_can_retry_with_yuanbao(monkeypatch):
@@ -115,7 +199,7 @@ def test_misrouted_news_topic_can_retry_with_yuanbao(monkeypatch):
     assert decision.reason == "news_search_retry" and decision.tool_available
     payload = server._tools_rag_payload(body, context="", tool_result_turn=True)
     assert payload["tools"] == [YUANBAO]
-    assert payload["tool_choice"] == "auto"
+    assert payload["tool_choice"] == FORCE_YUANBAO
 
 
 @pytest.mark.parametrize("kwargs", [
@@ -163,5 +247,6 @@ def test_api_passes_recovery_search_call_instead_of_empty_fallback(monkeypatch, 
     response = TestClient(server.get_app()).post("/v1/chat/completions", json=body)
     assert response.status_code == 200
     assert len(captured) == 1 and captured[0]["tools"] == [SEARCH]
+    assert captured[0]["tool_choice"] == FORCE_WEB
     assert "call_search" in response.text and "web_search" in response.text
     assert "模型暂时未返回可用内容" not in response.text

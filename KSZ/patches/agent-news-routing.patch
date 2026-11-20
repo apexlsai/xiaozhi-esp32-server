@@ -1,17 +1,21 @@
 diff --git a/src/api/server.py b/src/api/server.py
 --- a/src/api/server.py
 +++ b/src/api/server.py
-@@ -340,8 +340,19 @@
+@@ -340,8 +340,25 @@
          re.compile(r"weather|forecast|temperature|天气|气温|预报", re.IGNORECASE),
      ),
      (
 +        "search",
 +        re.compile(
 +            r"联网|上网|搜索|检索|核实|最新|近期|实时|近况|进展|"
-+            r"搜一下|搜一搜|搜下|查一下|查一查|查下|"
-+            r"(?:会议|大会|APEC).*(?:何时|什么时候|在哪|哪儿|哪里|举办|主场)|"
-+            r"(?:何时|什么时候|在哪|哪儿|哪里).*(?:开|举行|成立|举办)|"
-+            r"好吃|美食|餐厅|(?:有什么|有哪些).*(?:名人|博物馆)|"
++            r"搜一下|搜一搜|搜下|查一下|查一查|查下|元宝|"
++            r"这两天|这两日|近两天|发生了什么|有什么大事|"
++            r"最近的|(?:最近).*(?:会议|新闻|政策|进展|活动)|"
++            r"(?:会议|大会|峰会|论坛|APEC).*(?:何时|什么时候|在哪|哪儿|哪里|举办|主场|开幕)|"
++            r"(?:何时|什么时候|在哪|哪儿|哪里).*(?:开|举行|成立|举办|开幕)|"
++            r"附近.+(?:好吃|美食|餐厅|饭店)|好吃的|美食推荐|"
++            r"(?:有什么|有哪些).*(?:名人|博物馆)|"
++            r"公司是(?:谁|做什么|干什么)|什么公司|哪家公司|"
 +            r"web.?search|search.*(?:web|online)|look.*up|latest|recent.*(?:news|updates)|"
 +            r"current.*(?:news|policy|price)|検索|調べ|최신|검색",
 +            re.IGNORECASE,
@@ -25,7 +29,7 @@ diff --git a/src/api/server.py b/src/api/server.py
          re.compile(r"news|headline|资讯|新闻|热点", re.IGNORECASE),
      ),
  )
-@@ -465,6 +476,8 @@
+@@ -465,6 +482,8 @@
  
      current = body.messages[-1]
      if current.role == "tool":
@@ -34,7 +38,7 @@ diff --git a/src/api/server.py b/src/api/server.py
          reason = "tool_error" if _latest_tool_error(body) else "tool_result"
          return decide("tool", reason, tool_available=False)
  
-@@ -592,6 +605,16 @@
+@@ -592,6 +611,49 @@
              if tool_call.id == tool_message.tool_call_id:
                  return tool_call.function.name
      return None
@@ -48,10 +52,43 @@ diff --git a/src/api/server.py b/src/api/server.py
 +        and _message_content_text(body.messages[-1].content).startswith("未配置新闻来源或类别：")
 +        and not re.search(r"来源|来自|只用|只要|source|from", _latest_user_text(body), re.IGNORECASE)
 +    )
++
++
++def _keeps_web_search(body: ChatCompletionRequest, tool_result_turn: bool = False) -> bool:
++    if body.tool_choice == "none":
++        return False
++    context = getattr(body, "ksz_prompt_context", None) or {}
++    if isinstance(context, dict) and context.get("turn", {}).get("tool_depth_exhausted"):
++        return False
++    if tool_result_turn and not _news_search_retry(body):
++        return False
++    names = _offered_tool_names(body)
++    if not names & {"web_search", "yuanbao_search"}:
++        return False
++    question = _latest_user_text(body)
++    if visual_intent(question) in {"capture", "identity"}:
++        return False
++    return not any(
++        category in {"greeting", "identity", "identity_story", "thanks", "goodbye", "smalltalk"}
++        and pattern.search(question)
++        for category, pattern in _DIRECT_INTENT_PATTERNS
++    )
++
++
++def _is_real_search(body: ChatCompletionRequest) -> bool:
++    if body.tool_choice == "none" or "yuanbao_search" not in _offered_tool_names(body):
++        return False
++    if _news_search_retry(body):
++        return True
++    question = _latest_user_text(body)
++    return any(
++        category == "search" and intent_pattern.search(question)
++        for category, intent_pattern, _tool_pattern in _TOOL_INTENT_PATTERNS
++    )
  
  
  def _latest_camera_answer(body: ChatCompletionRequest) -> Optional[str]:
-@@ -742,10 +765,16 @@
+@@ -742,10 +785,16 @@
          value = getattr(body, key, None)
          if value is not None:
              payload[key] = value
@@ -69,24 +106,55 @@ diff --git a/src/api/server.py b/src/api/server.py
      elif visual_intent(_latest_user_text(body)) not in {"capture", "identity"}:
          payload["tools"] = [
              tool for tool in payload.get("tools", [])
-@@ -758,4 +787,10 @@
+@@ -758,4 +807,38 @@
          if not payload["tools"]:
              for key in ("tools", "tool_choice", "parallel_tool_calls"):
                  payload.pop(key, None)
-+    search_tools = [
-+        tool for tool in payload.get("tools", [])
-+        if tool.get("function", {}).get("name") in {"web_search", "yuanbao_search"}
-+    ]
-+    if len(search_tools) > 1 and payload.get("parallel_tool_calls") is None:
-+        payload["parallel_tool_calls"] = True
++    if _keeps_web_search(body, tool_result_turn):
++        tools = list(payload.get("tools") or [])
++        for name in ("web_search", "yuanbao_search"):
++            if name == "yuanbao_search" and not _is_real_search(body):
++                tools = [tool for tool in tools if tool.get("function", {}).get("name") != name]
++                continue
++            if not any(tool.get("function", {}).get("name") == name for tool in tools):
++                tools.extend(
++                    tool for tool in (body.tools or [])
++                    if tool.get("function", {}).get("name") == name
++                )
++        if tools:
++            payload["tools"] = tools
++            force = _news_search_retry(body) or any(
++                category == "search" and intent_pattern.search(_latest_user_text(body))
++                for category, intent_pattern, _tool_pattern in _TOOL_INTENT_PATTERNS
++            ) or not any(
++                intent_pattern.search(_latest_user_text(body))
++                for category, intent_pattern, _tool_pattern in _TOOL_INTENT_PATTERNS
++            )
++            has_web = any(tool.get("function", {}).get("name") == "web_search" for tool in tools)
++            has_yuanbao = any(tool.get("function", {}).get("name") == "yuanbao_search" for tool in tools)
++            if force and has_web:
++                payload["tool_choice"] = {"type": "function", "function": {"name": "web_search"}}
++            elif force and has_yuanbao:
++                payload["tool_choice"] = {"type": "function", "function": {"name": "yuanbao_search"}}
++            else:
++                payload.setdefault("tool_choice", "auto")
++        search_tools = [
++            tool for tool in payload.get("tools", [])
++            if tool.get("function", {}).get("name") in {"web_search", "yuanbao_search"}
++        ]
++        if len(search_tools) > 1:
++            payload["parallel_tool_calls"] = True
      return payload
-@@ -1898,8 +1927,7 @@
+@@ -1898,8 +1972,9 @@
      rag_question = _tool_result_rag_query(body, question)
      use_rag = decision.rag_decision == "retrieve"
      suppress_tool_calls = (
 -        tool_result_turn
 -        or decision.route != "tool"
-+        decision.route != "tool"
-         or not decision.tool_available
+-        or not decision.tool_available
++        not (
++            (decision.route == "tool" and decision.tool_available)
++            or _keeps_web_search(body, tool_result_turn)
++        )
      )
      try:
