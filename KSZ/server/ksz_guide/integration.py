@@ -5,6 +5,7 @@ import logging
 import os
 import functools
 import threading
+import re
 from urllib.parse import urlparse
 
 from aiohttp import web
@@ -54,6 +55,11 @@ from .playback import (
 
 log = logging.getLogger(__name__)
 chat_lock = threading.Lock()
+_INTERNAL_BEACON_TEXT = re.compile(r"^NFC_[A-Za-z0-9_-]{4,}$")
+
+
+def is_internal_beacon_text(text):
+    return bool(_INTERNAL_BEACON_TEXT.fullmatch((text or "").strip()))
 
 
 def embedding_intent_enabled(conn):

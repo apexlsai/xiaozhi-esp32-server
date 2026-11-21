@@ -168,7 +168,7 @@ class UnifiedToolHandler:
 
             self.logger.debug(f"调用函数: {function_name}, 参数: {arguments}")
 
-            # 发送工具调用显示消息到设备
+            # 保留工具标记，便于设备端调试实际命中的工具。
             try:
                 display_name = function_name
                 mcp_client = getattr(self.conn, "mcp_client", None)

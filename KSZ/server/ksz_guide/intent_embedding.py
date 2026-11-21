@@ -21,12 +21,21 @@ DEFAULT_EXAMPLES = {
         "请用元宝查一下这个事件的最新进展",
         "元宝搜一下这个公司的情况",
         "用腾讯元宝联网核实这个消息",
+        "用元宝搜索一下黄仁勋离开英伟达的新闻",
+        "用元宝搜索一下最近的国际新闻",
     ],
     "web_search": [
         "联网搜索这个问题",
         "上网查一下最新消息",
         "搜索一下这个活动什么时候举行",
         "帮我检索这个事件的实时进展",
+        "帮我搜一下今天的新闻",
+        "查一下最近的新闻",
+        "今天有什么新闻",
+        "看一下今天的娱乐圈新闻",
+        "深圳的APEC会议结束了吗",
+        "搜索一下深圳市康硕展人工智能科技有限公司",
+        "搜索一下黄仁勋离开英伟达的新闻",
     ],
     "take_photo": [
         "拍张照片看看这是什么",
@@ -105,12 +114,25 @@ def extract_weather_location(text):
 
 def extract_search_query(text):
     query = re.sub(
-        r"^\s*(?:请|帮我|麻烦)?\s*(?:用(?:腾讯)?元宝|元宝|联网|上网|网络)?\s*(?:搜索|搜一下|搜一搜|搜下|查一下|查一查|查询|检索)\s*",
+        r"^\s*(?:请|帮我|麻烦)?\s*(?:用(?:腾讯)?元宝|元宝|联网|上网|网络)?\s*(?:搜索|搜|查|查询|检索)(?:一下|一搜|一查|下)?\s*",
         "",
         text,
         flags=re.IGNORECASE,
     )
     return query.strip(" ，,。.!！？?") or text.strip()
+
+
+def explicit_tool_name(text):
+    normalized = re.sub(r"\s+", "", text or "")
+    if re.search(r"天气|气温|温度|降雨|下雨|预报", normalized):
+        return "weather"
+    if "元宝" in normalized and re.search(r"搜索|搜|查|查询|检索", normalized):
+        return "yuanbao_search"
+    if re.search(r"联网|上网|网络搜索|网页搜索", normalized):
+        return "web_search"
+    if re.search(r"搜索|搜一下|搜一搜|搜下|检索", normalized):
+        return "web_search"
+    return None
 
 
 class EmbeddingIntentClassifier:
@@ -230,6 +252,20 @@ class EmbeddingIntentClassifier:
     async def classify(self, text, available_tools, language="zh_CN"):
         if not self.configured or not isinstance(text, str) or not text.strip():
             return None
+        explicit_name = explicit_tool_name(text)
+        if explicit_name:
+            tool_name = TOOL_NAMES[explicit_name]
+            if tool_name not in available_tools:
+                return None
+            arguments = {}
+            if explicit_name == "weather":
+                location = extract_weather_location(text)
+                if location:
+                    arguments["location"] = location
+                arguments["lang"] = language
+            else:
+                arguments["query"] = extract_search_query(text)
+            return {"function_call": {"name": tool_name, "arguments": arguments}}
         references = await self._references_ready()
         query = (await self._embed([text]))[0]
         ranked = sorted(
@@ -241,7 +277,8 @@ class EmbeddingIntentClassifier:
         second_score = ranked[1][1] if len(ranked) > 1 else -1
         match = IntentMatch(best_name, best_score, best_score - second_score)
         if match.score < self.threshold or match.margin < self.margin_threshold:
-            return None
+            if match.name != "web_search" or match.score < 0.60:
+                return None
         tool_name = TOOL_NAMES.get(match.name)
         if tool_name and tool_name not in available_tools:
             return None

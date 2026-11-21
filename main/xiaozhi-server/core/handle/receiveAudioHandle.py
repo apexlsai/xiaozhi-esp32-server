@@ -10,6 +10,7 @@ from core.handle.abortHandle import handleAbortMessage
 from core.handle.intentHandler import handle_user_intent
 from core.utils.output_counter import check_device_output_limit
 from core.handle.sendAudioHandle import send_stt_message, SentenceType
+from core.utils.ksz_extension import guide
 
 TAG = __name__
 
@@ -74,6 +75,10 @@ async def startToChat(conn: "ConnectionHandler", text):
         conn.current_speaker = speaker_name
     else:
         conn.current_speaker = None
+
+    if guide and guide.is_internal_beacon_text(actual_text):
+        conn.logger.bind(tag=TAG).debug("忽略设备内部信标文本: %s", actual_text)
+        return
 
     if conn.need_bind:
         await check_bind_device(conn)
