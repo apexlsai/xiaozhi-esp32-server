@@ -60,7 +60,7 @@ index 1a72d6d..fd46640c 100644
  
  TAG = __name__
  
-@@ -37,6 +40,12 @@ async def handle_user_intent(conn: "ConnectionHandler", text):
+@@ -37,6 +40,14 @@ async def handle_user_intent(conn: "ConnectionHandler", text):
      if await checkWakeupWords(conn, filtered_text):
          return True
  
@@ -69,6 +69,8 @@ index 1a72d6d..fd46640c 100644
 +        if embedding_result is not None:
 +            conn.sentence_id = str(uuid.uuid4().hex)
 +            return await process_intent_result(conn, embedding_result, text)
++        if conn.intent_type == "embedding":
++            return False
 +
      if conn.intent_type == "function_call":
          # 使用支持function calling的聊天方法,不再进行意图分析
