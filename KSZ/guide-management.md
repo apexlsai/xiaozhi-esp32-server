@@ -71,6 +71,10 @@ docker compose --env-file .env --profile mqtt up -d --build xiaozhi-esp32-server
 
 `KSZ_GUIDE_ANNOUNCE_ON_FIRST_BEACON` 对所有位置生效：默认首次有效信标触发，设为 `0` 时首次只建立基准，后续有效信标变化才触发。语音重连、设备重新启动或策略刷新不会清除当前服务进程内最近播报的位置记录，因此不会仅因重新建立基准就重复讲解；服务重启后内存记录重建。修改环境变量后需重新创建 server 容器。
 
+### Embedding 意图识别
+
+设置 `KSZ_INTENT_EMBEDDING_ENABLED=1` 后，server 使用 `KSZ_INTENT_EMBEDDING_BASE_URL` 对用户文字做向量分类。分类结果直接路由天气、`web_search`、`yuanbao_search` 和 `self_camera_take_photo`，工具返回内容再交给主 LLM 生成。未命中分类阈值的请求直接进入主 LLM。`KSZ_INTENT_EMBEDDING_MODEL`、`KSZ_INTENT_EMBEDDING_DIMENSIONS`、`KSZ_INTENT_EMBEDDING_THRESHOLD` 和 `KSZ_INTENT_EMBEDDING_MARGIN` 分别控制模型、维度、最低相似度和第一二名分差。
+
 RSSI 门槛、扫描窗口、稳定判定、蓝牙发射功率及固件自身冷却仍由 management 下发策略和固件实现控制；以上服务端变量不会改变旧固件的扫描或上报行为。
 
 自动讲解先由服务端填充并播报固定位置句，再接模型生成的简短介绍。例如：“您现在位于3F，当代萍乡规划展，出口。”开场不经过模型改写，也不等待模型首字。`{location}` 由已校验信标的楼层、区域和位置名称组成，楼层和区域为空时跳过；地点名称保留登记值，语言按本轮绑定语言选择。

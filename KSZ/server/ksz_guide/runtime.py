@@ -247,7 +247,17 @@ class GuideRuntime:
             "expires_at": min(policy.data["expires_at"], self.wall_clock() + max(0, policy.deadline - self.clock())),
         }
 
+    def _release_unfinished_fixed(self, state, conn):
+        tour = getattr(conn, "ksz_fixed_tour", None)
+        if tour is None or tour.next_segment >= len(tour.guide["segments"]):
+            return
+        zone = tour.key[2]
+        state.location_announce_times.pop(zone, None)
+        if state.last_announced_zone == zone:
+            state.last_announced_zone = None
+
     def _invalidate(self, state, *, reset_baseline=False):
+        self._release_unfinished_fixed(state, state.owner)
         state.current = None
         state.pending = None
         state.location_revision += 1
@@ -572,6 +582,8 @@ class GuideRuntime:
             else:
                 attempt = state.owner_attempt + 1
             old = state.owner
+            if old is not None and old is not conn:
+                self._release_unfinished_fixed(state, old)
             state.owner = conn
             state.owner_attempt = attempt
             state.owner_ready = not has_metadata and state.compatibility == "legacy"
@@ -592,6 +604,9 @@ class GuideRuntime:
         except GuideError:
             return
         if state and state.owner is conn:
+            self._release_unfinished_fixed(state, conn)
+            if state.announcement_task and not state.announcement_task.done():
+                state.announcement_task.cancel()
             state.owner = None
             state.owner_ready = False
             state.pending = None
@@ -746,7 +761,9 @@ class GuideRuntime:
                 state = self.devices.get(mac_address(conn.device_id))
                 if state:
                     state.rejection = str(error) if isinstance(error, GuideError) else "fixed_playback_failed"
-                log.warning("Fixed guide unavailable: %s", type(error).__name__)
+                log.warning("Fixed guide unavailable: reason=%s museum=%s place=%s rag_fallback=%s",
+                            state.rejection if state else type(error).__name__, beacon.museum_code,
+                            beacon.place_id, beacon.fixed_rag_fallback)
                 if not beacon.fixed_rag_fallback or conn.client_abort:
                     return False
                 current = self.location(conn.device_id)

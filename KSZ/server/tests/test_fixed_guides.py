@@ -5,8 +5,9 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from aiohttp import web
+from loguru import logger
 
-from ksz_guide.fixed import FixedClient, play_fixed, profile, resume_fixed_chat
+from ksz_guide.fixed import FixedClient, FixedTour, play_fixed, profile, resume_fixed_chat, tour_key
 from ksz_guide.models import GuideError
 from ksz_guide.integration import track_chat
 from ksz_guide.playback import handle_playback_progress, playback_state
@@ -58,6 +59,14 @@ def fixed(monkeypatch):
     report = Mock()
     monkeypatch.setattr(reportHandle, 'enqueue_tts_report', report)
     return SimpleNamespace(h=h, conn=conn, item=item, client=client, messages=messages, report=report, encode=encode)
+
+
+@pytest.fixture
+def log_messages():
+    messages = []
+    sink = logger.add(lambda message: messages.append(str(message)))
+    yield messages
+    logger.remove(sink)
 
 
 def progress(conn, index, state='played'):
@@ -113,6 +122,21 @@ async def test_legacy_device_uses_completed_send_and_profile_is_bound_role(fixed
 
 
 @pytest.mark.asyncio
+async def test_position_expiry_stops_fixed_tour_with_reason(fixed, log_messages):
+    calls = 0
+
+    def location(_):
+        nonlocal calls
+        calls += 1
+        return fixed.item if calls <= 4 else None
+
+    fixed.h.runtime.location = location
+    assert await play_fixed(fixed.h.runtime, fixed.conn, fixed.item) is False
+    assert fixed.conn.ksz_fixed_tour.next_segment == 1
+    assert any('reason=position_expired' in message for message in log_messages)
+
+
+@pytest.mark.asyncio
 async def test_abort_while_fetching_does_not_put_unsaid_text_in_history(fixed):
     f = fixed
     started = asyncio.Event()
@@ -149,7 +173,7 @@ async def test_changed_location_or_profile_prevents_old_tour_resume(fixed):
 
 
 @pytest.mark.asyncio
-async def test_modes_and_explicit_rag_fallback(fixed, monkeypatch):
+async def test_modes_and_explicit_rag_fallback(fixed, monkeypatch, log_messages):
     f = fixed
     rag = AsyncMock(return_value=True)
     monkeypatch.setattr(f.h.runtime, '_announce_rag', rag)
@@ -159,9 +183,45 @@ async def test_modes_and_explicit_rag_fallback(fixed, monkeypatch):
     assert f.h.runtime.devices[DEVICE].rejection == 'fixed_rag_http_404'
     assert await f.h.runtime._announce(f.conn, replace(f.item, fixed_rag_fallback=True)) is True
     assert rag.await_count == 1
+    assert any('reason=fixed_rag_http_404' in message for message in log_messages)
+    assert any('rag_fallback=True' in message for message in log_messages)
     assert await f.h.runtime._announce(f.conn, replace(f.item, guide_mode='off')) is False
     assert rag.await_count == 1
     assert await f.h.runtime._announce(f.conn, replace(f.item, guide_mode='rag')) is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('reset', ['expired', 'disconnect', 'replaced'])
+@pytest.mark.parametrize('completed', [False, True])
+async def test_session_reset_releases_only_unfinished_fixed_tour(fixed, reset, completed):
+    f = fixed
+    state = f.h.runtime.state(DEVICE)
+    state.policy = f.h.client.policies[DEVICE]
+    state.current = f.item
+    state.last_position_at = f.h.clock()
+    state.baseline_beacon = f.item
+    state.baseline_mac = f.item.mac
+    state.confirmed_zone = f.item.zone
+    state.last_announced_zone = f.item.zone
+    state.location_announce_times[f.item.zone] = f.h.clock()
+    f.conn.ksz_fixed_tour = FixedTour(tour_key(f.conn, f.item),
+                                    {'segments': [{'text': 'First.'}, {'text': 'Second.'}]},
+                                    f.client, next_segment=2 if completed else 1)
+    if reset == 'expired':
+        f.h.clock.now += 16
+        f.h.runtime._expire(state)
+    elif reset == 'disconnect':
+        f.h.runtime.unbind(f.conn)
+    else:
+        assert await f.h.runtime.bind(f.h.conn('replacement'))
+    assert (state.last_announced_zone == f.item.zone) is completed
+    assert (f.item.zone in state.location_announce_times) is completed
+    if not completed:
+        conn = f.h.conn('new-session')
+        assert await f.h.runtime.bind(conn)
+        assert await f.h.runtime.legacy(conn, {'beacon_id': f.item.mac})
+        await wait_until(lambda: f.h.announce.await_count == 1)
+    await f.h.runtime.close()
 
 
 @pytest.mark.asyncio

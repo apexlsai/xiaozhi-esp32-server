@@ -1,6 +1,5 @@
 import asyncio
 import json
-import logging
 import os
 import re
 from dataclasses import dataclass
@@ -8,6 +7,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 import aiohttp
+from loguru import logger
 
 from .models import GuideError
 from .playback import begin_response, interrupt_response, playback_state, record_response_text
@@ -15,7 +15,7 @@ from .presence import connection_is_open
 from .prompt import response_language
 
 
-log = logging.getLogger(__name__)
+log = logger.bind(tag=__name__)
 LANGUAGES = {"zh-CN": "zh-CN", "en": "en-US", "ja": "ja-JP", "ko": "ko-KR"}
 ROLES = {"青年": "youth", "儿童": "child", "专家": "expert"}
 RESUME = re.compile(r"^(?:(?:请|帮我|麻烦|可以|你可以)?(?:继续(?:讲解|介绍|播放|刚才的讲解|刚才的介绍)?|接着(?:讲|讲解|说|播放))(?:(?:吧|吗|一下))?|(?:please)?(?:continue|resume)(?:the)?(?:guide|tour|narration|explanation)?|続けて(?:ください)?|계속(?:설명해|재생해)?(?:주세요)?)$", re.I)
@@ -147,6 +147,8 @@ async def play_fixed(runtime, conn, beacon, *, resume=False, query=None):
                 or current.guide_mode != "fixed" or tour_key(conn, current) != key):
             return False
         tour = conn.ksz_fixed_tour = FixedTour(key, data, client)
+        log.info("Fixed guide selected: museum={} place={} role={} language={} segments={}",
+                 beacon.museum_code, beacon.place_id, *key[-2:], len(data["segments"]))
     elif tour is None or tour.key != key or tour.next_segment >= len(tour.guide["segments"]):
         return False
     state = runtime.devices.get(conn.device_id.upper())
@@ -159,11 +161,32 @@ async def play_fixed(runtime, conn, beacon, *, resume=False, query=None):
     conn.sentence_id = sentence_id
     socket = conn.websocket
 
+    invalid_logged = None
+
     def valid():
+        nonlocal invalid_logged
         current = runtime.location(conn.device_id)
-        return (current is not None and state is not None and state.owner is conn and current.guide_mode == "fixed"
-                and current.zone == beacon.zone and tour_key(conn, current) == key
-                and conn.sentence_id == sentence_id and conn.websocket is socket and not conn.client_abort and connection_is_open(conn))
+        if current is None:
+            reason = "position_expired"
+        elif state is None or state.owner is not conn:
+            reason = "connection_replaced"
+        elif current.guide_mode != "fixed":
+            reason = "guide_disabled"
+        elif current.zone != beacon.zone or tour_key(conn, current) != key:
+            reason = "beacon_changed"
+        elif conn.sentence_id != sentence_id:
+            reason = "client_abort"
+        elif conn.websocket is not socket or not connection_is_open(conn):
+            reason = "connection_closed"
+        elif conn.client_abort:
+            reason = "client_abort"
+        else:
+            reason = None
+        if reason and reason != invalid_logged:
+            invalid_logged = reason
+            log.info("Fixed guide stopped: device={} place={} segment={} reason={}",
+                     conn.device_id, beacon.place_id, tour.next_segment + 1, reason)
+        return reason is None
 
     conn.client_abort = False
     conn.client_is_speaking = True
@@ -253,10 +276,12 @@ def resume_fixed_chat(conn, query):
             state = runtime.devices.get(conn.device_id.upper())
             if state:
                 state.rejection = str(error) if isinstance(error, GuideError) else "fixed_playback_failed"
+            log.warning("Fixed guide resume unavailable: reason={} museum={} place={} rag_fallback={}",
+                        state.rejection if state else type(error).__name__, beacon.museum_code,
+                        beacon.place_id, beacon.fixed_rag_fallback)
             current = runtime.location(conn.device_id)
             if beacon.fixed_rag_fallback and not conn.client_abort and current is not None and current.zone == beacon.zone and current.guide_mode == "fixed":
                 return await runtime._announce_rag(conn, current)
-            log.warning("Fixed guide resume unavailable: %s", type(error).__name__)
             return False
 
     future = asyncio.run_coroutine_threadsafe(resume(), conn.loop)

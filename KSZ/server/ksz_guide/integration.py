@@ -31,6 +31,7 @@ from .role_patch import handle_profile_change, handle_role_rebind, on_hello as r
 from .runtime import GuideRuntime
 from .settings import GuideSettings
 from .vision import vision_message, vision_read_timeout
+from .intent_embedding import EmbeddingIntentClassifier
 from .visual_context import (
     begin_visual_request, close_visual_context, finish_visual_request,
     ensure_visual_request, prepare_visual_request, visual_chat_context,
@@ -53,6 +54,72 @@ from .playback import (
 
 log = logging.getLogger(__name__)
 chat_lock = threading.Lock()
+
+
+def embedding_intent_enabled(conn):
+    config = getattr(conn, "config", {}) or {}
+    intent_section = config.get("Intent", {})
+    intent_config = intent_section.get("embedding", {}) if isinstance(intent_section, dict) else {}
+    if not isinstance(intent_config, dict):
+        intent_config = {}
+    explicit = os.environ.get("KSZ_INTENT_EMBEDDING_ENABLED", "")
+    if explicit:
+        return explicit.lower() in {"1", "true", "yes", "on"}
+    return intent_config.get("enabled") is True or bool(
+        intent_config.get("base_url")
+        or os.environ.get("KSZ_INTENT_EMBEDDING_BASE_URL")
+        or os.environ.get("EMBEDDING_BASE_URL")
+    )
+
+
+def _embedding_classifier(conn):
+    if not embedding_intent_enabled(conn):
+        return None
+    config = getattr(conn, "config", {}) or {}
+    intent_section = config.get("Intent", {})
+    intent_config = intent_section.get("embedding", {}) if isinstance(intent_section, dict) else {}
+    signature = repr(intent_config) + os.environ.get("KSZ_INTENT_EMBEDDING_BASE_URL", "")
+    current = getattr(conn, "ksz_embedding_intent", None)
+    if current is None or getattr(conn, "ksz_embedding_intent_signature", None) != signature:
+        current = EmbeddingIntentClassifier(intent_config)
+        conn.ksz_embedding_intent = current
+        conn.ksz_embedding_intent_signature = signature
+    return current
+
+
+async def classify_embedding_intent(conn, text):
+    classifier = _embedding_classifier(conn)
+    if classifier is None or not classifier.configured:
+        return None
+    handler = getattr(conn, "func_handler", None)
+    available = set()
+    if handler is not None:
+        try:
+            deadline = asyncio.get_running_loop().time() + 3
+            while not getattr(handler, "finish_init", True) and asyncio.get_running_loop().time() < deadline:
+                await asyncio.sleep(0.05)
+            available.update(
+                item.get("function", {}).get("name")
+                for item in handler.get_functions()
+                if isinstance(item, dict)
+            )
+        except Exception:
+            pass
+    try:
+        language = {
+            "zh-CN": "zh_CN", "en-US": "en_US", "ja-JP": "ja_JP", "ko-KR": "ko_KR",
+        }.get(response_language(conn), "zh_CN")
+        result = await classifier.classify(text, available, language)
+    except Exception as error:
+        conn.logger.bind(tag=__name__).warning(
+            f"Embedding 意图识别失败，回退普通生成: {type(error).__name__}: {error}"
+        )
+        return None
+    if result is not None:
+        conn.logger.bind(tag=__name__).info(
+            f"Embedding 意图识别结果: {result.get('function_call', {}).get('name')}"
+        )
+    return json.dumps(result, ensure_ascii=False) if result is not None else None
 
 
 def create_runtime(server):
