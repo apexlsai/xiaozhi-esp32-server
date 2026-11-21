@@ -50,13 +50,3 @@ def fallback_answer(body, default):
     if language.startswith("ko"):
         return "요청한 뉴스 출처 또는 카테고리를 사용할 수 없습니다. 다른 출처로 대체하지 않았습니다."
     return "The requested news source or category is unavailable. Please choose another source or category."
-
-
-def permits_evidence_search(body, decision):
-    context = body.ksz_prompt_context
-    return bool(context and decision.route == "rag"
-                and context.get("turn", {}).get("kind", "user") == "user"
-                and not context.get("turn", {}).get("tool_depth_exhausted")
-                and body.messages and body.messages[-1].role == "user"
-                and body.tool_choice != "none"
-                and any(tool.get("function", {}).get("name") in {"web_search", "yuanbao_search"} for tool in body.tools or []))

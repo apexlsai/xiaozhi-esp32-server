@@ -8,11 +8,10 @@ COPY --from=agent-base /app/src/api/chat_service.py src/api/chat_service.py
 COPY --from=agent-base /app/src/api/schemas.py src/api/schemas.py
 COPY --from=agent-base /app/src/tools/rag.py src/tools/rag.py
 ARG APPLY_AGENT_COMPAT_PATCHES=1
-COPY KSZ/patches/agent-news-routing.patch /tmp/agent-news-routing.patch
 COPY KSZ/patches/agent-prompt-owner.patch /tmp/agent-prompt-owner.patch
 COPY KSZ/patches/agent-language-contract.patch /tmp/agent-language-contract.patch
 RUN if [ "$APPLY_AGENT_COMPAT_PATCHES" = "1" ]; then \
-      for patch in /tmp/agent-news-routing.patch /tmp/agent-prompt-owner.patch /tmp/agent-language-contract.patch; do \
+      for patch in /tmp/agent-prompt-owner.patch /tmp/agent-language-contract.patch; do \
         git apply --check "$patch" && git apply "$patch" || exit 1; \
       done; \
     fi

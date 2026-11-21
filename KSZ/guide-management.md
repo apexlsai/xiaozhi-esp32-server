@@ -73,7 +73,9 @@ docker compose --env-file .env --profile mqtt up -d --build xiaozhi-esp32-server
 
 ### Embedding 意图识别
 
-设置 `KSZ_INTENT_EMBEDDING_ENABLED=1` 后，server 使用 `KSZ_INTENT_EMBEDDING_BASE_URL` 对用户文字做向量分类。分类结果直接路由天气、`web_search`、`yuanbao_search` 和 `self_camera_take_photo`，工具返回内容再交给主 LLM 生成。未命中分类阈值的请求直接进入主 LLM。`KSZ_INTENT_EMBEDDING_MODEL`、`KSZ_INTENT_EMBEDDING_DIMENSIONS`、`KSZ_INTENT_EMBEDDING_THRESHOLD` 和 `KSZ_INTENT_EMBEDDING_MARGIN` 分别控制模型、维度、最低相似度和第一二名分差。
+Embedding 是设备意图识别的首层入口。`KSZ_INTENT_EMBEDDING_ENABLED` 默认开启，使用 `KSZ_INTENT_EMBEDDING_BASE_URL` 对用户文字分类，命中后直接路由天气、联网搜索、元宝搜索和拍照，工具结果再交给主 LLM 生成。未命中或服务不可用时才回退普通生成。
+
+Agent 不再按“查一下”“调大”等关键词强制选择或追加工具。搜索工具由 Embedding 或客户端已经选中的工具决定，因此“查一下天气”只执行天气工具，不会同时追加两个搜索工具。`KSZ_INTENT_EMBEDDING_MODEL`、`KSZ_INTENT_EMBEDDING_DIMENSIONS`、`KSZ_INTENT_EMBEDDING_THRESHOLD` 和 `KSZ_INTENT_EMBEDDING_MARGIN` 分别控制模型、维度、最低相似度和第一二名分差。
 
 RSSI 门槛、扫描窗口、稳定判定、蓝牙发射功率及固件自身冷却仍由 management 下发策略和固件实现控制；以上服务端变量不会改变旧固件的扫描或上报行为。
 
