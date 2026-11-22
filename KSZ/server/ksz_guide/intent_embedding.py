@@ -2,7 +2,6 @@ import asyncio
 import math
 import os
 import re
-from dataclasses import dataclass
 
 import httpx
 
@@ -95,13 +94,6 @@ TOOL_NAMES = {
 }
 
 
-@dataclass(frozen=True)
-class IntentMatch:
-    name: str
-    score: float
-    margin: float
-
-
 def _number(value, default):
     try:
         result = float(value)
@@ -136,43 +128,39 @@ def extract_weather_location(text):
     return location or None
 
 
+_SEARCH_PREFIX = r"^[\s，,。]*(?:(?:嗯|呃|请|帮我|麻烦|你)\s*[，,\s]*)*"
+_SEARCH_COMMAND = (
+    r"(?:用?(?:腾讯)?元宝\s*[，,]?\s*(?:搜索|查询|检索|搜|查)|"
+    r"(?:联网|上网|网页|网络)(?:搜索|查询|检索|搜|查)|搜索|搜一搜|搜一下|搜下|检索)"
+    r"(?:一下|一搜|一查|下)?"
+)
+_MUSIC_COMMAND = r"(?:播放(?:一首)?|放(?:一首|点)|来一首|来首|(?:我想)?听(?:一首|点|歌|音乐))"
+
+
 def extract_search_query(text):
-    query = re.sub(
-        r"^\s*(?:请|帮我|麻烦)?\s*(?:用(?:腾讯)?元宝|元宝|联网|上网|网络)?\s*(?:搜索|查询|检索|搜|查)(?:一下|一搜|一查|下)?\s*",
-        "",
-        text,
-        flags=re.IGNORECASE,
-    )
-    return query.strip(" ，,。.!！？?") or text.strip()
+    return re.sub(
+        _SEARCH_PREFIX + rf"(?:{_SEARCH_COMMAND}|(?:查询|查一下|查一查))(?:[，,\s]*{_SEARCH_COMMAND})*",
+        "", text, flags=re.IGNORECASE,
+    ).strip(" ，,。.!！？?")
 
 
 def extract_music_query(text):
-    query = re.sub(
-        r"^\s*(?:请|帮我|麻烦)?\s*(?:播放|放|来一首|来首|听一首|听点|听|播放一首)\s*",
-        "",
-        text,
-        flags=re.IGNORECASE,
-    )
-    return query.strip(" ，,。.!！？?") or "随机音乐"
+    query = re.sub(_SEARCH_PREFIX + _MUSIC_COMMAND, "", text).strip(" ，,。.!！？?")
+    return "random" if query in {"", "音乐", "歌", "歌曲"} else query
 
 
 def explicit_tool_name(text):
-    normalized = re.sub(r"\s+", "", text or "")
-    if re.search(r"天气|气温|温度|降雨|下雨|预报", normalized):
-        return "weather"
-    if re.search(r"播放|放点|放一首|来一首|来首|听歌|听音乐|听一首", normalized):
-        return "play_music"
-    if "元宝" in normalized and re.search(r"搜索|搜|查|查询|检索", normalized):
+    if re.match(_SEARCH_PREFIX + _SEARCH_COMMAND, text, flags=re.IGNORECASE):
         return "yuanbao_search"
-    if re.search(r"电影|影片|影院|上映", normalized):
+    if re.search(r"天气|气温|降雨|下雨|天气预报", text):
+        return "weather"
+    if re.match(_SEARCH_PREFIX + _MUSIC_COMMAND, text) and not re.search(r"讲解|导览|电影|视频", text):
+        return "play_music"
+    if re.search(r"电影|影片|影院|上映", text) and re.search(r"推荐|最近|好看|查|有什么|哪些|新片", text):
         return "movie_search"
-    if re.search(r"附近|周边", normalized) and re.search(r"吃|喝|餐厅|饭店|咖啡|美食", normalized):
+    if re.search(r"(?:附近|周边|这里|这儿|这边).*(?:吃|喝|餐厅|饭店|咖啡|美食)", text):
         return "nearby_search"
-    if re.search(r"好吃|吃饭|餐厅|饭店|咖啡店|美食", normalized):
-        return "nearby_search"
-    if re.search(r"联网|上网|网络搜索|网页搜索", normalized):
-        return "web_search"
-    if re.search(r"搜索|搜一下|搜一搜|搜下|检索", normalized):
+    if re.search(r"推荐.*(?:歌曲|音乐|专辑)|(?:歌曲|音乐|专辑).*(?:推荐|好听|最近)", text):
         return "web_search"
     return None
 
@@ -295,45 +283,41 @@ class EmbeddingIntentClassifier:
         if not self.configured or not isinstance(text, str) or not text.strip():
             return None
         explicit_name = explicit_tool_name(text)
-        if explicit_name:
-            tool_name = TOOL_NAMES[explicit_name]
-            if tool_name not in available_tools:
-                return None
-            arguments = {}
-            if explicit_name == "weather":
-                location = extract_weather_location(text)
-                if location:
-                    arguments["location"] = location
-                arguments["lang"] = language
-            elif explicit_name == "play_music":
-                arguments["song_name"] = extract_music_query(text)
-            else:
-                arguments["query"] = extract_search_query(text)
-            return {"function_call": {"name": tool_name, "arguments": arguments}}
-        references = await self._references_ready()
-        query = (await self._embed([text]))[0]
-        ranked = sorted(
-            ((name, _cosine(query, vector)) for name, vector in references.items()),
-            key=lambda item: item[1],
-            reverse=True,
-        )
-        best_name, best_score = ranked[0]
-        second_score = ranked[1][1] if len(ranked) > 1 else -1
-        match = IntentMatch(best_name, best_score, best_score - second_score)
-        if match.score < self.threshold or match.margin < self.margin_threshold:
-            if match.name != "web_search" or match.score < 0.60:
-                return None
-        tool_name = TOOL_NAMES.get(match.name)
-        if tool_name and tool_name not in available_tools:
+        name = explicit_name
+        if not name:
+            references = await self._references_ready()
+            query = (await self._embed([text]))[0]
+            ranked = sorted(
+                ((label, _cosine(query, vector)) for label, vector in references.items()),
+                key=lambda item: item[1],
+                reverse=True,
+            )
+            name, score = ranked[0]
+            second_score = ranked[1][1] if len(ranked) > 1 else -1
+            if score < self.threshold or score - second_score < self.margin_threshold:
+                if name != "web_search" or score < 0.60:
+                    return None
+            if name == "yuanbao_search":
+                name = "web_search"
+
+        tool_name = TOOL_NAMES.get(name)
+        if not tool_name:
             return None
+        if name == "yuanbao_search" and tool_name not in available_tools:
+            tool_name = "web_search"
+        if tool_name not in available_tools:
+            return None
+
         arguments = {}
-        if match.name == "weather":
+        if name == "weather":
             location = extract_weather_location(text)
             if location:
                 arguments["location"] = location
             arguments["lang"] = language
-        elif match.name in {"yuanbao_search", "web_search"}:
+        elif name == "play_music":
+            arguments["song_name"] = extract_music_query(text)
+        else:
             arguments["query"] = extract_search_query(text)
-        if tool_name:
-            return {"function_call": {"name": tool_name, "arguments": arguments}}
-        return {"function_call": {"name": "continue_chat"}}
+        if name == "nearby_search":
+            return {"function_call": {"name": tool_name, "arguments": arguments}, "nearby": True}
+        return {"function_call": {"name": tool_name, "arguments": arguments}}

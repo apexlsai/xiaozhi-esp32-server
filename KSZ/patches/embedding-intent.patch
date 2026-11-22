@@ -135,3 +135,93 @@ index 50a5526..7bd152a 100644
      guide = None
  
  track_chat = guide.track_chat if guide else lambda function: function
+diff --git a/core/handle/intentHandler.py b/core/handle/intentHandler.py
+index 7424fb6..d016593 100644
+--- a/core/handle/intentHandler.py
++++ b/core/handle/intentHandler.py
+@@ -186,6 +186,8 @@ async def process_intent_result(
+                     coroutine = (
+                         run_vision_tool(conn, function_call_data, conn.sentence_id, deadline)
+                         if is_camera
++                        else guide.execute_embedding_tool(conn, function_call_data)
++                        if conn.intent_type == "embedding"
+                         else conn.func_handler.handle_llm_function_call(conn, function_call_data)
+                     )
+                     result = asyncio.run_coroutine_threadsafe(coroutine, conn.loop).result(
+@@ -207,26 +209,26 @@ async def process_intent_result(
+                             speak_txt(conn, text)
+                     elif result.action == Action.REQLLM:  # 调用函数后再请求llm生成回复
+                         text = result.result
+-                        conn.dialogue.put(Message(role="tool", content=text))
+-                        # 使用异步调用避免阻塞事件循环，影响其他设备的音频播放
+-                        try:
+-                            if conn.intent_type == "embedding":
+-                                llm_result = conn.llm.response_no_stream(
+-                                    system_prompt=text,
+-                                    user_prompt=f"请根据以上资料回答用户，直接给出简洁自然的答案。用户问题：{original_text}",
+-                                    extra_body={"ksz_route": "tool_result", "ksz_rag": False},
++                        if conn.intent_type == "embedding":
++                            try:
++                                llm_result = guide.answer_embedding_tool(
++                                    conn, function_call_data, original_text, text,
+                                 )
+-                            else:
++                            except Exception as error:
++                                conn.logger.bind(tag=TAG).error(f"工具结果生成失败: {type(error).__name__}")
++                                llm_result = None
++                            speak_txt(conn, llm_result or guide.tool_reply_unavailable(conn))
++                        else:
++                            conn.dialogue.put(Message(role="tool", content=text))
++                            try:
+                                 llm_result = asyncio.run_coroutine_threadsafe(
+                                     conn.intent.replyResult(text, original_text),
+                                     conn.loop,
+                                 ).result()
+-                        except Exception as e:
+-                            conn.logger.bind(tag=TAG).error(f"LLM生成回复失败: {e}")
+-                            llm_result = text
+-                        if llm_result is None:
+-                            llm_result = text
+-                        speak_txt(conn, llm_result)
++                            except Exception as e:
++                                conn.logger.bind(tag=TAG).error(f"LLM生成回复失败: {e}")
++                                llm_result = text
++                            speak_txt(conn, llm_result or text)
+                     elif (
+                         result.action == Action.NOTFOUND
+                         or result.action == Action.ERROR
+diff --git a/core/providers/llm/openai/openai.py b/core/providers/llm/openai/openai.py
+index f8c8304..255ef7c 100644
+--- a/core/providers/llm/openai/openai.py
++++ b/core/providers/llm/openai/openai.py
+@@ -36,6 +36,8 @@ def _as_bool(value, default=False):
+ 
+ 
+ class LLMProvider(LLMProviderBase):
++    supports_rag_display = True
++
+     def __init__(self, config):
+         self.model_name = config.get("model_name")
+         self.api_key = config.get("api_key")
+@@ -155,6 +157,10 @@ class LLMProvider(LLMProviderBase):
+ 
+         is_active = True
+         try:            
++            on_rag = kwargs.get("on_rag")
++            response = getattr(responses, "response", None)
++            if on_rag and response is not None and response.headers.get("X-Museum-RAG") == "1":
++                on_rag()
+             for chunk in responses:
+                 try:
+                     delta = chunk.choices[0].delta if getattr(chunk, "choices", None) else None
+@@ -209,6 +215,10 @@ class LLMProvider(LLMProviderBase):
+         stream = self.client.chat.completions.create(**request_params)
+ 
+         try:
++            on_rag = kwargs.get("on_rag")
++            response = getattr(stream, "response", None)
++            if on_rag and response is not None and response.headers.get("X-Museum-RAG") == "1":
++                on_rag()
+             for chunk in stream:
+                 if getattr(chunk, "choices", None):
+                     delta = chunk.choices[0].delta
