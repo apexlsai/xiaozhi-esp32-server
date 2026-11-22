@@ -16,8 +16,10 @@ RUN if [ "$APPLY_AGENT_COMPAT_PATCHES" = "1" ]; then \
       done; \
     fi
 COPY KSZ/patches/agent-venue-scope.patch /tmp/agent-venue-scope.patch
-RUN git apply --unidiff-zero --check /tmp/agent-venue-scope.patch \
-    && git apply --unidiff-zero /tmp/agent-venue-scope.patch
+RUN if ! grep -q '^def request_venue_code(' src/api/chat_service.py; then \
+      git apply --unidiff-zero --check /tmp/agent-venue-scope.patch \
+        && git apply --unidiff-zero /tmp/agent-venue-scope.patch; \
+    fi
 
 FROM agent-base
 COPY --from=patched-source /src/src/api/ /app/src/api/

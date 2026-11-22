@@ -34,7 +34,7 @@ def context(conn, values, *, kind=None, depth=0):
     refresh_location(conn)
     state = {key: value for key, value in values.items() if key in {
         "device_id", "venue_id", "venue_context", "last_beacon_id", "beacon_mac",
-        "guide_policy_revision", "device_location",
+        "guide_policy_revision", "device_location", "beacon_museum_code",
     }}
     beacon = getattr(conn, "beacon_location", None)
     if beacon is not None:

@@ -659,6 +659,8 @@ class GuideRuntime:
         if beacon is not None:
             result.update(last_beacon_id=beacon.beacon_id, venue_id=beacon.venue_id,
                           beacon_mac=beacon.mac, guide_policy_revision=state.policy.revision)
+            if beacon.museum_code:
+                result["beacon_museum_code"] = beacon.museum_code
         return result
 
     def activity(self, conn, message):

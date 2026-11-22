@@ -192,6 +192,19 @@ async def test_manager_request_uses_server_auth_without_sending_ip(conn, monkeyp
     assert await fetch_location(conn) == expected
 
 
+@pytest.mark.parametrize(("question", "city"), [
+    ("查一下今天的天气", None),
+    ("给我查一下这里今天的天气", None),
+    ("嗯，是查一下深圳的天气", "深圳"),
+    ("查询一下深圳今天的天气", "深圳"),
+    ("weather in Shenzhen", "Shenzhen"),
+])
+def test_weather_intent_extracts_only_an_explicit_city(question, city):
+    from ksz_guide.intent_embedding import extract_weather_location
+
+    assert extract_weather_location(question) == city
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("explicit", [None, "广州"])
 async def test_weather_uses_shared_city_and_honors_explicit_city(conn, monkeypatch, explicit):

@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from ksz_guide.intent_embedding import EmbeddingIntentClassifier
 from ksz_guide.search_parallel import attach_web_search
 from plugins_func.register import Action, ActionResponse
 from test_guide_announcement import conn as chat_conn, spoken, assistant_text
@@ -54,3 +55,14 @@ def test_greeting_still_streams_without_waiting_for_the_complete_answer(chat_con
     chat_conn.llm.response_with_functions.return_value = stream()
     chat_conn.chat("你好")
     assert spoken(chat_conn) == "你好。可以听到。"
+
+
+@pytest.mark.asyncio
+async def test_explicit_search_for_a_museum_stays_an_online_query(monkeypatch):
+    classifier = EmbeddingIntentClassifier({"base_url": "https://embedding.test"})
+    embed = AsyncMock(side_effect=AssertionError("explicit search does not require embedding"))
+    monkeypatch.setattr(classifier, "_embed", embed)
+    result = await classifier.classify("搜索一下这个博物馆的最新消息", {"yuanbao_search", "web_search"})
+    assert result["function_call"] == {
+        "name": "yuanbao_search", "arguments": {"query": "这个博物馆的最新消息"},
+    }

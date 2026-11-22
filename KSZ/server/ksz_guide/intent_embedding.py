@@ -56,12 +56,16 @@ DEFAULT_EXAMPLES = {
         "介绍一下眼前的文物",
         "这个展厅有什么历史背景",
         "讲讲这件藏品的用途",
+        "帮我查一下本馆有没有一件叫青铜鼎的藏品",
+        "这个博物馆有哪些藏品",
     ],
     "general_chat": [
         "你好",
         "给我讲个笑话",
         "你是谁",
         "我想和你聊聊天",
+        "你听到了吗",
+        "我现在在哪里",
     ],
     "play_music": [
         "播放一首音乐",
@@ -114,18 +118,20 @@ def _cosine(left, right):
 
 
 def extract_weather_location(text):
-    match = re.search(
-        r"([\u4e00-\u9fffA-Za-z][\u4e00-\u9fffA-Za-z·\- ]{0,24}?)(?:的)?(?:天气|气温|温度|降雨|下雨|预报)",
-        text,
-        re.IGNORECASE,
+    english = re.search(r"\b(?:weather|temperature)\s+(?:in|for)\s+([A-Za-z][A-Za-z .'-]{0,30})", text, re.I)
+    if english:
+        return english[1].strip(" .'-") or None
+
+    question = re.sub(
+        r"^(?:[\s，,。]+|嗯|呃|是|请|帮我|给我|查询(?:一下)?|查(?:一下|一查)?|看看|看一下|想知道)+",
+        "", text,
     )
-    if not match:
-        match = re.search(r"(?:weather|temperature)\s+(?:in|for)\s+([A-Za-z][A-Za-z .'-]{0,30})", text, re.IGNORECASE)
+    match = re.match(r"([^，,。!?！？]{0,30}?)(?:的)?(?:天气|气温|温度|降雨|下雨|预报)", question)
     if not match:
         return None
-    location = re.sub(r"^(?:今天|明天|现在|当前|请|帮我|查一下|查询|看看)\s*", "", match.group(1), flags=re.IGNORECASE)
-    location = location.strip(" ，,。.!！？?")
-    return location or None
+    relative = r"今天|明天|后天|现在|当前|今晚|今早|本地|当地|我这里|这里|这儿|附近|什么|怎么样|如何"
+    city = re.sub(rf"^(?:(?:{relative})\s*)+|(?:\s*(?:{relative}))+$", "", match[1]).strip()
+    return city or None
 
 
 _SEARCH_PREFIX = r"^[\s，,。]*(?:(?:嗯|呃|请|帮我|麻烦|你)\s*[，,\s]*)*"

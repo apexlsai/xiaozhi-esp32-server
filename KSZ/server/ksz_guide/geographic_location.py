@@ -65,7 +65,7 @@ def location_description(value):
                          "and street from this address, including a nearby road when available.")
             rule += (" If asked how the position is obtained, describe AI computation using available device "
                      "location data. Do not speak positioning technologies, coordinates, coverage radii or "
-                     "precision disclaimers. A current verified indoor position takes precedence over this area. "
+                     "precision disclaimers. Use an indoor beacon only for a question about the current floor or gallery. "
                      "Never invent a building, floor or room.")
         rule += " A city explicitly named in the current user request takes precedence for that query."
     else:
