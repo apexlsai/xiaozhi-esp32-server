@@ -1,10 +1,12 @@
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from ksz_guide.intent_embedding import EmbeddingIntentClassifier
+from ksz_guide import integration
+from ksz_guide.intent_embedding import EmbeddingIntentClassifier, external_museum_query
 from ksz_guide.search_parallel import attach_web_search
 from plugins_func.register import Action, ActionResponse
 from test_guide_announcement import conn as chat_conn, spoken, assistant_text
@@ -66,3 +68,33 @@ async def test_explicit_search_for_a_museum_stays_an_online_query(monkeypatch):
     assert result["function_call"] == {
         "name": "yuanbao_search", "arguments": {"query": "这个博物馆的最新消息"},
     }
+
+
+@pytest.mark.parametrize(("question", "external"), [
+    ("深圳博物馆里面有什么重要产品？", True),
+    ("帮我查一下萍乡博物馆有哪些藏品", False),
+    ("介绍这个博物馆的展品", False),
+    ("本馆有哪些藏品", False),
+    ("你是深圳博物馆的吗？", False),
+    ("[位置变化] 用户当前位于深圳博物馆序厅", False),
+    ("What are the highlights of the British Museum?", True),
+    ("東京国立博物館の代表的な展示は何ですか", True),
+])
+def test_named_museums_respect_management_binding(question, external):
+    assert external_museum_query(question, {"name": "萍乡市博物馆"}) is external
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("venue", [None, {"name": "萍乡博物馆"}])
+async def test_cross_museum_question_selects_web_search_before_embedding(monkeypatch, venue):
+    monkeypatch.setattr(integration, "_embedding_classifier", lambda conn: None)
+    monkeypatch.setattr(integration, "runtime_for", lambda conn: SimpleNamespace(
+        context=lambda device_id: {"venue_context": venue},
+    ))
+    conn = SimpleNamespace(
+        device_id="device-a", logger=Mock(),
+        func_handler=SimpleNamespace(get_functions=lambda: [{"function": {"name": "web_search"}}]),
+    )
+    question = "深圳博物馆里面有什么重要产品？"
+    result = json.loads(await integration.classify_embedding_intent(conn, question))
+    assert result["function_call"] == {"name": "web_search", "arguments": {"query": question}}

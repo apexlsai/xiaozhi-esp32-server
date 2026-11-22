@@ -2,6 +2,7 @@ import asyncio
 import math
 import os
 import re
+import unicodedata
 
 import httpx
 
@@ -35,9 +36,6 @@ DEFAULT_EXAMPLES = {
         "深圳的APEC会议结束了吗",
         "搜索一下深圳市康硕展人工智能科技有限公司",
         "搜索一下黄仁勋离开英伟达的新闻",
-        "帮我看一下深圳博物馆里面有没有一个叫青铜鼎的藏品",
-        "帮我查询一下深圳博物馆里面有什么藏品",
-        "看看深圳博物馆里面有没有AI导览器",
     ],
     "take_photo": [
         "拍张照片看看这是什么",
@@ -169,6 +167,39 @@ def explicit_tool_name(text):
     if re.search(r"推荐.*(?:歌曲|音乐|专辑)|(?:歌曲|音乐|专辑).*(?:推荐|好听|最近)", text):
         return "web_search"
     return None
+
+
+_NAMED_MUSEUM = re.compile(
+    r"[\u3400-\u9fffぁ-ヿ]{2,}?(?:博物[馆館]|美术馆|美術館|纪念馆|記念館)|"
+    r"[가-힣]{2,}?(?:\s*박물관|\s*미술관)|"
+    r"\b(?:[A-Z][\w’'-]+\s+){1,6}(?:Museum|Gallery)\b"
+)
+_MUSEUM_REFERENCE = re.compile(
+    r"(?:这个|那个|这家|那家|哪家|哪个|一家|一座|什么|附近|本地|当地|参观|去过|所有|"
+    r"各地的?|博物[馆館]的|这座|那座|我们(?:的)?|我(?:的)?|这里的?|你们(?:的)?|"
+    r"私は|この|その|近くの|어느|우리|이곳의|(?:this|that|the|a|which)\s+)$",
+    re.I,
+)
+
+
+def external_museum_query(text, venue):
+    text = unicodedata.normalize("NFKC", text)
+    if text.startswith("[位置变化]") or re.match(
+        r"^(?:(?:请问|请|帮我)[，, ]*)*(?:(?:你|您)(?:们)?(?:是|属于|代表|服务于)|"
+        r"拍(?:照|张照|一张照)|(?:are you|do you work|take a photo)\b)", text, re.I
+    ):
+        return False
+    name = unicodedata.normalize("NFKC", (venue or {}).get("name") or "").strip()
+    name = re.sub(r"市(?=博物[馆館]|美术馆|纪念馆)", "", name).casefold()
+    for match in _NAMED_MUSEUM.finditer(text):
+        museum = match[0]
+        suffix = re.search(r"博物[馆館]|美术馆|美術館|纪念馆|記念館|박물관|미술관|Museum|Gallery", museum)
+        if not suffix or _MUSEUM_REFERENCE.search(museum[:suffix.start()]):
+            continue
+        museum = re.sub(r"市(?=博物[馆館]|美术馆|纪念馆)", "", museum).casefold()
+        if not name or not museum.endswith(name):
+            return True
+    return False
 
 
 class EmbeddingIntentClassifier:

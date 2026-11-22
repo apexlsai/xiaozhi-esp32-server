@@ -33,7 +33,7 @@ from .role_patch import handle_profile_change, handle_role_rebind, on_hello as r
 from .runtime import GuideRuntime
 from .settings import GuideSettings
 from .vision import vision_message, vision_read_timeout
-from .intent_embedding import EmbeddingIntentClassifier
+from .intent_embedding import EmbeddingIntentClassifier, explicit_tool_name, external_museum_query
 from .visual_context import (
     begin_visual_request, close_visual_context, finish_visual_request,
     ensure_visual_request, prepare_visual_request, visual_chat_context,
@@ -96,7 +96,10 @@ def _embedding_classifier(conn):
 
 async def classify_embedding_intent(conn, text):
     classifier = _embedding_classifier(conn)
-    if classifier is None or not classifier.configured:
+    runtime = runtime_for(conn)
+    venue = runtime.context(conn.device_id).get("venue_context") if runtime else None
+    external = runtime and external_museum_query(text, venue)
+    if not external and (classifier is None or not classifier.configured):
         return None
     handler = getattr(conn, "func_handler", None)
     available = set()
@@ -116,7 +119,13 @@ async def classify_embedding_intent(conn, text):
         language = {
             "zh-CN": "zh_CN", "en": "en_US", "ja": "ja_JP", "ko": "ko_KR",
         }.get(response_language(conn), "zh_CN")
-        result = await classifier.classify(text, available, language)
+        if external and not explicit_tool_name(text):
+            search_tool = next((name for name in ("web_search", "yuanbao_search") if name in available), None)
+            result = {"function_call": {"name": search_tool, "arguments": {"query": text}}} if search_tool else None
+        elif classifier is not None:
+            result = await classifier.classify(text, available, language)
+        else:
+            result = None
         if result and result.pop("nearby", False):
             _, city = location_context(conn)
             if city:
@@ -412,7 +421,7 @@ def filter_context(conn, values):
 
 def validated_context(runtime, device_mac, values):
     result = dict(values)
-    for key in ("last_beacon_id", "venue_id", "venue_context", "beacon_mac", "beacon_museum_code", "guide_policy_revision"):
+    for key in ("device_mode", "last_beacon_id", "venue_id", "venue_context", "beacon_mac", "beacon_museum_code", "guide_policy_revision"):
         result.pop(key, None)
     result.update(runtime.context(device_mac))
     return result
@@ -433,7 +442,7 @@ def vision_context(server, device_mac, values):
 
 
 def extend_vision_payload(payload, kwargs):
-    for key in ("ksz_prompt_context", "venue_id", "venue_context", "beacon_mac", "guide_policy_revision",
+    for key in ("ksz_prompt_context", "device_mode", "venue_id", "venue_context", "beacon_mac", "guide_policy_revision",
                 "device_location", "session_id", "image_id", "image_seq", "captured_at"):
         if kwargs.get(key) is not None:
             payload[key] = kwargs[key]
@@ -441,7 +450,7 @@ def extend_vision_payload(payload, kwargs):
         payload["messages"] = [*kwargs["history"], *payload["messages"]]
     if kwargs.get("ksz_prompt_context") is not None:
         return payload
-    context = venue_prompt("", kwargs.get("venue_context"))
+    context = venue_prompt("", kwargs.get("venue_context"), kwargs.get("device_mode"))
     if location := kwargs.get("device_location"):
         context += "\n" + location_description(location)
     if context.strip():

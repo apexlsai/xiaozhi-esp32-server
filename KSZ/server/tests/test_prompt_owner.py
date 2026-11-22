@@ -5,7 +5,7 @@ import pytest
 from core.utils.dialogue import Dialogue, Message
 from ksz_guide.prompt import prepare_system_prompt
 from ksz_guide.prompt_owner import agent_owned, request_messages, trim_connection
-from ksz_prompt import validate_context
+from ksz_prompt import CONSUMER_ROLE, compile_system, validate_context
 
 
 def connection(owner="agent"):
@@ -83,3 +83,29 @@ def test_other_connections_and_legacy_history_are_not_modified():
     values = {}
     assert request_messages(conn, messages, values) is messages
     assert values == {}
+
+
+@pytest.mark.parametrize("owner", ["agent", "xiaozhi"])
+def test_consumer_identity_replaces_venue_role_for_both_prompt_owners(owner):
+    conn = connection(owner)
+    conn.config["prompt"] = "你是萍乡博物馆的助手"
+    messages = [
+        {"role": "system", "content": "<museum_role>你是萍乡博物馆的助手</museum_role>"},
+        {"role": "user", "content": "你是谁？"},
+    ]
+    values = {"device_mode": "consumer"}
+    wire = request_messages(conn, messages, values)
+    prompt = compile_system(values["ksz_prompt_context"]) if owner == "agent" else wire[0]["content"]
+    assert CONSUMER_ROLE in prompt
+    assert "萍乡博物馆" not in prompt
+    assert wire[-1] == messages[-1]
+
+
+def test_unhandled_cross_museum_turn_carries_search_scope_to_agent(monkeypatch):
+    from ksz_guide import integration
+
+    conn = connection("xiaozhi")
+    monkeypatch.setattr(integration, "runtime_for", lambda conn: True)
+    value = {"venue_context": {"name": "萍乡博物馆"}}
+    request_messages(conn, [{"role": "user", "content": "深圳博物馆里面有什么重要产品？"}], value)
+    assert value["ksz_external_museum"] is True

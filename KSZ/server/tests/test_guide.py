@@ -205,7 +205,7 @@ async def test_stale_pending_activation_cannot_restore_position(failure):
         h.client.data["revision"] = "2:1"
         await h.runtime.tick(refresh=True)
     assert not await h.runtime.bind(h.conn(), {"activation_id": wake["activation_id"], "session_attempt": 1, "boot_id": "boot1"})
-    assert h.runtime.context(DEVICE) == {}
+    assert h.runtime.context(DEVICE) == {"device_mode": "venue"}
     h.announce.assert_not_awaited()
 
 
@@ -396,9 +396,10 @@ async def test_text_and_vision_strip_untrusted_persisted_attributes():
 async def test_bound_venue_survives_missing_or_expired_position_but_not_policy_expiry():
     h = Harness(venue_context=VENUE)
     conn = h.conn()
-    raw = {"venue_id": "forged", "venue_context": {"name": "Forged venue"}}
+    raw = {"device_mode": "consumer", "venue_id": "forged", "venue_context": {"name": "Forged venue"}}
     await h.sync()
     context = filter_context(conn, raw)
+    assert context["device_mode"] == "venue"
     assert context["venue_context"] == VENUE and context["venue_id"] == VENUE["id"]
     assert "last_beacon_id" not in context and "beacon_mac" not in context
     await h.observe(1)

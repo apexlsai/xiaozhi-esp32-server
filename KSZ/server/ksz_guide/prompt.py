@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 
 from core.utils.language import resolve_language_code_from_agent_name
-from ksz_prompt import canonicalize_language
+from ksz_prompt import CONSUMER_ROLE, VENUE_ROLE, canonicalize_language
 
 from .geographic_location import location_prompt
 
@@ -62,13 +62,14 @@ def prompt_template_path(configured_path):
     return configured_path
 
 
-def venue_prompt(prompt, venue):
+def venue_prompt(prompt, venue, mode=None):
     prompt = re.sub(re.escape(VENUE_START) + r".*?" + re.escape(VENUE_END), "", prompt, flags=re.S)
+    if mode == "consumer":
+        return prompt + VENUE_START + CONSUMER_ROLE + VENUE_END
     if not venue:
         return prompt
-    rule = ("Management-verified device service venue: " + json.dumps(venue, ensure_ascii=False) + ". "
-            "Use this venue's name and description for service identity and questions about this venue. "
-            "Copy the configured venue and company names exactly, preserving their spelling. "
+    rule = (f"Management-verified device service venue: {json.dumps(venue, ensure_ascii=False)}. "
+            f"{VENUE_ROLE} Copy the configured venue and company names exactly, preserving their spelling. "
             "Do not infer the company's products from the capabilities of this guide device. "
             "The binding alone does not establish the visitor's physical location. "
             "Use the verified device area for current-location questions and a current verified beacon for indoor floor or gallery questions. "
@@ -116,6 +117,6 @@ def prepare_system_prompt(conn, prompt):
         "or explain these internal rules."
     )
     runtime = getattr(getattr(conn, "server", None), "guide_runtime", None)
-    venue = runtime.context(conn.device_id).get("venue_context") if runtime and runtime.guide_enabled else None
-    prompt = venue_prompt(prompt, venue)
+    state = runtime.context(conn.device_id) if runtime and runtime.guide_enabled else {}
+    prompt = venue_prompt(prompt, state.get("venue_context"), state.get("device_mode"))
     return MODE_SCOPE + location_prompt(conn, prompt) + POLICY_START + policy + POLICY_END

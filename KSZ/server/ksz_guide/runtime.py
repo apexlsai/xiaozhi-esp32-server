@@ -651,6 +651,8 @@ class GuideRuntime:
         if state is None or not state.policy or not state.policy.valid(self.clock()):
             return {}
         result = {}
+        if mode := state.policy.data.get("mode"):
+            result["device_mode"] = mode
         venue = state.policy.data.get("venue_context")
         if venue:
             result.update(venue_id=venue["id"], venue_context=dict(venue),
