@@ -64,6 +64,24 @@ DEFAULT_EXAMPLES = {
         "你是谁",
         "我想和你聊聊天",
     ],
+    "play_music": [
+        "播放一首音乐",
+        "放点音乐",
+        "来一首轻松的歌",
+        "我想听歌",
+    ],
+    "movie_search": [
+        "最近有什么好看的电影",
+        "推荐几部最近的电影",
+        "查一下最近上映的电影",
+        "最近有哪些热门影片",
+    ],
+    "nearby_search": [
+        "附近有什么好吃的",
+        "附近有什么餐厅",
+        "周边哪里可以吃饭",
+        "附近有什么咖啡店",
+    ],
 }
 
 TOOL_NAMES = {
@@ -71,6 +89,9 @@ TOOL_NAMES = {
     "yuanbao_search": "yuanbao_search",
     "web_search": "web_search",
     "take_photo": "self_camera_take_photo",
+    "play_music": "play_music",
+    "movie_search": "web_search",
+    "nearby_search": "web_search",
 }
 
 
@@ -125,12 +146,30 @@ def extract_search_query(text):
     return query.strip(" ，,。.!！？?") or text.strip()
 
 
+def extract_music_query(text):
+    query = re.sub(
+        r"^\s*(?:请|帮我|麻烦)?\s*(?:播放|放|来一首|来首|听一首|听点|听|播放一首)\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return query.strip(" ，,。.!！？?") or "随机音乐"
+
+
 def explicit_tool_name(text):
     normalized = re.sub(r"\s+", "", text or "")
     if re.search(r"天气|气温|温度|降雨|下雨|预报", normalized):
         return "weather"
+    if re.search(r"播放|放点|放一首|来一首|来首|听歌|听音乐|听一首", normalized):
+        return "play_music"
     if "元宝" in normalized and re.search(r"搜索|搜|查|查询|检索", normalized):
         return "yuanbao_search"
+    if re.search(r"电影|影片|影院|上映", normalized):
+        return "movie_search"
+    if re.search(r"附近|周边", normalized) and re.search(r"吃|喝|餐厅|饭店|咖啡|美食", normalized):
+        return "nearby_search"
+    if re.search(r"好吃|吃饭|餐厅|饭店|咖啡店|美食", normalized):
+        return "nearby_search"
     if re.search(r"联网|上网|网络搜索|网页搜索", normalized):
         return "web_search"
     if re.search(r"搜索|搜一下|搜一搜|搜下|检索", normalized):
@@ -266,6 +305,8 @@ class EmbeddingIntentClassifier:
                 if location:
                     arguments["location"] = location
                 arguments["lang"] = language
+            elif explicit_name == "play_music":
+                arguments["song_name"] = extract_music_query(text)
             else:
                 arguments["query"] = extract_search_query(text)
             return {"function_call": {"name": tool_name, "arguments": arguments}}
