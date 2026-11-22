@@ -321,6 +321,8 @@ class EmbeddingIntentClassifier:
             return None
         explicit_name = explicit_tool_name(text)
         name = explicit_name
+        score = 1.0 if explicit_name else 0.0
+        margin = 1.0 if explicit_name else 0.0
         if not name:
             references = await self._references_ready()
             query = (await self._embed([text]))[0]
@@ -331,12 +333,19 @@ class EmbeddingIntentClassifier:
             )
             name, score = ranked[0]
             second_score = ranked[1][1] if len(ranked) > 1 else -1
-            if score < self.threshold or score - second_score < self.margin_threshold:
+            margin = score - second_score
+            if score < self.threshold or margin < self.margin_threshold:
                 if name != "web_search" or score < 0.60:
                     return None
             if name == "yuanbao_search":
                 name = "web_search"
 
+        if name == "general_chat":
+            return {
+                "route": "direct_answer",
+                "confidence": round(max(0.0, min(1.0, score)), 4),
+                "margin": round(max(0.0, min(1.0, margin)), 4),
+            }
         tool_name = TOOL_NAMES.get(name)
         if not tool_name:
             return None

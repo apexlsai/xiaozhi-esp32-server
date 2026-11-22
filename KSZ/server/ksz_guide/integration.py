@@ -126,6 +126,15 @@ async def classify_embedding_intent(conn, text):
             result = await classifier.classify(text, available, language)
         else:
             result = None
+        if result and result.get("route") == "direct_answer":
+            conn.ksz_route = "direct_answer"
+            conn.ksz_route_version = 1
+            conn.ksz_route_confidence = result.get("confidence", 0.0)
+            conn.ksz_route_margin = result.get("margin", 0.0)
+            result = {
+                "function_call": {"name": "continue_chat", "arguments": "{}"},
+                **result,
+            }
         if result and result.pop("nearby", False):
             _, city = location_context(conn)
             if city:
@@ -416,7 +425,12 @@ def filter_context(conn, values):
         values["device_location"] = location
     if runtime is None:
         return values
-    return validated_context(runtime, conn.device_id, values)
+    result = validated_context(runtime, conn.device_id, values)
+    for key in ("ksz_route", "ksz_route_confidence", "ksz_route_margin"):
+        value = getattr(conn, key, None)
+        if value is not None:
+            result[key] = value
+    return result
 
 
 def validated_context(runtime, device_mac, values):

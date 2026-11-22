@@ -98,3 +98,13 @@ async def test_cross_museum_question_selects_web_search_before_embedding(monkeyp
     question = "深圳博物馆里面有什么重要产品？"
     result = json.loads(await integration.classify_embedding_intent(conn, question))
     assert result["function_call"] == {"name": "web_search", "arguments": {"query": question}}
+
+
+@pytest.mark.asyncio
+async def test_general_chat_embedding_returns_direct_route(monkeypatch):
+    classifier = EmbeddingIntentClassifier({"base_url": "https://embedding.test"})
+    monkeypatch.setattr(classifier, "_references_ready", AsyncMock(return_value={"general_chat": [1.0, 0.0], "museum_rag": [0.0, 1.0]}))
+    monkeypatch.setattr(classifier, "_embed", AsyncMock(return_value=[[1.0, 0.0]]))
+    result = await classifier.classify("你好", {"web_search"})
+    assert result["route"] == "direct_answer"
+    assert "function_call" not in result
