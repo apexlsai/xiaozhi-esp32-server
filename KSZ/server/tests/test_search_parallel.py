@@ -108,3 +108,19 @@ async def test_general_chat_embedding_returns_direct_route(monkeypatch):
     result = await classifier.classify("你好", {"web_search"})
     assert result["route"] == "direct_answer"
     assert "function_call" not in result
+
+
+def test_route_hint_is_consumed_once(monkeypatch):
+    from ksz_guide.integration import filter_context
+    monkeypatch.setattr(integration, "runtime_for", lambda conn: SimpleNamespace(
+        context=lambda device_id: {"device_mode": "consumer"},
+    ))
+    connection = SimpleNamespace(
+        device_id="AA:BB:CC:DD:EE:FF", ksz_route="direct_answer",
+        ksz_route_version=1, ksz_route_confidence=0.99, ksz_route_margin=0.2,
+        ksz_geographic_location=None, beacon_location=None, prompt="",
+    )
+    first = filter_context(connection, {})
+    second = filter_context(connection, {})
+    assert first["ksz_route"] == "direct_answer"
+    assert "ksz_route" not in second

@@ -426,10 +426,11 @@ def filter_context(conn, values):
     if runtime is None:
         return values
     result = validated_context(runtime, conn.device_id, values)
-    for key in ("ksz_route", "ksz_route_confidence", "ksz_route_margin"):
+    for key in ("ksz_route", "ksz_route_version", "ksz_route_confidence", "ksz_route_margin"):
         value = getattr(conn, key, None)
         if value is not None:
             result[key] = value
+            setattr(conn, key, None)
     return result
 
 
