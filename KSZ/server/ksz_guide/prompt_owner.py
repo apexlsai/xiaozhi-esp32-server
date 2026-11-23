@@ -60,7 +60,11 @@ def context(conn, values, *, kind=None, depth=0):
             if reply is not None:
                 state["playback"] = reply.snapshot()
     language = response_language(conn, values.get("language"))
-    base_prompt = CONSUMER_ROLE if state.get("device_mode") == "consumer" else conn.config.get("prompt") or ""
+    base_prompt = conn.config.get("prompt") or ""
+    if state.get("device_mode") == "consumer":
+        base_prompt = CONSUMER_ROLE
+        if name := values.get("assistant_name"):
+            state["assistant_name"] = name
     return {"version": 1, "base_prompt": base_prompt,
             "language": language, "state": state,
             "turn": {"kind": kind or ("narration" if internal_turn(conn) else "user"),
@@ -70,19 +74,23 @@ def context(conn, values, *, kind=None, depth=0):
 def request_messages(conn, messages, values, depth=0, kind=None):
     from .integration import runtime_for
     from .intent_embedding import external_museum_query
-    from .prompt import prepare_system_prompt, venue_prompt
+    from .prompt import configured_identity, prepare_system_prompt, venue_prompt
 
     venue = values.get("venue_context")
     mode = values.get("device_mode")
     runtime = runtime_for(conn)
+    owned = agent_owned(conn)
+    if runtime or mode or owned:
+        values.update(configured_identity(conn))
     if messages and messages[-1].get("role") == "user" and runtime:
         question = messages[-1].get("content")
         if isinstance(question, str) and external_museum_query(question, venue):
             values["ksz_external_museum"] = True
-    if not agent_owned(conn):
+    if not owned:
         if not (runtime or venue or mode == "consumer"):
             return messages
         messages = list(messages)
+        assistant_name = values.get("assistant_name")
         system_index = next((i for i, message in enumerate(messages) if message["role"] == "system"), None)
         if system_index is not None:
             system = messages[system_index]
@@ -91,9 +99,13 @@ def request_messages(conn, messages, values, depth=0, kind=None):
                 prompt, replaced = re.subn(r"<museum_role>.*?</museum_role>", "", prompt, count=1, flags=re.S)
                 if not replaced:
                     prompt = prepare_system_prompt(conn, "")
-            messages[system_index] = {**system, "content": venue_prompt(prompt, venue, mode)}
+            messages[system_index] = {
+                **system, "content": venue_prompt(prompt, venue, mode, assistant_name=assistant_name),
+            }
         elif mode == "consumer":
-            messages.insert(0, {"role": "system", "content": venue_prompt("", None, mode)})
+            messages.insert(0, {
+                "role": "system", "content": venue_prompt("", None, mode, assistant_name=assistant_name),
+            })
         return messages
     trim_connection(conn)
     prompt_context = context(conn, values, kind=kind, depth=depth)

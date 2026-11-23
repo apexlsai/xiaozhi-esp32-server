@@ -15,6 +15,16 @@ from core.utils.dialogue import Dialogue
 from test_guide import DEVICE, Harness, beacon
 
 
+def test_apexls_profile_selects_fixed_guide_for_shared_nickname():
+    conn = SimpleNamespace(device_attributes={
+        "agent_name": "小硕",
+        "language": "zh-CN",
+        "apexls_role": "expert",
+        "apexls_language": "ja",
+    })
+    assert profile(conn) == ("expert", "ja-JP")
+
+
 @pytest.fixture
 def fixed(monkeypatch):
     from core.handle import sendAudioHandle, reportHandle

@@ -118,11 +118,12 @@ async def handle_role_rebind(conn, message):
 
     attributes = conn.device_attributes or attributes
 
-    language = attributes.get("language")
+    configured_role = attributes.get("apexls_role")
+    language = attributes.get("apexls_language") if configured_role else attributes.get("language")
     if not isinstance(language, str) or language not in LANGUAGE_AGENT_SUFFIXES:
         language = resolve_language_code_from_agent_name(current_agent_name)
-    target_agent_name = resolve_role_agent_name(current_agent_name, language, role)
-    if target_agent_name is None:
+    target_agent_name = None if configured_role else resolve_role_agent_name(current_agent_name, language, role)
+    if not configured_role and target_agent_name is None:
         await _send_error(conn, "agent_rebind", request_id, "无法从当前智能体推导角色对应语言")
         return True
 
@@ -130,7 +131,7 @@ async def handle_role_rebind(conn, message):
         f"KSZ角色换绑解析: device={conn.device_id} request_id={request_id} "
         f"language={language} current={current_agent_name} target={target_agent_name}"
     )
-    if target_agent_name == current_agent_name:
+    if configured_role == role or target_agent_name == current_agent_name:
         await _send_noop(conn, request_id, role, language, current_agent_name)
         logger.bind(tag=TAG).info(
             f"KSZ角色换绑无需变更: device={conn.device_id} request_id={request_id}"
@@ -144,6 +145,7 @@ async def handle_role_rebind(conn, message):
         "target": target_agent_name,
         "created_at": time.monotonic(),
     }
+    dev = attributes.get("apexls_dev") == "true" if configured_role else current_agent_name.endswith("-测试")
     data = None
     try:
         data = await _do_rebind(
@@ -153,7 +155,12 @@ async def handle_role_rebind(conn, message):
             target_agent_name,
             request_id,
             confirm=True,
+            language=language,
+            role=role,
+            dev=dev,
         )
+        if data and data.get("reconnectRequired") is True and conn.device_id in _pending_reconnects:
+            _pending_reconnects[conn.device_id]["target"] = data.get("agentName") or target_agent_name
     finally:
         if data is None or data.get("reconnectRequired") is not True:
             _pending_reconnects.pop(conn.device_id, None)
@@ -211,10 +218,13 @@ async def handle_profile_change(conn, message):
     if not isinstance(current_agent_name, str) or not current_agent_name:
         await _send_error(conn, "profile_change", request_id, "无法获取设备当前绑定智能体")
         return True
-    target_agent_name = (
-        f"{ROLE_AGENT_PREFIXES[role]}-{LANGUAGE_AGENT_SUFFIXES[language]}"
-        f"{'-测试' if dev else ''}"
-    )
+    attributes = conn.device_attributes or {}
+    target_agent_name = None
+    if not attributes.get("apexls_role"):
+        target_agent_name = (
+            f"{ROLE_AGENT_PREFIXES[role]}-{LANGUAGE_AGENT_SUFFIXES[language]}"
+            f"{'-测试' if dev else ''}"
+        )
 
     from core.handle.deviceEventHandle import _do_rebind
 
@@ -236,6 +246,8 @@ async def handle_profile_change(conn, message):
             dev=dev,
             role=role,
         )
+        if data and data.get("reconnectRequired") is True and conn.device_id in _pending_reconnects:
+            _pending_reconnects[conn.device_id]["target"] = data.get("agentName") or target_agent_name
     finally:
         if data is None or data.get("reconnectRequired") is not True:
             _pending_reconnects.pop(conn.device_id, None)

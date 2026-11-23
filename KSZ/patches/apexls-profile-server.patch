@@ -1,0 +1,98 @@
+diff --git a/config/manage_api_client.py b/config/manage_api_client.py
+index 48745c7..69a6009 100644
+--- a/config/manage_api_client.py
++++ b/config/manage_api_client.py
+@@ -336,11 +336,12 @@ async def rebind_device_agent(
+     instance,
+     device_id: str,
+     current_agent_name: str,
+-    target_agent_name: str,
++    target_agent_name: Optional[str],
+     confirm: bool = True,
+     language: Optional[str] = None,
+     dev: bool = False,
+     role: Optional[str] = None,
++    current_agent_id: Optional[str] = None,
+ ) -> Optional[Dict]:
+     """设备智能体换绑（经 server.secret 调用 manager-api）"""
+     payload = {
+@@ -349,6 +350,8 @@ async def rebind_device_agent(
+         "targetAgentName": target_agent_name,
+         "confirm": confirm,
+     }
++    if current_agent_id:
++        payload["currentAgentId"] = current_agent_id
+     if language is not None:
+         payload["language"] = language
+         payload["dev"] = dev
+diff --git a/core/connection.py b/core/connection.py
+index ac3ebe9..3d9ef51 100644
+--- a/core/connection.py
++++ b/core/connection.py
+@@ -1216,7 +1216,7 @@ class ConnectionHandler:
+             extra_body["device_id"] = self.device_id
+         if self.device_attributes:
+             # 当前绑定智能体后缀为准，避免属性滞后导致仍发 zh-CN
+-            language = resolve_language_code_from_agent_name(
++            language = self.device_attributes.get("apexls_language") or resolve_language_code_from_agent_name(
+                 self.device_attributes.get("agent_name")
+             )
+             attr_language = self.device_attributes.get("language")
+diff --git a/core/handle/deviceEventHandle.py b/core/handle/deviceEventHandle.py
+index a2bf410..79479de 100644
+--- a/core/handle/deviceEventHandle.py
++++ b/core/handle/deviceEventHandle.py
+@@ -100,8 +100,8 @@ async def _do_rebind(
+     if request_id is not None:
+         result_msg["request_id"] = request_id
+ 
+-    if not current_agent_name or not target_agent_name:
+-        error = "缺少 current_agent_name 或 target_agent_name"
++    if not current_agent_name or (not target_agent_name and language is None):
++        error = "缺少当前绑定智能体，或未提供目标智能体及语言"
+         if raise_on_error:
+             raise ValueError(error)
+         result_msg["error"] = error
+@@ -131,6 +131,9 @@ async def _do_rebind(
+             "target_agent_name": target_agent_name,
+             "confirm": True,
+         }
++        current_agent_id = (getattr(conn, "device_attributes", None) or {}).get("agent_id")
++        if current_agent_id:
++            rebind_args["current_agent_id"] = current_agent_id
+         if language is not None:
+             rebind_args["language"] = language
+             rebind_args["dev"] = dev
+@@ -208,18 +211,19 @@ async def apply_language_change(
+         )
+ 
+     resolved_current = await _resolve_current_agent_name(conn, current_agent_name)
+-    resolved_target = target_agent_name or resolve_language_agent_name(
+-        resolved_current, language, dev
+-    )
+-    if not resolved_target:
+-        raise ValueError("无法从当前智能体名称推导目标语言智能体")
++    configured = (conn.device_attributes or {}).get("apexls_role")
++    resolved_target = target_agent_name
++    if not resolved_target and not configured:
++        resolved_target = resolve_language_agent_name(resolved_current, language, dev)
++        if not resolved_target:
++            raise ValueError("无法从当前智能体名称推导目标语言智能体")
+ 
+     logger.bind(tag=TAG).info(
+         f"设备语言切换: {conn.device_id} {language} dev={dev} "
+         f"{resolved_current} -> {resolved_target}"
+     )
+ 
+-    await _do_rebind(
++    data = await _do_rebind(
+         conn,
+         "language_change",
+         resolved_current,
+@@ -239,5 +243,5 @@ async def apply_language_change(
+         "language": language,
+         "dev": dev,
+         "currentAgentName": resolved_current,
+-        "targetAgentName": resolved_target,
++        "targetAgentName": (data or {}).get("agentName") or resolved_target,
+     }

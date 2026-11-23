@@ -1,0 +1,821 @@
+diff --git a/main/manager-api/src/main/java/xiaozhi/modules/agent/dto/AgentDTO.java b/main/manager-api/src/main/java/xiaozhi/modules/agent/dto/AgentDTO.java
+index 693e1ca..90302ac 100644
+--- a/main/manager-api/src/main/java/xiaozhi/modules/agent/dto/AgentDTO.java
++++ b/main/manager-api/src/main/java/xiaozhi/modules/agent/dto/AgentDTO.java
+@@ -20,6 +20,12 @@ public class AgentDTO {
+     @Schema(description = "智能体名称", example = "客服助手")
+     private String agentName;
+ 
++    private String apexlsLanguage;
++
++    private String apexlsRole;
++
++    private Boolean apexlsDev;
++
+     @Schema(description = "语音合成模型名称", example = "tts_model_01")
+     private String ttsModelName;
+ 
+diff --git a/main/manager-api/src/main/java/xiaozhi/modules/agent/dto/AgentUpdateDTO.java b/main/manager-api/src/main/java/xiaozhi/modules/agent/dto/AgentUpdateDTO.java
+index dacea73..7352840 100644
+--- a/main/manager-api/src/main/java/xiaozhi/modules/agent/dto/AgentUpdateDTO.java
++++ b/main/manager-api/src/main/java/xiaozhi/modules/agent/dto/AgentUpdateDTO.java
+@@ -33,6 +33,12 @@ public class AgentUpdateDTO implements Serializable {
+     @Schema(description = "智能体名称", example = "客服助手", nullable = true)
+     private String agentName;
+ 
++    private String apexlsLanguage;
++
++    private String apexlsRole;
++
++    private Boolean apexlsDev;
++
+     @Schema(description = "语音识别模型标识", example = "asr_model_02", nullable = true)
+     private String asrModelId;
+ 
+diff --git a/main/manager-api/src/main/java/xiaozhi/modules/agent/entity/AgentEntity.java b/main/manager-api/src/main/java/xiaozhi/modules/agent/entity/AgentEntity.java
+index d9f0777..46aa272 100644
+--- a/main/manager-api/src/main/java/xiaozhi/modules/agent/entity/AgentEntity.java
++++ b/main/manager-api/src/main/java/xiaozhi/modules/agent/entity/AgentEntity.java
+@@ -3,9 +3,11 @@ package xiaozhi.modules.agent.entity;
+ import java.math.BigDecimal;
+ import java.util.Date;
+ 
++import com.baomidou.mybatisplus.annotation.FieldStrategy;
+ import com.baomidou.mybatisplus.annotation.FieldStrategy;
+ import com.baomidou.mybatisplus.annotation.IdType;
+ import com.baomidou.mybatisplus.annotation.TableField;
++import com.baomidou.mybatisplus.annotation.TableField;
+ import com.baomidou.mybatisplus.annotation.TableId;
+ import com.baomidou.mybatisplus.annotation.TableName;
+ 
+@@ -30,6 +32,15 @@ public class AgentEntity {
+     @Schema(description = "智能体名称")
+     private String agentName;
+ 
++    @TableField(updateStrategy = FieldStrategy.ALWAYS)
++    private String apexlsLanguage;
++
++    @TableField(updateStrategy = FieldStrategy.ALWAYS)
++    private String apexlsRole;
++
++    @TableField(updateStrategy = FieldStrategy.ALWAYS)
++    private Boolean apexlsDev;
++
+     @Schema(description = "语音识别模型标识")
+     private String asrModelId;
+ 
+diff --git a/main/manager-api/src/main/java/xiaozhi/modules/agent/service/impl/AgentServiceImpl.java b/main/manager-api/src/main/java/xiaozhi/modules/agent/service/impl/AgentServiceImpl.java
+index 417ddb6..787f001 100644
+--- a/main/manager-api/src/main/java/xiaozhi/modules/agent/service/impl/AgentServiceImpl.java
++++ b/main/manager-api/src/main/java/xiaozhi/modules/agent/service/impl/AgentServiceImpl.java
+@@ -34,6 +34,7 @@ import xiaozhi.modules.agent.dao.AgentDao;
+ import xiaozhi.modules.agent.dao.AgentTagDao;
+ import xiaozhi.modules.agent.dto.AgentCreateDTO;
+ import xiaozhi.modules.agent.dto.AgentDTO;
++import xiaozhi.modules.device.support.DeviceLanguageSpec;
+ import xiaozhi.modules.agent.dto.AgentMemoryDTO;
+ import xiaozhi.modules.agent.dto.AgentTagDTO;
+ import xiaozhi.modules.agent.dto.AgentUpdateDTO;
+@@ -268,6 +269,9 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
+         AgentDTO dto = new AgentDTO();
+         dto.setId(agent.getId());
+         dto.setAgentName(agent.getAgentName());
++        dto.setApexlsLanguage(agent.getApexlsLanguage());
++        dto.setApexlsRole(agent.getApexlsRole());
++        dto.setApexlsDev(agent.getApexlsDev());
+         dto.setSystemPrompt(agent.getSystemPrompt());
+ 
+         // 获取 TTS 模型名称
+@@ -382,6 +386,33 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
+             agentSnapshotService.createSnapshot(agentId, currentVersionNo == 0 ? "initial" : "current");
+         }
+ 
++        if (dto.getApexlsLanguage() != null || dto.getApexlsRole() != null || dto.getApexlsDev() != null) {
++            String language = dto.getApexlsLanguage();
++            String role = dto.getApexlsRole();
++            if (language == null || role == null) {
++                throw new RenException("请同时提交 Apexls 语言和角色");
++            }
++            if (StringUtils.isBlank(language) && StringUtils.isBlank(role)) {
++                existingEntity.setApexlsLanguage(null);
++                existingEntity.setApexlsRole(null);
++                existingEntity.setApexlsDev(null);
++            } else {
++                if (StringUtils.isBlank(language) || !DeviceLanguageSpec.isSupported(language)
++                        || !DeviceLanguageSpec.isRoleSupported(role)) {
++                    throw new RenException("请选择有效的 Apexls 语言和角色");
++                }
++                boolean dev = Boolean.TRUE.equals(dto.getApexlsDev());
++                if (agentDao.selectCount(new QueryWrapper<AgentEntity>()
++                        .eq("user_id", existingEntity.getUserId()).ne("id", agentId)
++                        .eq("apexls_language", language).eq("apexls_role", role).eq("apexls_dev", dev)) > 0) {
++                    throw new RenException("当前账号下已有相同语言、角色和用途的 Apexls 智能体");
++                }
++                existingEntity.setApexlsLanguage(language);
++                existingEntity.setApexlsRole(role);
++                existingEntity.setApexlsDev(dev);
++            }
++        }
++
+         // 只更新提供的非空字段
+         if (dto.getAgentName() != null) {
+             existingEntity.setAgentName(dto.getAgentName());
+@@ -542,7 +573,11 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
+         if (!b) {
+             throw new RenException(ErrorCode.LLM_INTENT_PARAMS_MISMATCH);
+         }
+-        this.updateById(existingEntity);
++        try {
++            this.updateById(existingEntity);
++        } catch (org.springframework.dao.DuplicateKeyException error) {
++            throw new RenException("当前账号下已有相同语言、角色和用途的 Apexls 智能体");
++        }
+         if (dto.getAgentName() != null) {
+             deviceAttributeService.syncAgentNameByAgentId(agentId, existingEntity.getAgentName());
+         }
+diff --git a/main/manager-api/src/main/java/xiaozhi/modules/config/service/impl/ConfigServiceImpl.java b/main/manager-api/src/main/java/xiaozhi/modules/config/service/impl/ConfigServiceImpl.java
+index b001e24..b8ab57d 100644
+--- a/main/manager-api/src/main/java/xiaozhi/modules/config/service/impl/ConfigServiceImpl.java
++++ b/main/manager-api/src/main/java/xiaozhi/modules/config/service/impl/ConfigServiceImpl.java
+@@ -228,6 +228,13 @@ public class ConfigServiceImpl implements ConfigService {
+         Map<String, String> deviceAttributes = new HashMap<>(
+                 deviceAttributeService.getAttributesByDeviceId(device.getMacAddress()));
+         deviceAttributes.put("agent_name", agent.getAgentName());
++        if (agent.getApexlsLanguage() != null && agent.getApexlsRole() != null) {
++            deviceAttributes.put("apexls_language", agent.getApexlsLanguage());
++            deviceAttributes.put("apexls_role", agent.getApexlsRole());
++            deviceAttributes.put("agent_id", agent.getId());
++            deviceAttributes.put("apexls_dev", String.valueOf(Boolean.TRUE.equals(agent.getApexlsDev())));
++            deviceAttributes.put("language", agent.getApexlsLanguage());
++        }
+         result.put("device_attributes", deviceAttributes);
+         result.put("agent_name", agent.getAgentName());
+ 
+diff --git a/main/manager-api/src/main/java/xiaozhi/modules/device/dto/DeviceRebindDTO.java b/main/manager-api/src/main/java/xiaozhi/modules/device/dto/DeviceRebindDTO.java
+index 198198a..19227c2 100644
+--- a/main/manager-api/src/main/java/xiaozhi/modules/device/dto/DeviceRebindDTO.java
++++ b/main/manager-api/src/main/java/xiaozhi/modules/device/dto/DeviceRebindDTO.java
+@@ -20,8 +20,10 @@ public class DeviceRebindDTO implements Serializable {
+     @NotBlank(message = "当前智能体名称不能为空")
+     private String currentAgentName;
+ 
++    @Schema(description = "当前绑定智能体 ID")
++    private String currentAgentId;
++
+     @Schema(description = "目标智能体名称")
+-    @NotBlank(message = "目标智能体名称不能为空")
+     private String targetAgentName;
+ 
+     @Schema(description = "确认执行换绑，必须为 true")
+diff --git a/main/manager-api/src/main/java/xiaozhi/modules/device/service/impl/DeviceServiceImpl.java b/main/manager-api/src/main/java/xiaozhi/modules/device/service/impl/DeviceServiceImpl.java
+index dc8324d..9a7ffe2 100644
+--- a/main/manager-api/src/main/java/xiaozhi/modules/device/service/impl/DeviceServiceImpl.java
++++ b/main/manager-api/src/main/java/xiaozhi/modules/device/service/impl/DeviceServiceImpl.java
+@@ -593,7 +593,7 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity>
+             throw new RenException(ErrorCode.DEVICE_REBIND_CONFIRM_REQUIRED);
+         }
+         if (StringUtils.isBlank(dto.getDeviceId()) || StringUtils.isBlank(dto.getCurrentAgentName())
+-                || StringUtils.isBlank(dto.getTargetAgentName())) {
++                || (StringUtils.isAllBlank(dto.getTargetAgentName(), dto.getLanguage()))) {
+             throw new RenException(ErrorCode.NOT_NULL);
+         }
+         if (StringUtils.isNotBlank(dto.getLanguage()) && !DeviceLanguageSpec.isSupported(dto.getLanguage())) {
+@@ -602,10 +602,6 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity>
+         if (StringUtils.isNotBlank(dto.getRole()) && !DeviceLanguageSpec.isRoleSupported(dto.getRole())) {
+             throw new RenException("role 必须是 child、youth 或 expert");
+         }
+-        if (StringUtils.isNotBlank(dto.getRole())
+-                && !DeviceLanguageSpec.isProfileLanguageSupported(dto.getLanguage())) {
+-            throw new RenException("profile_change 的 language 必须是 zh-CN、en、ja 或 ko");
+-        }
+         if (StringUtils.isBlank(dto.getLanguage()) && dto.getDev() != null) {
+             throw new RenException("dev 仅可与 language 同时使用");
+         }
+@@ -622,26 +618,35 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity>
+         }
+ 
+         AgentEntity currentAgent = agentDao.selectById(device.getAgentId());
+-        if (currentAgent == null || !dto.getCurrentAgentName().equals(currentAgent.getAgentName())) {
++        if (currentAgent == null || !dto.getCurrentAgentName().equals(currentAgent.getAgentName())
++                || (StringUtils.isNotBlank(dto.getCurrentAgentId()) && !dto.getCurrentAgentId().equals(currentAgent.getId()))) {
+             throw new RenException(ErrorCode.DEVICE_REBIND_CURRENT_AGENT_MISMATCH);
+         }
+ 
+-        String targetAgentName = dto.getTargetAgentName();
++        AgentEntity targetAgent = currentAgent;
+         if (StringUtils.isNotBlank(dto.getLanguage())) {
+-            targetAgentName = StringUtils.isNotBlank(dto.getRole())
+-                    ? DeviceLanguageSpec.resolveProfileAgentName(
+-                            dto.getLanguage(), dto.getRole(), Boolean.TRUE.equals(dto.getDev()))
+-                    : DeviceLanguageSpec.resolveTargetAgentName(
+-                            currentAgent.getAgentName(), dto.getLanguage(), Boolean.TRUE.equals(dto.getDev()));
+-            if (targetAgentName == null) {
+-                throw new RenException("无法推导目标智能体");
++            boolean dev = Boolean.TRUE.equals(dto.getDev());
++            String role = dto.getRole();
++            String legacyName = legacyTargetName(currentAgent, dto.getLanguage(), role, dev);
++            if (StringUtils.isNotBlank(dto.getTargetAgentName())
++                    && StringUtils.isBlank(role) && currentAgent.getApexlsRole() == null
++                    && DeviceLanguageSpec.legacyRole(currentAgent.getAgentName()) == null
++                    && legacyName != null && !legacyName.equals(dto.getTargetAgentName())) {
++                throw new RenException(ErrorCode.DEVICE_REBIND_LANGUAGE_TARGET_MISMATCH, legacyName);
+             }
+-            if (!targetAgentName.equals(dto.getTargetAgentName())) {
+-                throw new RenException(ErrorCode.DEVICE_REBIND_LANGUAGE_TARGET_MISMATCH, targetAgentName);
++            targetAgent = findLanguageTarget(device, currentAgent, dto.getLanguage(), role, dev);
++            if (StringUtils.isNotBlank(dto.getTargetAgentName())
++                    && !dto.getTargetAgentName().equals(targetAgent.getAgentName())
++                    && !dto.getTargetAgentName().equals(legacyName)) {
++                throw new RenException(ErrorCode.DEVICE_REBIND_LANGUAGE_TARGET_MISMATCH, targetAgent.getAgentName());
+             }
++        } else if (!dto.getCurrentAgentName().equals(dto.getTargetAgentName())) {
++            QueryWrapper<AgentEntity> named = new QueryWrapper<AgentEntity>()
++                    .eq("user_id", device.getUserId()).eq("agent_name", dto.getTargetAgentName());
++            targetAgent = uniqueTarget(agentDao.selectList(named), dto.getTargetAgentName());
+         }
+ 
+-        if (dto.getCurrentAgentName().equals(targetAgentName)) {
++        if (currentAgent.getId().equals(targetAgent.getId())) {
+             if (StringUtils.isNotBlank(dto.getLanguage())) {
+                 deviceAttributeService.updateAgentName(device.getMacAddress(), currentAgent.getAgentName());
+                 deviceAttributeService.updateLanguage(device.getMacAddress(), dto.getLanguage());
+@@ -663,18 +668,6 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity>
+             return same;
+         }
+ 
+-        QueryWrapper<AgentEntity> targetWrapper = new QueryWrapper<>();
+-        targetWrapper.eq("user_id", device.getUserId());
+-        targetWrapper.eq("agent_name", targetAgentName);
+-        List<AgentEntity> targetAgents = agentDao.selectList(targetWrapper);
+-        if (targetAgents == null || targetAgents.isEmpty()) {
+-            throw new RenException(ErrorCode.DEVICE_REBIND_TARGET_AGENT_NOT_FOUND, targetAgentName);
+-        }
+-        if (targetAgents.size() > 1) {
+-            throw new RenException(ErrorCode.DEVICE_REBIND_TARGET_AGENT_AMBIGUOUS);
+-        }
+-        AgentEntity targetAgent = targetAgents.get(0);
+-
+         String oldAgentId = device.getAgentId();
+         UpdateWrapper<DeviceEntity> updateWrapper = new UpdateWrapper<>();
+         updateWrapper.eq("id", device.getId());
+@@ -721,14 +714,12 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity>
+     @Override
+     @Transactional(rollbackFor = Exception.class)
+     public DeviceRebindVO rebindDeviceLanguage(String deviceId, String language, boolean dev) {
+-        String targetAgentName = validateLanguageTargetAgent(deviceId, language, dev);
+         DeviceEntity device = getDeviceByMacAddress(deviceId);
+-        AgentEntity currentAgent = agentDao.selectById(device.getAgentId());
++        AgentEntity currentAgent = boundAgent(device);
+ 
+         DeviceRebindDTO dto = new DeviceRebindDTO();
+         dto.setDeviceId(deviceId);
+         dto.setCurrentAgentName(currentAgent.getAgentName());
+-        dto.setTargetAgentName(targetAgentName);
+         dto.setConfirm(true);
+         dto.setLanguage(language);
+         dto.setDev(dev);
+@@ -740,45 +731,20 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity>
+         if (!DeviceLanguageSpec.isSupported(language)) {
+             throw new RenException(ErrorCode.DEVICE_ATTRIBUTE_LANGUAGE_INVALID);
+         }
+-
+         DeviceEntity device = getDeviceByMacAddress(deviceId);
+-        if (device == null || StringUtils.isBlank(device.getAgentId())) {
+-            throw new RenException(ErrorCode.DEVICE_NOT_EXIST);
+-        }
+-        AgentEntity currentAgent = agentDao.selectById(device.getAgentId());
+-        if (currentAgent == null) {
+-            throw new RenException(ErrorCode.DEVICE_REBIND_CURRENT_AGENT_MISMATCH);
+-        }
+-
+-        String targetAgentName = DeviceLanguageSpec.resolveTargetAgentName(currentAgent.getAgentName(), language, dev);
+-        if (targetAgentName == null) {
+-            throw new RenException("无法从当前智能体名称推导目标语言智能体");
+-        }
+-
+-        QueryWrapper<AgentEntity> targetWrapper = new QueryWrapper<>();
+-        targetWrapper.eq("user_id", device.getUserId());
+-        targetWrapper.eq("agent_name", targetAgentName);
+-        List<AgentEntity> targetAgents = agentDao.selectList(targetWrapper);
+-        if (targetAgents == null || targetAgents.isEmpty()) {
+-            throw new RenException(ErrorCode.DEVICE_REBIND_TARGET_AGENT_NOT_FOUND, targetAgentName);
+-        }
+-        if (targetAgents.size() > 1) {
+-            throw new RenException(ErrorCode.DEVICE_REBIND_TARGET_AGENT_AMBIGUOUS);
+-        }
+-        return targetAgentName;
++        return findLanguageTarget(device, boundAgent(device), language, null, dev).getAgentName();
+     }
+ 
+     @Override
+     @Transactional(rollbackFor = Exception.class)
+     public DeviceRebindVO rebindDeviceProfile(String deviceId, String language, String role, boolean dev) {
+-        String targetAgentName = validateProfileTargetAgent(deviceId, language, role, dev);
++        requireProfile(language, role);
+         DeviceEntity device = getDeviceByMacAddress(deviceId);
+-        AgentEntity currentAgent = agentDao.selectById(device.getAgentId());
++        AgentEntity currentAgent = boundAgent(device);
+ 
+         DeviceRebindDTO dto = new DeviceRebindDTO();
+         dto.setDeviceId(deviceId);
+         dto.setCurrentAgentName(currentAgent.getAgentName());
+-        dto.setTargetAgentName(targetAgentName);
+         dto.setConfirm(true);
+         dto.setLanguage(language);
+         dto.setRole(role);
+@@ -788,34 +754,77 @@ public class DeviceServiceImpl extends BaseServiceImpl<DeviceDao, DeviceEntity>
+ 
+     @Override
+     public String validateProfileTargetAgent(String deviceId, String language, String role, boolean dev) {
++        requireProfile(language, role);
++        DeviceEntity device = getDeviceByMacAddress(deviceId);
++        return findLanguageTarget(device, boundAgent(device), language, role, dev).getAgentName();
++    }
++
++    private void requireProfile(String language, String role) {
+         if (!DeviceLanguageSpec.isProfileLanguageSupported(language)) {
+             throw new RenException("profile_change 的 language 必须是 zh-CN、en、ja 或 ko");
+         }
+         if (!DeviceLanguageSpec.isRoleSupported(role)) {
+             throw new RenException("role 必须是 child、youth 或 expert");
+         }
++    }
+ 
+-        DeviceEntity device = getDeviceByMacAddress(deviceId);
++    private AgentEntity boundAgent(DeviceEntity device) {
+         if (device == null || StringUtils.isBlank(device.getAgentId())) {
+             throw new RenException(ErrorCode.DEVICE_NOT_EXIST);
+         }
+-        AgentEntity currentAgent = agentDao.selectById(device.getAgentId());
+-        if (currentAgent == null) {
++        AgentEntity agent = agentDao.selectById(device.getAgentId());
++        if (agent == null) {
+             throw new RenException(ErrorCode.DEVICE_REBIND_CURRENT_AGENT_MISMATCH);
+         }
++        return agent;
++    }
++
++    private String legacyTargetName(AgentEntity current, String language, String requestedRole, boolean dev) {
++        String role = StringUtils.defaultIfBlank(requestedRole, current.getApexlsRole());
++        return role == null
++                ? DeviceLanguageSpec.resolveTargetAgentName(current.getAgentName(), language, dev)
++                : DeviceLanguageSpec.legacyProfileName(language, role, dev);
++    }
++
++    private AgentEntity findLanguageTarget(DeviceEntity device, AgentEntity current,
++            String language, String requestedRole, boolean dev) {
++        String role = StringUtils.defaultIfBlank(requestedRole, current.getApexlsRole());
++        if (role == null) {
++            role = DeviceLanguageSpec.legacyRole(current.getAgentName());
++        }
++        String legacyName = legacyTargetName(current, language, requestedRole, dev);
++        QueryWrapper<AgentEntity> targets = new QueryWrapper<AgentEntity>().eq("user_id", device.getUserId());
++        if (role != null) {
++            String effectiveRole = role;
++            targets.and(scopes -> {
++                scopes.eq("apexls_language", language).eq("apexls_role", effectiveRole).eq("apexls_dev", dev);
++                if (legacyName != null) {
++                    scopes.or(legacy -> legacy.isNull("apexls_language").eq("agent_name", legacyName));
++                }
++            });
++        } else if (legacyName != null) {
++            if (legacyName.equals(current.getAgentName())) {
++                return current;
++            }
++            targets.isNull("apexls_language").eq("agent_name", legacyName);
++        } else {
++            throw new RenException("当前智能体未配置 Apexls 角色");
++        }
++
++        List<AgentEntity> matches = agentDao.selectList(targets);
++        List<AgentEntity> configured = matches.stream().filter(agent -> agent.getApexlsLanguage() != null).toList();
++        String label = legacyName == null ? language + "/" + role : legacyName;
++        return uniqueTarget(configured.isEmpty() ? matches : configured, label);
++    }
+ 
+-        String targetAgentName = DeviceLanguageSpec.resolveProfileAgentName(language, role, dev);
+-        QueryWrapper<AgentEntity> targetWrapper = new QueryWrapper<>();
+-        targetWrapper.eq("user_id", device.getUserId());
+-        targetWrapper.eq("agent_name", targetAgentName);
+-        List<AgentEntity> targetAgents = agentDao.selectList(targetWrapper);
+-        if (targetAgents == null || targetAgents.isEmpty()) {
+-            throw new RenException(ErrorCode.DEVICE_REBIND_TARGET_AGENT_NOT_FOUND, targetAgentName);
++    private AgentEntity uniqueTarget(List<AgentEntity> matches, String label) {
++        if (matches == null || matches.isEmpty()) {
++            throw new RenException(ErrorCode.DEVICE_REBIND_TARGET_AGENT_NOT_FOUND, label);
+         }
+-        if (targetAgents.size() > 1) {
++        if (matches.size() > 1) {
+             throw new RenException(ErrorCode.DEVICE_REBIND_TARGET_AGENT_AMBIGUOUS);
+         }
+-        return targetAgentName;
++        return matches.get(0);
+     }
+ 
+     @Override
+diff --git a/main/manager-api/src/main/java/xiaozhi/modules/device/support/DeviceLanguageSpec.java b/main/manager-api/src/main/java/xiaozhi/modules/device/support/DeviceLanguageSpec.java
+index 10b57e8..71e1b59 100644
+--- a/main/manager-api/src/main/java/xiaozhi/modules/device/support/DeviceLanguageSpec.java
++++ b/main/manager-api/src/main/java/xiaozhi/modules/device/support/DeviceLanguageSpec.java
+@@ -18,7 +18,7 @@ public final class DeviceLanguageSpec {
+     }
+ 
+     public static boolean isSupported(String language) {
+-        return AGENT_SUFFIXES.containsKey(language);
++        return language != null && AGENT_SUFFIXES.containsKey(language);
+     }
+ 
+     public static boolean isProfileLanguageSupported(String language) {
+@@ -33,6 +33,24 @@ public final class DeviceLanguageSpec {
+         if (!isProfileLanguageSupported(language) || !isRoleSupported(role)) {
+             return null;
+         }
++        return legacyProfileName(language, role, dev);
++    }
++
++    public static String legacyRole(String agentName) {
++        if (agentName == null) {
++            return null;
++        }
++        return ROLE_PREFIXES.entrySet().stream()
++                .filter(entry -> agentName.startsWith(entry.getValue() + "-")
++                        || agentName.startsWith(entry.getValue() + "－")
++                        || agentName.startsWith(entry.getValue() + "—"))
++                .map(Map.Entry::getKey).findFirst().orElse(null);
++    }
++
++    public static String legacyProfileName(String language, String role, boolean dev) {
++        if (!isSupported(language) || !isRoleSupported(role)) {
++            return null;
++        }
+         return ROLE_PREFIXES.get(role) + "-" + AGENT_SUFFIXES.get(language) + (dev ? "-测试" : "");
+     }
+ 
+diff --git a/main/manager-api/src/main/resources/db/changelog/db.changelog-master.yaml b/main/manager-api/src/main/resources/db/changelog/db.changelog-master.yaml
+index 8169862..7a728ea 100644
+--- a/main/manager-api/src/main/resources/db/changelog/db.changelog-master.yaml
++++ b/main/manager-api/src/main/resources/db/changelog/db.changelog-master.yaml
+@@ -837,3 +837,10 @@ databaseChangeLog:
+         - sqlFile:
+             encoding: utf8
+             path: classpath:db/changelog/ksz-agent-context-turns.sql
++  - changeSet:
++      id: ksz-agent-apexls-profile
++      author: JacobNg
++      changes:
++        - sqlFile:
++            encoding: utf8
++            path: classpath:db/changelog/ksz-agent-apexls-profile.sql
+diff --git a/main/manager-api/src/main/resources/db/changelog/ksz-agent-apexls-profile.sql b/main/manager-api/src/main/resources/db/changelog/ksz-agent-apexls-profile.sql
+new file mode 100644
+index 0000000..ddb8668
+--- /dev/null
++++ b/main/manager-api/src/main/resources/db/changelog/ksz-agent-apexls-profile.sql
+@@ -0,0 +1,5 @@
++ALTER TABLE ai_agent
++    ADD COLUMN apexls_language VARCHAR(24) NULL,
++    ADD COLUMN apexls_role VARCHAR(16) NULL,
++    ADD COLUMN apexls_dev BOOLEAN NULL,
++    ADD CONSTRAINT uk_ai_agent_apexls_profile UNIQUE (user_id, apexls_language, apexls_role, apexls_dev);
+diff --git a/main/manager-api/src/main/resources/mapper/agent/AgentDao.xml b/main/manager-api/src/main/resources/mapper/agent/AgentDao.xml
+index b9fc27e..4797b64 100644
+--- a/main/manager-api/src/main/resources/mapper/agent/AgentDao.xml
++++ b/main/manager-api/src/main/resources/mapper/agent/AgentDao.xml
+@@ -11,6 +11,9 @@
+         <result column="userId"    property="userId"/>
+         <result column="agentCode" property="agentCode"/>
+         <result column="agentName" property="agentName"/>
++        <result column="apexlsLanguage" property="apexlsLanguage"/>
++        <result column="apexlsRole" property="apexlsRole"/>
++        <result column="apexlsDev" property="apexlsDev"/>
+         <result column="asrModelId" property="asrModelId"/>
+         <result column="vadModelId" property="vadModelId"/>
+         <result column="llmModelId" property="llmModelId"/>
+@@ -50,6 +53,9 @@
+                a.user_id           AS userId,
+                a.agent_code        AS agentCode,
+                a.agent_name        AS agentName,
++               a.apexls_language   AS apexlsLanguage,
++               a.apexls_role       AS apexlsRole,
++               a.apexls_dev        AS apexlsDev,
+                a.asr_model_id      AS asrModelId,
+                a.vad_model_id      AS vadModelId,
+                a.llm_model_id      AS llmModelId,
+diff --git a/main/manager-api/src/test/java/xiaozhi/modules/device/service/impl/DeviceServiceImplRebindTest.java b/main/manager-api/src/test/java/xiaozhi/modules/device/service/impl/DeviceServiceImplRebindTest.java
+index b1f0f7c..efff334 100644
+--- a/main/manager-api/src/test/java/xiaozhi/modules/device/service/impl/DeviceServiceImplRebindTest.java
++++ b/main/manager-api/src/test/java/xiaozhi/modules/device/service/impl/DeviceServiceImplRebindTest.java
+@@ -316,6 +316,40 @@ class DeviceServiceImplRebindTest {
+         return messageUtils;
+     }
+ 
++    @Test
++    @DisplayName("同昵称的 Apexls 智能体按语言角色换绑")
++    void switchesBetweenAgentsWithTheSameNickname() {
++        AgentEntity current = agent(OLD_AGENT_ID, "小硕");
++        current.setApexlsLanguage("zh-CN");
++        current.setApexlsRole("youth");
++        current.setApexlsDev(false);
++        AgentEntity target = agent(NEW_AGENT_ID, "小硕");
++        target.setApexlsLanguage("ja");
++        target.setApexlsRole("youth");
++        target.setApexlsDev(false);
++        DeviceAttributeEntity attribute = new DeviceAttributeEntity();
++        attribute.setAgentName("小硕");
++        attribute.setLanguage("ja");
++
++        when(deviceDao.selectOne(any(QueryWrapper.class))).thenReturn(device(OLD_AGENT_ID));
++        when(agentDao.selectById(OLD_AGENT_ID)).thenReturn(current);
++        when(agentDao.selectList(any(QueryWrapper.class))).thenReturn(List.of(
++                agent("legacy", "青年-日语"), target));
++        when(deviceDao.update(isNull(), any(UpdateWrapper.class))).thenReturn(1);
++        when(deviceDao.selectById(MAC)).thenReturn(device(NEW_AGENT_ID));
++        when(agentDao.selectById(NEW_AGENT_ID)).thenReturn(target);
++        when(deviceAttributeService.getByDeviceId(MAC)).thenReturn(attribute);
++
++        DeviceRebindDTO dto = request("小硕", null, true);
++        dto.setCurrentAgentId(OLD_AGENT_ID);
++        dto.setLanguage("ja");
++        DeviceRebindVO result = service.rebindDevice(dto);
++
++        assertEquals(NEW_AGENT_ID, result.getAgentId());
++        assertEquals("小硕", result.getAgentName());
++        assertTrue(result.getReconnectRequired());
++    }
++
+     private DeviceRebindDTO request(String current, String target, boolean confirm) {
+         DeviceRebindDTO dto = new DeviceRebindDTO();
+         dto.setDeviceId(MAC);
+diff --git a/main/manager-web/src/components/DeviceItem.vue b/main/manager-web/src/components/DeviceItem.vue
+index 6985e1f..04647da 100644
+--- a/main/manager-web/src/components/DeviceItem.vue
++++ b/main/manager-web/src/components/DeviceItem.vue
+@@ -15,6 +15,11 @@
+         </el-tooltip>
+       </div>
+     </div>
++    <div v-if="apexlsProfileLabel" class="device-apexls-profile">
++      <span class="device-apexls-label">Apexls</span>
++      <span>{{ apexlsProfileLabel }}</span>
++      <span v-if="device.apexlsDev" class="device-apexls-test">测试</span>
++    </div>
+     <div class="device-name">
+       {{ $t('home.languageModel') }}：{{ device.llmModelName }}
+     </div>
+@@ -52,6 +57,7 @@
+ 
+ <script>
+ import i18n from '@/i18n';
++import { APEXLS_LANGUAGES, APEXLS_ROLES } from '@/utils/apexlsProfile';
+ 
+ export default {
+   name: 'DeviceItem',
+@@ -70,6 +76,11 @@ export default {
+     return { switchValue: false }
+   },
+   computed: {
++    apexlsProfileLabel() {
++      const language = APEXLS_LANGUAGES[this.device.apexlsLanguage];
++      const role = APEXLS_ROLES[this.device.apexlsRole];
++      return language && role ? `${language} · ${role}` : '';
++    },
+     formattedLastConnectedTime() {
+       if (!this.device.lastConnectedAt) return this.$t('home.noConversation');
+ 
+@@ -135,6 +146,35 @@ export default {
+   }
+ }
+ 
++.device-apexls-profile {
++  display: flex;
++  align-items: center;
++  flex-wrap: wrap;
++  gap: 7px;
++  width: fit-content;
++  margin: 10px 0 8px;
++  padding: 4px 8px;
++  border: 1px solid #dfe7ff;
++  border-radius: 6px;
++  background: #f3f6ff;
++  color: #344369;
++  font-size: 12px;
++  line-height: 1.4;
++}
++
++.device-apexls-label {
++  color: #3e58ae;
++  font-weight: 600;
++}
++
++.device-apexls-test {
++  padding: 1px 4px;
++  border-radius: 4px;
++  background: #fff2d9;
++  color: #7a4e12;
++  font-size: 11px;
++}
++
+ .device-name {
+   margin: 7px 0 10px;
+   font-weight: 400;
+diff --git a/main/manager-web/src/utils/apexlsProfile.js b/main/manager-web/src/utils/apexlsProfile.js
+new file mode 100644
+index 0000000..2ed57b1
+--- /dev/null
++++ b/main/manager-web/src/utils/apexlsProfile.js
+@@ -0,0 +1,13 @@
++export const APEXLS_LANGUAGES = {
++  "zh-CN": "汉语",
++  en: "英语",
++  ja: "日语",
++  ko: "韩语",
++  "zh-CN-yue": "粤语",
++  "zh-CN-sichuan": "四川话",
++  "zh-CN-shanghai": "上海话",
++  "zh-CN-minnan": "闽南语",
++  "zh-CN-shanxi": "陕西话",
++};
++
++export const APEXLS_ROLES = { child: "儿童", youth: "青年", expert: "专家" };
+diff --git a/main/manager-web/src/views/roleConfig.vue b/main/manager-web/src/views/roleConfig.vue
+index 356ccb3..2fb84ff 100644
+--- a/main/manager-web/src/views/roleConfig.vue
++++ b/main/manager-web/src/views/roleConfig.vue
+@@ -83,6 +83,32 @@
+                         maxlength="64"
+                       />
+                     </el-form-item>
++                    <section class="apexls-panel" aria-labelledby="apexls-heading">
++                      <h3 id="apexls-heading">Apexls 配置</h3>
++                      <p>用于设备切换智能体和匹配固定讲解。</p>
++                      <div class="apexls-fields">
++                        <div>
++                          <label for="apexls-language">讲解语言</label>
++                          <el-select id="apexls-language" v-model="form.apexlsLanguage" clearable placeholder="选择语言">
++                            <el-option v-for="(label, code) in apexlsLanguages" :key="code" :value="code" :label="label" />
++                          </el-select>
++                        </div>
++                        <div>
++                          <label for="apexls-role">导览角色</label>
++                          <el-select id="apexls-role" v-model="form.apexlsRole" clearable placeholder="选择角色">
++                            <el-option v-for="(label, code) in apexlsRoles" :key="code" :value="code" :label="label" />
++                          </el-select>
++                        </div>
++                      </div>
++                      <div class="apexls-testing">
++                        <span id="apexls-testing-label">测试用途</span>
++                        <el-switch
++                          v-model="form.apexlsDev"
++                          aria-labelledby="apexls-testing-label"
++                          :disabled="!form.apexlsLanguage || !form.apexlsRole"
++                        />
++                      </div>
++                    </section>
+                     <el-form-item>
+                       <template #label>
+                         <el-tooltip :content="$t('roleConfig.tooltip.roleTemplate')" placement="top" effect="light" popper-class="custom-tooltip">
+@@ -291,7 +317,7 @@
+                       </el-form-item>
+                     </div>
+                     <template v-for="(model, index) in models.slice(4)">
+-                      <el-form-item :key="`model-${index}`" class="model-item">
++                      <el-form-item :key="`model-${index}`" class="model-item" :class="{ 'dialogue-setting': model.type === 'Memory' }">
+                         <template #label>
+                           <el-tooltip :content="$t('roleConfig.tooltip.' + model.type.toLowerCase())" placement="top" effect="light" popper-class="custom-tooltip">
+                             <span>{{ $t('roleConfig.' + model.type.toLowerCase()) }}</span>
+@@ -344,7 +370,7 @@
+                       <el-form-item
+                         v-if="model.type === 'Memory'"
+                         key="context-turns"
+-                        class="model-item"
++                        class="model-item dialogue-setting"
+                         for="agent-context-turns"
+                       >
+                         <template #label>
+@@ -368,7 +394,7 @@
+                       <el-form-item
+                         v-if="model.type === 'Memory' && form.model.memModelId && form.model.memModelId !== 'Memory_nomem'"
+                         key="chat-reporting"
+-                        class="model-item"
++                        class="model-item dialogue-setting"
+                       >
+                         <template #label>{{ $t("roleConfig.chatReporting") }}</template>
+                         <el-radio-group
+@@ -518,6 +544,7 @@ import HeaderBar from "@/components/HeaderBar.vue";
+ import i18n from "@/i18n";
+ import featureManager from "@/utils/featureManager"; 
+ import VersionFooter from "@/components/VersionFooter.vue";
++import { APEXLS_LANGUAGES, APEXLS_ROLES } from "@/utils/apexlsProfile";
+ 
+ export default {
+   name: "RoleConfigPage",
+@@ -533,7 +560,12 @@ export default {
+         pitch: 0
+       },
+       tempSummaryMemory: "",
++      apexlsLanguages: APEXLS_LANGUAGES,
++      apexlsRoles: APEXLS_ROLES,
+       form: {
++        apexlsLanguage: "",
++        apexlsRole: "",
++        apexlsDev: false,
+         agentCode: "",
+         agentName: "",
+         ttsVoiceId: "",
+@@ -661,7 +693,14 @@ export default {
+         this.$message.error(this.$t("roleConfig.contextTurnsInvalid"));
+         return;
+       }
++      if (Boolean(this.form.apexlsLanguage) !== Boolean(this.form.apexlsRole)) {
++        this.$message.error("请同时选择 Apexls 的语言和角色");
++        return;
++      }
+       const configData = {
++        apexlsLanguage: this.form.apexlsLanguage || "",
++        apexlsRole: this.form.apexlsRole || "",
++        apexlsDev: Boolean(this.form.apexlsLanguage && this.form.apexlsDev),
+         contextTurns: turns === "" ? null : Number(turns),
+         agentCode: this.form.agentCode,
+         agentName: this.form.agentName,
+@@ -2107,10 +2146,69 @@ export default {
+ 
+ .form-grid {
+   display: grid;
+-  grid-template-columns: 1fr 1fr;
++  grid-template-columns: repeat(2, minmax(0, 1fr));
+   gap: 20px;
+ }
+ 
++@media (max-width: 1100px) {
++  .form-grid {
++    grid-template-columns: minmax(0, 1fr);
++  }
++}
++
++.apexls-panel {
++  margin: 0 0 18px 72px;
++  padding: 14px 16px 10px;
++  border: 1px solid #dbe4fb;
++  border-radius: 10px;
++  background: #f7f9ff;
++  text-align: left;
++}
++
++.apexls-panel h3 {
++  margin: 0;
++  color: #2c3a60;
++  font-size: 14px;
++  line-height: 1.4;
++}
++
++.apexls-panel p {
++  margin: 3px 0 12px;
++  color: #566483;
++  font-size: 12px;
++  line-height: 1.5;
++}
++
++.apexls-fields {
++  display: grid;
++  grid-template-columns: repeat(2, minmax(0, 1fr));
++  gap: 12px;
++}
++
++.apexls-fields label {
++  display: block;
++  margin-bottom: 5px;
++  color: #3d4566;
++  font-size: 12px;
++  font-weight: 600;
++}
++
++.apexls-fields .el-select {
++  width: 100%;
++}
++
++.apexls-testing {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: 12px;
++  margin-top: 10px;
++  padding-top: 9px;
++  border-top: 1px solid #e1e8f7;
++  color: #3d4566;
++  font-size: 12px;
++}
++
+ .form-column {
+   display: flex;
+   flex-direction: column;
+@@ -2289,6 +2387,10 @@ export default {
+   color: white;
+ }
+ 
++.dialogue-setting ::v-deep .el-form-item__content {
++  text-align: left;
++}
++
+ .context-turns-input {
+   width: 150px;
+   max-width: 100%;

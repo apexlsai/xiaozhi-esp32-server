@@ -76,9 +76,27 @@ class RoleRebindTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(handled)
         module._do_rebind.assert_awaited_once_with(
-            conn, "agent_rebind", "儿童-英语", "青年-英语", "role-1", confirm=True,
+            conn, "agent_rebind", "儿童-英语", "青年-英语", "role-1",
+            confirm=True, language="en", role="youth", dev=False,
         )
         self.assertEqual(role_patch._pending_reconnects[DEVICE]["target"], "青年-英语")
+
+    async def test_configured_role_can_switch_between_identical_nicknames(self):
+        module = handler_module(rebind=AsyncMock(return_value={"agentName": "小硕", "reconnectRequired": True}))
+        conn = connection("小硕", "zh-CN")
+        conn.device_attributes.update(apexls_role="child", apexls_language="ja", apexls_dev="true")
+        with patch.dict(sys.modules, {"core.handle.deviceEventHandle": module}):
+            await role_patch.handle_role_rebind(conn, {
+                "event": "agent_rebind",
+                "request_id": "same-nickname",
+                "payload": {"role": "youth"},
+            })
+
+        module._do_rebind.assert_awaited_once_with(
+            conn, "agent_rebind", "小硕", None, "same-nickname",
+            confirm=True, language="ja", role="youth", dev=True,
+        )
+        self.assertEqual(role_patch._pending_reconnects[DEVICE]["target"], "小硕")
 
     async def test_refreshes_missing_current_agent(self):
         rebind = AsyncMock(return_value={"agentName": "青年-汉语", "reconnectRequired": True})
@@ -110,7 +128,8 @@ class RoleRebindTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(handled)
         module._do_rebind.assert_awaited_once_with(
-            conn, "agent_rebind", "儿童-汉语", "青年-汉语", "role-refresh", confirm=True,
+            conn, "agent_rebind", "儿童-汉语", "青年-汉语", "role-refresh",
+            confirm=True, language="zh-CN", role="youth", dev=False,
         )
 
     async def test_falls_back_to_agent_language_suffix(self):
@@ -348,7 +367,7 @@ class DeviceEventDispatchTests(unittest.IsolatedAsyncioTestCase):
             device_id=DEVICE,
             current_agent_name="儿童-汉语-测试",
             target_agent_name="青年-汉语-测试",
-            confirm=True,
+            confirm=True, language="zh-CN", role="youth", dev=True,
         )
         self.conn.websocket.send.assert_awaited_once()
         result = json.loads(self.conn.websocket.send.await_args.args[0])

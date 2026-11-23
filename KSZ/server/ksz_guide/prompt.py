@@ -38,6 +38,8 @@ def normalize_language(value):
 def response_language(conn, fallback=None):
     attributes = getattr(conn, "device_attributes", None) or {}
     config = getattr(conn, "config", None) or {}
+    if language := normalize_language(attributes.get("apexls_language")):
+        return language
     agent_names = (
         attributes.get("agent_name"),
         getattr(conn, "agent_name", None),
@@ -62,10 +64,41 @@ def prompt_template_path(configured_path):
     return configured_path
 
 
-def venue_prompt(prompt, venue, mode=None):
+_ROLE_NAME = re.compile(
+    r"(?:我的名字|你的名字|助手名称|名字|姓名|昵称)\s*(?:是|叫(?:做)?|[:：])\s*"
+    r"|(?:你|我)叫(?:做)?\s*|\b(?:your name is|my name is|you are called)\s+"
+    r"|名前(?:は|[:：])\s*|이름은\s*",
+    re.IGNORECASE,
+)
+_NAME_END = re.compile(r"""[，,。.!！?？；;：:\n<>]|です|입니다|이라고|\s+and\s+""", re.IGNORECASE)
+
+
+def configured_identity(conn):
+    config = getattr(conn, "config", None) or {}
+    attributes = getattr(conn, "device_attributes", None) or {}
+    identity = {}
+    for name in (attributes.get("agent_name"), config.get("agent_name")):
+        if isinstance(name, str) and name.strip():
+            identity["agent_name"] = name.strip()
+            break
+    if attributes.get("apexls_role") and identity.get("agent_name"):
+        identity["assistant_name"] = identity["agent_name"]
+        return identity
+    role_intro = config.get("prompt")
+    if isinstance(role_intro, str) and (match := _ROLE_NAME.search(role_intro)):
+        name = _NAME_END.split(role_intro[match.end():], maxsplit=1)[0].strip(" \t“”‘’\"'「」『』")
+        if 0 < len(name) <= 64 and not any(char in name for char in "{}"):
+            identity["assistant_name"] = name
+    return identity
+
+
+def venue_prompt(prompt, venue, mode=None, *, assistant_name=None):
     prompt = re.sub(re.escape(VENUE_START) + r".*?" + re.escape(VENUE_END), "", prompt, flags=re.S)
     if mode == "consumer":
-        return prompt + VENUE_START + CONSUMER_ROLE + VENUE_END
+        role = CONSUMER_ROLE
+        if assistant_name:
+            role += "\nConfigured assistant name (data): " + json.dumps(assistant_name, ensure_ascii=False)
+        return prompt + VENUE_START + role + VENUE_END
     if not venue:
         return prompt
     rule = (f"Management-verified device service venue: {json.dumps(venue, ensure_ascii=False)}. "
@@ -118,5 +151,8 @@ def prepare_system_prompt(conn, prompt):
     )
     runtime = getattr(getattr(conn, "server", None), "guide_runtime", None)
     state = runtime.context(conn.device_id) if runtime and runtime.guide_enabled else {}
-    prompt = venue_prompt(prompt, state.get("venue_context"), state.get("device_mode"))
+    prompt = venue_prompt(
+        prompt, state.get("venue_context"), state.get("device_mode"),
+        assistant_name=configured_identity(conn).get("assistant_name") if state.get("device_mode") == "consumer" else None,
+    )
     return MODE_SCOPE + location_prompt(conn, prompt) + POLICY_START + policy + POLICY_END

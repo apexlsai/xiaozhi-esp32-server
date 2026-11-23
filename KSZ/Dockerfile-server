@@ -64,6 +64,9 @@ COPY KSZ/patches/agent-context-turns-server.patch /tmp/agent-context-turns-serve
 RUN git apply --check /tmp/agent-context-turns-server.patch \
     && git apply /tmp/agent-context-turns-server.patch
 
+COPY KSZ/patches/apexls-profile-server.patch /tmp/apexls-profile-server.patch
+RUN git apply --check /tmp/apexls-profile-server.patch && git apply /tmp/apexls-profile-server.patch
+
 FROM ghcr.io/xinnan-tech/xiaozhi-esp32-server:server-base
 
 COPY --from=patched-source /src .

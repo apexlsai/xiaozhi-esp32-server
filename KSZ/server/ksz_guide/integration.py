@@ -28,7 +28,10 @@ from .idle_greeting import (
     cancel_idle_greeting, close_idle_greeting, greeting_session,
     handle_idle_greeting, interrupt_idle_greeting,
 )
-from .prompt import LANGUAGE_NAMES, prepare_system_prompt, prompt_template_path, response_language, venue_prompt
+from .prompt import (
+    LANGUAGE_NAMES, configured_identity, prepare_system_prompt, prompt_template_path,
+    response_language, venue_prompt,
+)
 from .prompt_owner import agent_owned, configured_context_turns, internal_turn, request_messages, trim_connection
 from .role_patch import handle_profile_change, handle_role_rebind, on_hello as role_on_hello
 from .runtime import GuideRuntime
@@ -451,6 +454,8 @@ def vision_context(server, device_mac, values):
     find = getattr(server, "find_device_connection", None)
     conn = find({"device_id": device_mac}) if callable(find) else None
     location = location_value(conn) if conn is not None else None
+    if conn is not None and (identity := configured_identity(conn)):
+        result = {**result, **identity}
     if "device_location" in result or location is not None:
         result = dict(result)
         result.pop("device_location", None)
@@ -461,14 +466,18 @@ def vision_context(server, device_mac, values):
 
 def extend_vision_payload(payload, kwargs):
     for key in ("ksz_prompt_context", "device_mode", "venue_id", "venue_context", "beacon_mac", "guide_policy_revision",
-                "device_location", "session_id", "image_id", "image_seq", "captured_at"):
+                "device_location", "session_id", "image_id", "image_seq", "captured_at",
+                "agent_name", "assistant_name"):
         if kwargs.get(key) is not None:
             payload[key] = kwargs[key]
     if kwargs.get("history"):
         payload["messages"] = [*kwargs["history"], *payload["messages"]]
     if kwargs.get("ksz_prompt_context") is not None:
         return payload
-    context = venue_prompt("", kwargs.get("venue_context"), kwargs.get("device_mode"))
+    context = venue_prompt(
+        "", kwargs.get("venue_context"), kwargs.get("device_mode"),
+        assistant_name=kwargs.get("assistant_name"),
+    )
     if location := kwargs.get("device_location"):
         context += "\n" + location_description(location)
     if context.strip():

@@ -51,8 +51,11 @@ DIRECT_ANSWER_STYLE = (
     "follow-up, image question, correction or new topic arrived."
 )
 CONSUMER_ROLE = (
-    "Your role is to assist the visitor with museum and cultural heritage tours. "
-    "For self-introductions, say only the equivalent of ‘我为您提供文博导览协助。’ in the configured reply language."
+    "You are an intelligent guide assistant developed by Apexls. When asked who you are, "
+    "use the configured assistant name if provided, otherwise omit the name. "
+    "Identify Apexls as your developer "
+    "and briefly describe how you can help with visits, exhibits or cultural heritage. "
+    "Use natural wording in the configured reply language. Keep this identity when discussing any venue."
 )
 VENUE_ROLE = (
     "When asked about your service identity, use the exact venue name supplied by management. "
@@ -142,7 +145,7 @@ def compile_system(context):
             state["device_location"] = {"source": "unknown", "status": "expired"}
     mode = state.get("device_mode")
     base_prompt = CONSUMER_ROLE if mode == "consumer" else context["base_prompt"]
-    identity = "\n" + VENUE_ROLE if state.get("venue_context") else ""
+    identity = "\n" + VENUE_ROLE if mode != "consumer" and state.get("venue_context") else ""
     return (SYSTEM_MARKER + "\n" + base_prompt + "\n\n" + POLICY + identity
             + "\nReply language: " + context["language"]
             + ". Keep this configured language for ordinary speech; explicitly requested translations may use the target language."

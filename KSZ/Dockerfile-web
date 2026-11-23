@@ -21,6 +21,9 @@ RUN git apply --check /tmp/yuanbao-search-management.patch && git apply /tmp/yua
 COPY KSZ/patches/agent-context-turns-management.patch /tmp/agent-context-turns-management.patch
 RUN git apply --check /tmp/agent-context-turns-management.patch && git apply /tmp/agent-context-turns-management.patch
 
+COPY KSZ/patches/apexls-profile-management.patch /tmp/apexls-profile-management.patch
+RUN git apply --ignore-space-change --check /tmp/apexls-profile-management.patch && git apply --ignore-space-change /tmp/apexls-profile-management.patch
+
 FROM node:18 AS web-builder
 WORKDIR /app
 COPY --from=patched-source /source/main/manager-web/package*.json ./

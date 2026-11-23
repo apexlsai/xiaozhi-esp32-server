@@ -24,7 +24,9 @@ RESUME = re.compile(r"^(?:(?:请|帮我|麻烦|可以|你可以)?(?:继续(?:讲
 def profile(conn):
     attributes = getattr(conn, "device_attributes", None) or {}
     name = attributes.get("agent_name") or getattr(conn, "agent_name", "") or (getattr(conn, "config", None) or {}).get("agent_name", "")
-    role = next((value for prefix, value in ROLES.items() if str(name).startswith(prefix)), attributes.get("role"))
+    role = attributes.get("apexls_role") or next(
+        (value for prefix, value in ROLES.items() if str(name).startswith(prefix)), attributes.get("role")
+    )
     language = LANGUAGES.get(response_language(conn))
     if role not in ROLES.values() or language is None:
         raise GuideError("fixed_profile_unavailable")

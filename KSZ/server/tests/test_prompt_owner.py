@@ -118,7 +118,8 @@ def test_other_connections_and_legacy_history_are_not_modified():
 @pytest.mark.parametrize("owner", ["agent", "xiaozhi"])
 def test_consumer_identity_replaces_venue_role_for_both_prompt_owners(owner):
     conn = connection(owner)
-    conn.config["prompt"] = "你是萍乡博物馆的助手"
+    conn.config.update(prompt="你是萍乡博物馆的助手，名字是小硕。", agent_name="旧配置名")
+    conn.device_attributes = {"agent_name": " 青年-汉语 "}
     messages = [
         {"role": "system", "content": "<museum_role>你是萍乡博物馆的助手</museum_role>"},
         {"role": "user", "content": "你是谁？"},
@@ -127,8 +128,26 @@ def test_consumer_identity_replaces_venue_role_for_both_prompt_owners(owner):
     wire = request_messages(conn, messages, values)
     prompt = compile_system(values["ksz_prompt_context"]) if owner == "agent" else wire[0]["content"]
     assert CONSUMER_ROLE in prompt
-    assert "萍乡博物馆" not in prompt
+    assert '"小硕"' in prompt and "Apexls" in prompt
+    assert "青年-汉语" not in prompt and "旧配置名" not in prompt and "萍乡博物馆" not in prompt
+    assert values["agent_name"] == "青年-汉语"
+    assert values["assistant_name"] == "小硕"
     assert wire[-1] == messages[-1]
+
+    conn.config["prompt"] = "你是智能导览助手。"
+    values = {"device_mode": "consumer"}
+    wire = request_messages(conn, messages, values)
+    prompt = compile_system(values["ksz_prompt_context"]) if owner == "agent" else wire[0]["content"]
+    assert "Apexls" in prompt and "青年-汉语" not in prompt and "小硕" not in prompt
+    assert values["agent_name"] == "青年-汉语" and "assistant_name" not in values
+
+    conn.device_attributes.update(agent_name="小硕", apexls_role="youth", apexls_language="ja")
+    conn.config["prompt"] = "你是智能导览助手，名字是旧名字。"
+    values = {"device_mode": "consumer"}
+    wire = request_messages(conn, messages, values)
+    prompt = compile_system(values["ksz_prompt_context"]) if owner == "agent" else wire[0]["content"]
+    assert '"小硕"' in prompt and "旧名字" not in prompt
+    assert values["agent_name"] == values["assistant_name"] == "小硕"
 
 
 def test_unhandled_cross_museum_turn_carries_search_scope_to_agent(monkeypatch):
