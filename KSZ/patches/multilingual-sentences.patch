@@ -1,22 +1,17 @@
 --- a/core/providers/tts/base.py
 +++ b/core/providers/tts/base.py
-@@ -425,6 +425,11 @@
+@@ -425,6 +425,8 @@
                      self.is_first_sentence = True
                      self.tts_audio_first_sentence = True
                      self.current_emotion_context = None
-+                    self.ksz_guide_sentence_id = None
 +                    from ksz_guide.prompt import response_language
 +                    self.ksz_response_language = response_language(self.conn)
                  elif getattr(message, "ksz_complete_sentence", False):
-+                    if getattr(message, "ksz_guide_announcement", False):
-+                        self.ksz_guide_sentence_id = message.sentence_id
                      from ksz_guide.tts import consume_complete_sentence
                      consume_complete_sentence(self, message)
-@@ -433,13 +438,10 @@
+@@ -433,13 +435,8 @@
                      self.current_emotion_context = message.emotion_context
                  elif ContentType.TEXT == message.content_type:
-+                    if getattr(message, "ksz_guide_announcement", False):
-+                        self.ksz_guide_sentence_id = message.sentence_id
                      self.tts_text_buff.append(message.content_detail)
 -                    segment_text = self._get_segment_text()
 -                    if segment_text:

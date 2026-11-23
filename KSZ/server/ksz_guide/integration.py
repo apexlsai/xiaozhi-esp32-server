@@ -15,7 +15,7 @@ from core.utils.dialogue import Message
 from .client import ManagementClient
 from .announcement import (
     filter_guide_announcement_text, guide_announcement_messages, is_guide_announcement,
-    mark_tts_message, queue_guide_tool_reply, start_guide_announcement,
+    queue_guide_tool_reply, start_guide_announcement,
 )
 from .feedback import (
     CameraFeedbackScheduler as create_tool_feedback,

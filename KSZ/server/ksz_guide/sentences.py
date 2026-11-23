@@ -13,8 +13,6 @@ _PUNCTUATION = {
 _COMPATIBLE_ENDINGS = frozenset("。｡！？!?；;\n")
 _CLAUSE_MIN_CHARS = {"zh": 12, "en": 40, "ja": 8, "ko": 20}
 _WORD_BREAK_CHARS = {"en": 120, "ko": 60}
-_GUIDE_MAX_CHARS = 50
-_GUIDE_LOOKAHEAD_CHARS = 15
 _PARENTHESES = {"(": ")", "（": "）", "[": "]", "【": "】", "{": "}"}
 _CLOSERS = frozenset("\"'”’」』）》】)]")
 _ABBREVIATIONS = frozenset({
@@ -64,47 +62,6 @@ def sentence_boundary(text, *, language="zh-CN", final=False, first_clause=False
     return len(text) if final and text else None
 
 
-def guide_sentence_boundary(text, *, language="zh-CN", final=False, first_clause=False):
-    family = (normalize_language(language) or "zh-CN").split("-", 1)[0]
-    target = _GUIDE_MAX_CHARS
-    lookahead = target + _GUIDE_LOOKAHEAD_CHARS
-    prefix = text[:target]
-    boundary = sentence_boundary(prefix, language=language, final=False, first_clause=first_clause)
-    if boundary is not None:
-        return boundary
-    if len(text) < target:
-        return len(text) if final and text else None
-
-    endings, clauses = _PUNCTUATION[family]
-    candidates = []
-    parentheses = []
-    for index, char in enumerate(text[:lookahead]):
-        if char in _PARENTHESES:
-            parentheses.append(_PARENTHESES[char])
-        elif parentheses and char == parentheses[-1]:
-            parentheses.pop()
-        if parentheses:
-            continue
-        if char in endings or char in clauses or char in ".．…：:":
-            if char in ".．" and index + 1 < len(text):
-                following = text[index + 1]
-                previous = text[index - 1:index] if index else ""
-                if following in ".．" or following.isascii() and following.isalnum():
-                    continue
-                if previous.isdigit() and following.isdigit():
-                    continue
-            end = index + 1
-            while end < len(text) and text[end] in _CLOSERS:
-                end += 1
-            if end > target and end <= lookahead:
-                candidates.append(end)
-    if candidates:
-        return min(candidates, key=lambda end: (abs(end - target), end))
-    if len(text) >= lookahead or final:
-        return target
-    return None
-
-
 class SentenceBuffer:
     def __init__(self, language="zh-CN"):
         self.language = normalize_language(language) or "zh-CN"
@@ -125,7 +82,6 @@ def synthesize_pending(tts, *, final=False, opus_handler=None):
     from core.utils.textUtils import get_string_no_punctuation_or_emoji
 
     full_text = "".join(tts.tts_text_buff)
-    guide_limit = getattr(tts, "ksz_guide_sentence_id", None) == getattr(tts, "current_sentence_id", None)
     emitted = False
     while tts.processed_chars < len(full_text):
         conn = tts.conn
@@ -136,9 +92,8 @@ def synthesize_pending(tts, *, final=False, opus_handler=None):
         ):
             break
         pending = full_text[tts.processed_chars:]
-        boundary = guide_sentence_boundary if guide_limit else sentence_boundary
-        end = boundary(pending, language=getattr(tts, "ksz_response_language", "zh-CN"),
-                       final=final, first_clause=tts.is_first_sentence)
+        end = sentence_boundary(pending, language=getattr(tts, "ksz_response_language", "zh-CN"),
+                                final=final, first_clause=tts.is_first_sentence)
         if end is None:
             break
         text = get_string_no_punctuation_or_emoji(pending[:end])
