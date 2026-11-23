@@ -151,3 +151,24 @@ async def test_embedding_tool_does_not_call_web_search(monkeypatch):
     assert [call.args[1]["name"] for call in handler.handle_llm_function_call.call_args_list] == [
         "yuanbao_search"
     ]
+
+
+@pytest.mark.asyncio
+async def test_embedding_filters_web_search_from_available_tools(monkeypatch):
+    classifier = AsyncMock()
+    classifier.configured = True
+    classifier.classify = AsyncMock(return_value=None)
+    monkeypatch.setattr(integration, "_embedding_classifier", lambda conn: classifier)
+    monkeypatch.setattr(integration, "runtime_for", lambda conn: None)
+    conn = SimpleNamespace(
+        device_id="device-a", logger=Mock(),
+        func_handler=SimpleNamespace(
+            finish_init=True,
+            get_functions=lambda: [
+                {"function": {"name": "web_search"}},
+                {"function": {"name": "yuanbao_search"}},
+            ],
+        ),
+    )
+    await integration.classify_embedding_intent(conn, "查一下最新消息")
+    assert classifier.classify.call_args.args[1] == {"yuanbao_search"}

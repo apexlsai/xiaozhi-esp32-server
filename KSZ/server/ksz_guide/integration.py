@@ -113,6 +113,7 @@ async def classify_embedding_intent(conn, text):
                 for item in handler.get_functions()
                 if isinstance(item, dict)
             )
+            available.discard("web_search")
         except Exception:
             pass
     try:
