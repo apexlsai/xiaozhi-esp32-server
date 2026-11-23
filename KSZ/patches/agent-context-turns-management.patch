@@ -87,6 +87,88 @@ diff --git a/main/manager-api/src/main/java/xiaozhi/modules/agent/entity/AgentEn
      @Schema(description = "角色设定参数")
      private String systemPrompt;
  
+diff --git a/main/manager-api/src/main/java/xiaozhi/modules/agent/service/biz/impl/AgentChatHistoryBizServiceImpl.java b/main/manager-api/src/main/java/xiaozhi/modules/agent/service/biz/impl/AgentChatHistoryBizServiceImpl.java
+--- a/main/manager-api/src/main/java/xiaozhi/modules/agent/service/biz/impl/AgentChatHistoryBizServiceImpl.java
++++ b/main/manager-api/src/main/java/xiaozhi/modules/agent/service/biz/impl/AgentChatHistoryBizServiceImpl.java
+@@ -1,6 +1,5 @@
+ package xiaozhi.modules.agent.service.biz.impl;
+ 
+-import java.util.Base64;
+ import java.util.Date;
+ import java.util.Objects;
+ 
+@@ -15,7 +14,6 @@ import xiaozhi.common.redis.RedisUtils;
+ import xiaozhi.modules.agent.dto.AgentChatHistoryReportDTO;
+ import xiaozhi.modules.agent.entity.AgentChatHistoryEntity;
+ import xiaozhi.modules.agent.entity.AgentEntity;
+-import xiaozhi.modules.agent.service.AgentChatAudioService;
+ import xiaozhi.modules.agent.service.AgentChatHistoryService;
+ import xiaozhi.modules.agent.service.AgentChatSummaryService;
+ import xiaozhi.modules.agent.service.AgentService;
+@@ -36,7 +34,6 @@ import xiaozhi.modules.device.service.DeviceService;
+ public class AgentChatHistoryBizServiceImpl implements AgentChatHistoryBizService {
+     private final AgentService agentService;
+     private final AgentChatHistoryService agentChatHistoryService;
+-    private final AgentChatAudioService agentChatAudioService;
+     private final AgentChatSummaryService agentChatSummaryService;
+     private final RedisUtils redisUtils;
+     private final DeviceService deviceService;
+@@ -65,11 +62,11 @@ public class AgentChatHistoryBizServiceImpl implements AgentChatHistoryBizServic
+         Integer chatHistoryConf = agentEntity.getChatHistoryConf();
+         String agentId = agentEntity.getId();
+ 
+-        if (Objects.equals(chatHistoryConf, Constant.ChatHistoryConfEnum.RECORD_TEXT.getCode())) {
+-            saveChatText(report, agentId, macAddress, null, reportTimeMillis);
+-        } else if (Objects.equals(chatHistoryConf, Constant.ChatHistoryConfEnum.RECORD_TEXT_AUDIO.getCode())) {
+-            String audioId = saveChatAudio(report);
+-            saveChatText(report, agentId, macAddress, audioId, reportTimeMillis);
++        if (!Constant.MEMORY_NO_MEM.equals(agentEntity.getMemModelId())
++                && (Objects.equals(chatHistoryConf, Constant.ChatHistoryConfEnum.RECORD_TEXT.getCode())
++                        || Objects.equals(chatHistoryConf, Constant.ChatHistoryConfEnum.RECORD_TEXT_AUDIO.getCode())
++                        || (chatHistoryConf == null && agentEntity.getMemModelId() != null))) {
++            saveChatText(report, agentId, macAddress, reportTimeMillis);
+         }
+ 
+         // 更新设备最后对话时间
+@@ -86,29 +83,10 @@ public class AgentChatHistoryBizServiceImpl implements AgentChatHistoryBizServic
+         return Boolean.TRUE;
+     }
+ 
+-    /**
+-     * base64解码report.getOpusDataBase64(),存入ai_agent_chat_audio表
+-     */
+-    private String saveChatAudio(AgentChatHistoryReportDTO report) {
+-        String audioId = null;
+-
+-        if (report.getAudioBase64() != null && !report.getAudioBase64().isEmpty()) {
+-            try {
+-                byte[] audioData = Base64.getDecoder().decode(report.getAudioBase64());
+-                audioId = agentChatAudioService.saveAudio(audioData);
+-                log.info("音频数据保存成功，audioId={}", audioId);
+-            } catch (Exception e) {
+-                log.error("音频数据保存失败", e);
+-                return null;
+-            }
+-        }
+-        return audioId;
+-    }
+-
+     /**
+      * 组装上报数据
+      */
+-    private void saveChatText(AgentChatHistoryReportDTO report, String agentId, String macAddress, String audioId,
++    private void saveChatText(AgentChatHistoryReportDTO report, String agentId, String macAddress,
+             Long reportTime) {
+         // 构建聊天记录实体
+         AgentChatHistoryEntity entity = AgentChatHistoryEntity.builder()
+@@ -117,7 +95,6 @@ public class AgentChatHistoryBizServiceImpl implements AgentChatHistoryBizServic
+                 .sessionId(report.getSessionId())
+                 .chatType(report.getChatType())
+                 .content(report.getContent())
+-                .audioId(audioId)
+                 .createdAt(new Date(reportTime))
+                 // NOTE(haotian): 2025/5/26 updateAt可以不设置，重点是createAt，而且这样可以看到上报延迟
+                 .build();
 diff --git a/main/manager-api/src/main/java/xiaozhi/modules/agent/service/impl/AgentServiceImpl.java b/main/manager-api/src/main/java/xiaozhi/modules/agent/service/impl/AgentServiceImpl.java
 --- a/main/manager-api/src/main/java/xiaozhi/modules/agent/service/impl/AgentServiceImpl.java
 +++ b/main/manager-api/src/main/java/xiaozhi/modules/agent/service/impl/AgentServiceImpl.java
@@ -125,8 +207,20 @@ diff --git a/main/manager-api/src/main/java/xiaozhi/modules/agent/service/impl/A
 diff --git a/main/manager-api/src/main/java/xiaozhi/modules/config/service/impl/ConfigServiceImpl.java b/main/manager-api/src/main/java/xiaozhi/modules/config/service/impl/ConfigServiceImpl.java
 --- a/main/manager-api/src/main/java/xiaozhi/modules/config/service/impl/ConfigServiceImpl.java
 +++ b/main/manager-api/src/main/java/xiaozhi/modules/config/service/impl/ConfigServiceImpl.java
-@@ -183,6 +183,9 @@ public class ConfigServiceImpl implements ConfigService {
-             chatHistoryConf = Constant.ChatHistoryConfEnum.RECORD_TEXT_AUDIO.getCode();
+@@ -175,14 +175,16 @@ public class ConfigServiceImpl implements ConfigService {
+ 
+         // 获取聊天记录配置
+         Integer chatHistoryConf = agent.getChatHistoryConf();
+-        if (agent.getMemModelId() != null && agent.getMemModelId().equals(Constant.MEMORY_NO_MEM)) {
++        if (Constant.MEMORY_NO_MEM.equals(agent.getMemModelId())) {
+             chatHistoryConf = Constant.ChatHistoryConfEnum.IGNORE.getCode();
+-        } else if (agent.getMemModelId() != null
+-                && !agent.getMemModelId().equals(Constant.MEMORY_NO_MEM)
+-                && agent.getChatHistoryConf() == null) {
+-            chatHistoryConf = Constant.ChatHistoryConfEnum.RECORD_TEXT_AUDIO.getCode();
++        } else if (Objects.equals(chatHistoryConf, Constant.ChatHistoryConfEnum.RECORD_TEXT_AUDIO.getCode())
++                || (chatHistoryConf == null && agent.getMemModelId() != null)) {
++            chatHistoryConf = Constant.ChatHistoryConfEnum.RECORD_TEXT.getCode();
          }
          result.put("chat_history_conf", chatHistoryConf);
 +        if (agent.getContextTurns() != null) {
@@ -179,12 +273,17 @@ diff --git a/main/manager-api/src/main/resources/mapper/agent/AgentDao.xml b/mai
 diff --git a/main/manager-web/src/i18n/en.js b/main/manager-web/src/i18n/en.js
 --- a/main/manager-web/src/i18n/en.js
 +++ b/main/manager-web/src/i18n/en.js
-@@ -848,6 +848,10 @@ export default {
+@@ -848,6 +848,15 @@ export default {
    'roleConfig.tts': 'Text-to-Speech',
    'roleConfig.memoryHis': 'Memory',
    'roleConfig.memory': 'Memory Model',
 +  'roleConfig.contextTurns': 'Conversation context turns',
-+  'roleConfig.contextTurnsDefault': 'Default when empty (20 for Agent-managed prompts)',
++  'roleConfig.contextTurnsDefault': 'Auto',
++  'roleConfig.contextTurnsUnit': 'turns',
++  'roleConfig.contextTurnsHint': 'Includes the current question. Choose 1–50 turns. For tours, use 20. Agent-managed prompts use 20 automatically.',
++  'roleConfig.saveChatText': 'Text only',
++  'roleConfig.sharedDeviceMemoryHint': 'For shared devices that need a chat log, choose Report Chat History Only.',
++  'roleConfig.chatReporting': 'Chat reporting',
 +  'roleConfig.contextTurnsInvalid': 'Enter a whole number from 1 to 50, or leave empty for the default',
 +  'agentSnapshot.field.contextTurns': 'Conversation context turns',
    'roleConfig.intent': 'Intent Recognition',
@@ -193,12 +292,17 @@ diff --git a/main/manager-web/src/i18n/en.js b/main/manager-web/src/i18n/en.js
 diff --git a/main/manager-web/src/i18n/zh_CN.js b/main/manager-web/src/i18n/zh_CN.js
 --- a/main/manager-web/src/i18n/zh_CN.js
 +++ b/main/manager-web/src/i18n/zh_CN.js
-@@ -848,6 +848,10 @@ export default {
+@@ -848,6 +848,15 @@ export default {
    'roleConfig.intent': '意图识别(Intent)',
    'roleConfig.memoryHis': '记忆',
    'roleConfig.memory': '记忆模式(Mem)',
 +  'roleConfig.contextTurns': '会话上下文轮数',
-+  'roleConfig.contextTurnsDefault': '留空沿用默认（Agent 接管时为 20 轮）',
++  'roleConfig.contextTurnsDefault': '自动',
++  'roleConfig.contextTurnsUnit': '轮',
++  'roleConfig.contextTurnsHint': '含当前提问，可填 1–50 轮。公用导览建议 20 轮，Agent 接管时自动使用 20 轮。',
++  'roleConfig.saveChatText': '仅保存文字',
++  'roleConfig.sharedDeviceMemoryHint': '公用设备如需留档，建议选择「仅上报聊天记录」。',
++  'roleConfig.chatReporting': '聊天上报',
 +  'roleConfig.contextTurnsInvalid': '请输入 1 到 50 的整数，或留空使用默认值',
 +  'agentSnapshot.field.contextTurns': '会话上下文轮数',
    'roleConfig.tts': '语音合成(TTS)',
@@ -207,12 +311,17 @@ diff --git a/main/manager-web/src/i18n/zh_CN.js b/main/manager-web/src/i18n/zh_C
 diff --git a/main/manager-web/src/i18n/zh_TW.js b/main/manager-web/src/i18n/zh_TW.js
 --- a/main/manager-web/src/i18n/zh_TW.js
 +++ b/main/manager-web/src/i18n/zh_TW.js
-@@ -962,6 +962,10 @@ export default {
+@@ -962,6 +962,15 @@ export default {
    'roleConfig.tts': '語音合成(TTS)',
    'roleConfig.memoryHis': '記憶',
    'roleConfig.memory': '記憶模式(Men)',
 +  'roleConfig.contextTurns': '會話上下文輪數',
-+  'roleConfig.contextTurnsDefault': '留空沿用預設（Agent 接管時為 20 輪）',
++  'roleConfig.contextTurnsDefault': '自動',
++  'roleConfig.contextTurnsUnit': '輪',
++  'roleConfig.contextTurnsHint': '含目前提問，可填 1–50 輪。公用導覽建議 20 輪，Agent 接管時自動使用 20 輪。',
++  'roleConfig.saveChatText': '僅儲存文字',
++  'roleConfig.sharedDeviceMemoryHint': '公用設備如需留存紀錄，建議選擇「僅上報聊天紀錄」。',
++  'roleConfig.chatReporting': '聊天上報',
 +  'roleConfig.contextTurnsInvalid': '請輸入 1 到 50 的整數，或留空使用預設值',
 +  'agentSnapshot.field.contextTurns': '會話上下文輪數',
    'roleConfig.intent': '意圖識別(Intent)',
@@ -221,26 +330,170 @@ diff --git a/main/manager-web/src/i18n/zh_TW.js b/main/manager-web/src/i18n/zh_T
 diff --git a/main/manager-web/src/views/roleConfig.vue b/main/manager-web/src/views/roleConfig.vue
 --- a/main/manager-web/src/views/roleConfig.vue
 +++ b/main/manager-web/src/views/roleConfig.vue
-@@ -359,6 +359,18 @@
-                           </el-radio-group>
+@@ -290,76 +290,97 @@
                          </div>
-                       </div>
+                       </el-form-item>
+                     </div>
+-                    <el-form-item
+-                      v-for="(model, index) in models.slice(4)"
+-                      :key="`model-${index}`"
+-                      class="model-item"
+-                    >
+-                      <template #label>
+-                        <el-tooltip :content="$t('roleConfig.tooltip.' + model.type.toLowerCase())" placement="top" effect="light" popper-class="custom-tooltip">
+-                          <span>{{ $t('roleConfig.' + model.type.toLowerCase()) }}</span>
+-                        </el-tooltip>
+-                      </template>
+-                      <div class="model-select-wrapper">
+-                        <el-select
+-                          v-model="form.model[model.key]"
+-                          filterable
+-                          :disabled="model.type === 'TTS' && voiceOptionsLoading"
+-                          :placeholder="$t('roleConfig.pleaseSelect')"
+-                          class="form-select"
+-                          @change="handleModelChange(model.type, $event)"
+-                        >
+-                          <el-option
+-                            v-for="(item, optionIndex) in modelOptions[model.type]"
+-                            v-if="!item.isHidden"
+-                            :key="`option-${index}-${optionIndex}`"
+-                            :label="item.label"
+-                            :value="item.value"
+-                          />
+-                        </el-select>
+-                        <div v-if="showFunctionIcons(model.type)" class="function-icons">
+-                          <el-tooltip
+-                            v-for="func in currentFunctions"
+-                            :key="func.name"
+-                            effect="light"
+-                            placement="top"
+-                          >
+-                            <div slot="content">
+-                              <div><strong>{{ $t("roleConfig.functionName") }}:</strong> {{ func.name }}</div>
+-                            </div>
+-                            <div class="icon-dot">
+-                              {{ getFunctionDisplayChar(func.name) }}
+-                            </div>
++                    <template v-for="(model, index) in models.slice(4)">
++                      <el-form-item :key="`model-${index}`" class="model-item">
++                        <template #label>
++                          <el-tooltip :content="$t('roleConfig.tooltip.' + model.type.toLowerCase())" placement="top" effect="light" popper-class="custom-tooltip">
++                            <span>{{ $t('roleConfig.' + model.type.toLowerCase()) }}</span>
+                           </el-tooltip>
+-                          <el-button
+-                            class="edit-function-btn"
+-                            @click="openFunctionDialog"
+-                            :class="{ 'active-btn': showFunctionDialog }"
++                        </template>
++                        <div class="model-select-wrapper">
++                          <el-select
++                            v-model="form.model[model.key]"
++                            filterable
++                            :disabled="model.type === 'TTS' && voiceOptionsLoading"
++                            :placeholder="$t('roleConfig.pleaseSelect')"
++                            class="form-select"
++                            @change="handleModelChange(model.type, $event)"
+                           >
+-                            {{ $t("roleConfig.editFunctions") }}
+-                          </el-button>
++                            <el-option
++                              v-for="(item, optionIndex) in modelOptions[model.type]"
++                              v-if="!item.isHidden"
++                              :key="`option-${index}-${optionIndex}`"
++                              :label="item.label"
++                              :value="item.value"
++                            />
++                          </el-select>
++                          <div v-if="showFunctionIcons(model.type)" class="function-icons">
++                            <el-tooltip
++                              v-for="func in currentFunctions"
++                              :key="func.name"
++                              effect="light"
++                              placement="top"
++                            >
++                              <div slot="content">
++                                <div><strong>{{ $t("roleConfig.functionName") }}:</strong> {{ func.name }}</div>
++                              </div>
++                              <div class="icon-dot">
++                                {{ getFunctionDisplayChar(func.name) }}
++                              </div>
++                            </el-tooltip>
++                            <el-button
++                              class="edit-function-btn"
++                              @click="openFunctionDialog"
++                              :class="{ 'active-btn': showFunctionDialog }"
++                            >
++                              {{ $t("roleConfig.editFunctions") }}
++                            </el-button>
++                          </div>
+                         </div>
+-                        <div
+-                          v-if="
+-                            model.type === 'Memory' &&
+-                            form.model.memModelId !== 'Memory_nomem'
+-                          "
++                        <p v-if="model.type === 'Memory'" class="dialogue-setting-hint">
++                          {{ $t("roleConfig.sharedDeviceMemoryHint") }}
++                        </p>
++                      </el-form-item>
 +                      <el-form-item
 +                        v-if="model.type === 'Memory'"
-+                        :label="$t('roleConfig.contextTurns')"
++                        key="context-turns"
++                        class="model-item"
++                        for="agent-context-turns"
 +                      >
++                        <template #label>
++                          {{ $t("roleConfig.contextTurns") }}
++                        </template>
 +                        <el-input
++                          id="agent-context-turns"
 +                          v-model.trim="form.contextTurns"
-+                          class="form-select"
++                          class="context-turns-input"
 +                          inputmode="numeric"
-+                          clearable
++                          aria-describedby="agent-context-turns-hint"
 +                          :placeholder="$t('roleConfig.contextTurnsDefault')"
-+                        />
++                          clearable
++                        >
++                          <template #append>{{ $t("roleConfig.contextTurnsUnit") }}</template>
++                        </el-input>
++                        <p id="agent-context-turns-hint" class="dialogue-setting-hint">
++                          {{ $t("roleConfig.contextTurnsHint") }}
++                        </p>
 +                      </el-form-item>
-                     </el-form-item>
++                      <el-form-item
++                        v-if="model.type === 'Memory' && form.model.memModelId && form.model.memModelId !== 'Memory_nomem'"
++                        key="chat-reporting"
++                        class="model-item"
++                      >
++                        <template #label>{{ $t("roleConfig.chatReporting") }}</template>
++                        <el-radio-group
++                          v-model="form.chatHistoryConf"
+                           class="chat-history-options"
++                          :aria-label="$t('roleConfig.chatReporting')"
+                         >
+-                          <el-radio-group
+-                            v-model="form.chatHistoryConf"
+-                            @change="updateChatHistoryConf"
+-                          >
+-                            <el-radio-button :label="1">{{
+-                              $t("roleConfig.reportText")
+-                            }}</el-radio-button>
+-                            <el-radio-button :label="2">{{
+-                              $t("roleConfig.reportTextVoice")
+-                            }}</el-radio-button>
+-                          </el-radio-group>
+-                        </div>
+-                      </div>
+-                    </el-form-item>
++                          <el-radio-button :label="0">{{ $t("agentSnapshot.chatHistoryConf.none") }}</el-radio-button>
++                          <el-radio-button :label="1">{{ $t("roleConfig.saveChatText") }}</el-radio-button>
++                        </el-radio-group>
++                      </el-form-item>
++                    </template>
                      <div class="model-row">
                        <!-- 语言筛选器 -->
-@@ -520,6 +532,7 @@ export default {
+                       <el-form-item class="model-item language-select-item">
+@@ -520,6 +541,7 @@ export default {
          ttsRate: null,
          ttsPitch: null,
          chatHistoryConf: 0,
@@ -248,7 +501,7 @@ diff --git a/main/manager-web/src/views/roleConfig.vue b/main/manager-web/src/vi
          systemPrompt: "",
          summaryMemory: "",
          langCode: "",
-@@ -634,7 +647,13 @@ export default {
+@@ -634,7 +656,13 @@ export default {
        if (this.configInteractionBlocked) {
          return;
        }
@@ -262,7 +515,16 @@ diff --git a/main/manager-web/src/views/roleConfig.vue b/main/manager-web/src/vi
          agentCode: this.form.agentCode,
          agentName: this.form.agentName,
          asrModelId: this.form.model.asrModelId,
-@@ -813,6 +832,7 @@ export default {
+@@ -643,7 +671,7 @@ export default {
+         slmModelId: this.form.model.slmModelId,
+         vllmModelId: this.form.model.vllmModelId,
+         ttsModelId: this.form.model.ttsModelId,
+-        chatHistoryConf: this.form.chatHistoryConf,
++        chatHistoryConf: this.textChatHistoryConf(this.form.model.memModelId, this.form.chatHistoryConf),
+         memModelId: this.form.model.memModelId,
+         intentModelId: this.form.model.intentModelId,
+         systemPrompt: this.form.systemPrompt,
+@@ -813,6 +841,7 @@ export default {
              ttsVoiceId: "",
              ttsLanguage: "",
              chatHistoryConf: 0,
@@ -270,11 +532,72 @@ diff --git a/main/manager-web/src/views/roleConfig.vue b/main/manager-web/src/vi
              systemPrompt: "",
              summaryMemory: "",
              langCode: "",
-@@ -989,6 +1009,7 @@ export default {
+@@ -874,7 +903,8 @@ export default {
+         ...this.form,
+         agentName: templateData.agentName || this.form.agentName,
+         ttsVoiceId: templateData.ttsVoiceId || this.form.ttsVoiceId,
+-        chatHistoryConf: templateData.chatHistoryConf || this.form.chatHistoryConf,
++        chatHistoryConf: this.textChatHistoryConf(templateData.memModelId || this.form.model.memModelId,
++          templateData.chatHistoryConf ?? this.form.chatHistoryConf),
+         systemPrompt: templateData.systemPrompt || this.form.systemPrompt,
+         summaryMemory: templateData.summaryMemory || this.form.summaryMemory,
+         langCode: templateData.langCode || this.form.langCode,
+@@ -989,6 +1019,8 @@ export default {
              this.form = {
                ...this.form,
                ...agentData,
++              chatHistoryConf: this.textChatHistoryConf(agentData.memModelId, agentData.chatHistoryConf),
 +              contextTurns: agentData.contextTurns == null ? "" : String(agentData.contextTurns),
                model: {
                  ttsModelId: agentData.ttsModelId,
                  vadModelId: agentData.vadModelId,
+@@ -1358,13 +1390,7 @@ export default {
+         });
+       }
+       if (type === "Memory") {
+-        if (value === "Memory_nomem") {
+-          // 无记忆功能的模型，默认不记录聊天记录
+-          this.form.chatHistoryConf = 0;
+-        } else {
+-          // 有记忆功能的模型，默认记录文本和语音
+-          this.form.chatHistoryConf = 2;
+-        }
++        this.form.chatHistoryConf = this.textChatHistoryConf(value);
+         if (value === "Memory_nomem" || value === "Memory_mem_report_only") {
+           this.tempSummaryMemory = this.form.summaryMemory;
+           this.form.summaryMemory = "";
+@@ -1797,10 +1823,8 @@ export default {
+         this.playingVoice = false;
+       }
+     },
+-    updateChatHistoryConf() {
+-      if (this.form.model.memModelId === "Memory_nomem") {
+-        this.form.chatHistoryConf = 0;
+-      }
++    textChatHistoryConf(memoryModelId, configured) {
++      return memoryModelId === "Memory_nomem" || configured === 0 ? 0 : 1;
+     },
+     // 加载功能状态
+     async loadFeatureStatus() {
+@@ -2265,11 +2289,16 @@ export default {
+   color: white;
+ }
+ 
+-.chat-history-options {
+-  display: flex;
+-  gap: 10px;
+-  min-width: 250px;
+-  justify-content: flex-end;
++.context-turns-input {
++  width: 150px;
++  max-width: 100%;
++}
++
++.dialogue-setting-hint {
++  margin: 6px 0 0;
++  font-size: 12px;
++  line-height: 1.5;
++  color: #606983;
+ }
+ 
+ .chat-history-options ::v-deep .el-radio-button {

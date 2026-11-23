@@ -612,9 +612,9 @@ POST /xiaozhi/agent/chat-history/report
 
 - `0`：不上报
 - `1`：上报文本
-- `2`：上报文本 + 音频 WAV
+- 旧配置 `2` 按 `1` 处理。KSZ 聊天记录仅保存文字。
 
-该配置通过智控台或数据库 `ai_agent_template.chat_history_conf` 维护。
+该配置在智控台「聊天上报」中按智能体设置。
 
 #### 完整对话 JSON 归档到 PostgreSQL
 

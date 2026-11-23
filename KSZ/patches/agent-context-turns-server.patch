@@ -1,14 +1,17 @@
 diff --git a/core/connection.py b/core/connection.py
 --- a/core/connection.py
 +++ b/core/connection.py
-@@ -1002,6 +1002,7 @@ class ConnectionHandler:
+@@ -1002,8 +1002,9 @@ class ConnectionHandler:
              self.config["summaryMemory"] = private_config["summaryMemory"]
          if private_config.get("device_max_output_size", None) is not None:
              self.max_output_size = int(private_config["device_max_output_size"])
 +        self.config["context_turns"] = private_config.get("context_turns")
          if private_config.get("chat_history_conf", None) is not None:
-             self.chat_history_conf = int(private_config["chat_history_conf"])
+-            self.chat_history_conf = int(private_config["chat_history_conf"])
++            self.chat_history_conf = min(1, int(private_config["chat_history_conf"]))
          if private_config.get("mcp_endpoint", None) is not None:
+             self.config["mcp_endpoint"] = private_config["mcp_endpoint"]
+         if private_config.get("context_providers", None) is not None:
 @@ -1379,6 +1380,7 @@ class ConnectionHandler:
          )
          # 设置最大递归深度，避免无限循环，可根据实际需求调整
