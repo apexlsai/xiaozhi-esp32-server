@@ -4,6 +4,7 @@ from copy import deepcopy
 
 
 SYSTEM_MARKER = "<ksz_agent_system_v1>"
+DEFAULT_CONTEXT_TURNS = 20
 LANGUAGE_ALIASES = {
     "zh": "zh-CN", "cn": "zh-CN", "chinese": "zh-CN", "zh-cn": "zh-CN",
     "zh-tw": "zh-CN", "en": "en", "en-us": "en", "en-gb": "en", "english": "en",
@@ -83,12 +84,18 @@ def validate_context(value):
         raise ValueError("ksz_prompt_context: invalid turn kind")
     if type(value.get("turn", {}).get("tool_depth_exhausted", False)) is not bool:
         raise ValueError("ksz_prompt_context: invalid depth flag")
+    if "context_turns" in value and not valid_context_turns(value["context_turns"]):
+        raise ValueError("ksz_prompt_context: context_turns must be an integer between 1 and 50")
     context = deepcopy(value)
     context["language"] = language
     return context
 
 
-def trim_history(messages, limit=20):
+def valid_context_turns(value):
+    return type(value) is int and 1 <= value <= 50
+
+
+def trim_history(messages, limit=DEFAULT_CONTEXT_TURNS):
     messages = deepcopy(messages)
     starts = [i for i, message in enumerate(messages) if message.get("role") == "user"]
     if len(starts) > limit:
@@ -145,7 +152,11 @@ def compile_system(context):
 
 
 def compile_messages(context, messages, evidence=""):
-    history = trim_history([m for m in messages if m.get("role") != "system"])
+    system = compile_system(context)
+    history = trim_history(
+        [m for m in messages if m.get("role") != "system"],
+        context.get("context_turns", DEFAULT_CONTEXT_TURNS),
+    )
     if evidence:
         data = {"role": "user", "content": "<ksz_retrieved_data>\n" + json.dumps(evidence, ensure_ascii=False) + "\n</ksz_retrieved_data>"}
         index = next((i for i in range(len(history) - 1, -1, -1) if history[i].get("role") == "user"), len(history))
@@ -156,4 +167,4 @@ def compile_messages(context, messages, evidence=""):
             history[index] = {**current, "content": [*blocks, {"type": "text", "text": data["content"]}]}
         else:
             history.append(data)
-    return [{"role": "system", "content": compile_system(context)}, *history]
+    return [{"role": "system", "content": system}, *history]

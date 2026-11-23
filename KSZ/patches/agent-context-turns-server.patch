@@ -1,0 +1,45 @@
+diff --git a/core/connection.py b/core/connection.py
+--- a/core/connection.py
++++ b/core/connection.py
+@@ -1002,6 +1002,7 @@ class ConnectionHandler:
+             self.config["summaryMemory"] = private_config["summaryMemory"]
+         if private_config.get("device_max_output_size", None) is not None:
+             self.max_output_size = int(private_config["device_max_output_size"])
++        self.config["context_turns"] = private_config.get("context_turns")
+         if private_config.get("chat_history_conf", None) is not None:
+             self.chat_history_conf = int(private_config["chat_history_conf"])
+         if private_config.get("mcp_endpoint", None) is not None:
+@@ -1379,6 +1380,7 @@ class ConnectionHandler:
+         )
+         # 设置最大递归深度，避免无限循环，可根据实际需求调整
+         MAX_DEPTH = 5
++        final_answer_instruction = None
+         force_final_answer = False  # 标记是否强制最终回答
+ 
+         if depth >= MAX_DEPTH:
+@@ -1388,12 +1390,10 @@ class ConnectionHandler:
+             force_final_answer = True
+             # 添加系统指令，要求 LLM 基于现有信息回答
+             if not (guide and guide.agent_owned(self)):
+-                self.dialogue.put(
+-                    Message(
+-                        role="user",
+-                        content="[系统提示] 已达到最大工具调用次数限制，请你基于目前已经获取的所有信息，直接给出最终答案。不要再尝试调用任何工具。",
+-                    )
+-                )
++                final_answer_instruction = "[系统提示] 已达到最大工具调用次数限制，请你基于目前已经获取的所有信息，直接给出最终答案。不要再尝试调用任何工具。"
++                if not (guide and guide.configured_context_turns(self)):
++                    self.dialogue.put(Message(role="user", content=final_answer_instruction))
++
+ 
+         # Define intent functions
+         functions = None
+@@ -1447,6 +1447,8 @@ class ConnectionHandler:
+                 llm_dialogue = guide.guide_announcement_messages(self, llm_dialogue, current_sentence_id)
+                 llm_dialogue = guide.playback_context_messages(self, llm_dialogue, current_sentence_id)
+                 llm_dialogue = guide.request_messages(self, llm_dialogue, llm_extra_body, depth)
++                if final_answer_instruction and guide.configured_context_turns(self):
++                    llm_dialogue.append({"role": "user", "content": final_answer_instruction})
+ 
+             if self.intent_type == "function_call" and functions is not None:
+                 # 使用支持functions的streaming接口

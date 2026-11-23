@@ -18,6 +18,8 @@ COPY KSZ/patches/management-navigation.patch /tmp/management-navigation.patch
 RUN git apply --check /tmp/management-navigation.patch && git apply /tmp/management-navigation.patch
 COPY KSZ/patches/yuanbao-search-management.patch /tmp/yuanbao-search-management.patch
 RUN git apply --check /tmp/yuanbao-search-management.patch && git apply /tmp/yuanbao-search-management.patch
+COPY KSZ/patches/agent-context-turns-management.patch /tmp/agent-context-turns-management.patch
+RUN git apply --check /tmp/agent-context-turns-management.patch && git apply /tmp/agent-context-turns-management.patch
 
 FROM node:18 AS web-builder
 WORKDIR /app

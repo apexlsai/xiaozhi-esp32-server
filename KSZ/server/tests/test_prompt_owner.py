@@ -5,7 +5,7 @@ import pytest
 from core.utils.dialogue import Dialogue, Message
 from ksz_guide.prompt import prepare_system_prompt
 from ksz_guide.prompt_owner import agent_owned, request_messages, trim_connection
-from ksz_prompt import CONSUMER_ROLE, compile_system, validate_context
+from ksz_prompt import CONSUMER_ROLE, compile_messages, compile_system, validate_context
 
 
 def connection(owner="agent"):
@@ -24,6 +24,33 @@ def test_selected_model_owns_opt_in_and_default_remains_legacy():
 def test_unknown_owner_is_a_configuration_error():
     with pytest.raises(ValueError):
         agent_owned(connection("unknown"))
+
+
+@pytest.mark.parametrize("owner", ["agent", "xiaozhi"])
+@pytest.mark.parametrize("limit", [1, 10, 30, 50])
+def test_configured_limit_reaches_model_with_complete_tool_round(owner, limit):
+    conn = connection(owner)
+    conn.config["context_turns"] = limit
+    conn.dialogue.put(Message(role="system", content="ROLE"))
+    for index in range(55):
+        conn.dialogue.put(Message(role="user", content=str(index)))
+        conn.dialogue.put(Message(role="assistant", tool_calls=[{"id": f"call_{index}"}]))
+        conn.dialogue.put(Message(role="tool", tool_call_id=f"call_{index}", content="result"))
+        conn.dialogue.put(Message(role="assistant", content="answer"))
+
+    trim_connection(conn)
+    values = {"language": "zh-CN"}
+    messages = request_messages(conn, conn.dialogue.get_llm_dialogue(), values)
+    if owner == "agent":
+        messages = compile_messages(values["ksz_prompt_context"], messages)
+
+    assert messages[0]["role"] == "system"
+    assert [m["content"] for m in messages if m["role"] == "user"] == [
+        str(i) for i in range(55 - limit, 55)
+    ]
+    assert [m["tool_call_id"] for m in messages if m["role"] == "tool"] == [
+        f"call_{i}" for i in range(55 - limit, 55)
+    ]
 
 
 def test_persistent_history_and_wire_keep_same_twenty_rounds():

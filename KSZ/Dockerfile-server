@@ -60,6 +60,9 @@ RUN git apply --check /tmp/thinking-expression.patch \
 COPY KSZ/patches/embedding-intent.patch /tmp/embedding-intent.patch
 RUN git apply --check /tmp/embedding-intent.patch \
     && git apply /tmp/embedding-intent.patch
+COPY KSZ/patches/agent-context-turns-server.patch /tmp/agent-context-turns-server.patch
+RUN git apply --check /tmp/agent-context-turns-server.patch \
+    && git apply /tmp/agent-context-turns-server.patch
 
 FROM ghcr.io/xinnan-tech/xiaozhi-esp32-server:server-base
 

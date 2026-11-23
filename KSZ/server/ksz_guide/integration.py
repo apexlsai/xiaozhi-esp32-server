@@ -28,7 +28,7 @@ from .idle_greeting import (
     handle_idle_greeting, interrupt_idle_greeting,
 )
 from .prompt import LANGUAGE_NAMES, prepare_system_prompt, prompt_template_path, response_language, venue_prompt
-from .prompt_owner import agent_owned, internal_turn, request_messages, trim_connection
+from .prompt_owner import agent_owned, configured_context_turns, internal_turn, request_messages, trim_connection
 from .role_patch import handle_profile_change, handle_role_rebind, on_hello as role_on_hello
 from .runtime import GuideRuntime
 from .settings import GuideSettings

@@ -2,7 +2,7 @@ import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from ksz_prompt import CONSUMER_ROLE, trim_history
+from ksz_prompt import CONSUMER_ROLE, DEFAULT_CONTEXT_TURNS, trim_history, valid_context_turns
 
 
 def agent_owned(conn):
@@ -19,13 +19,24 @@ def internal_turn(conn):
     return agent_owned(conn) and is_guide_announcement(conn)
 
 
+def configured_context_turns(conn):
+    turns = conn.config.get("context_turns")
+    return turns if valid_context_turns(turns) else None
+
+
 def trim_connection(conn):
-    if not agent_owned(conn):
+    limit = configured_context_turns(conn)
+    if limit is None and agent_owned(conn):
+        limit = DEFAULT_CONTEXT_TURNS
+    if limit is None:
         return
     history = conn.dialogue.dialogue
     starts = [i for i, message in enumerate(history) if message.role == "user" and not message.is_temporary]
-    if len(starts) > 20:
-        conn.dialogue.dialogue = [m for m in history[:starts[-20]] if m.role == "system"] + history[starts[-20]:]
+    if len(starts) > limit:
+        start = starts[-limit]
+        conn.dialogue.dialogue = [
+            m for m in history[:start] if m.role == "system" or m.is_temporary
+        ] + history[start:]
 
 
 def context(conn, values, *, kind=None, depth=0):
@@ -85,5 +96,12 @@ def request_messages(conn, messages, values, depth=0, kind=None):
             messages.insert(0, {"role": "system", "content": venue_prompt("", None, mode)})
         return messages
     trim_connection(conn)
-    values["ksz_prompt_context"] = context(conn, values, kind=kind, depth=depth)
-    return trim_history([message for message in messages if message.get("role") != "system"])
+    prompt_context = context(conn, values, kind=kind, depth=depth)
+    limit = configured_context_turns(conn)
+    if limit is not None:
+        prompt_context["context_turns"] = limit
+    values["ksz_prompt_context"] = prompt_context
+    return trim_history(
+        [message for message in messages if message.get("role") != "system"],
+        limit or DEFAULT_CONTEXT_TURNS,
+    )

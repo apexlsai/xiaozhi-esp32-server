@@ -1,0 +1,280 @@
+diff --git a/main/manager-api/src/main/java/xiaozhi/modules/agent/Enums/AgentSnapshotField.java b/main/manager-api/src/main/java/xiaozhi/modules/agent/Enums/AgentSnapshotField.java
+--- a/main/manager-api/src/main/java/xiaozhi/modules/agent/Enums/AgentSnapshotField.java
++++ b/main/manager-api/src/main/java/xiaozhi/modules/agent/Enums/AgentSnapshotField.java
+@@ -44,6 +44,8 @@ public enum AgentSnapshotField {
+             (agent, data) -> agent.setIntentModelId(data.getIntentModelId())),
+     CHAT_HISTORY_CONF("chatHistoryConf", AgentSnapshotDataDTO::getChatHistoryConf, AgentUpdateDTO::getChatHistoryConf,
+             (agent, data) -> agent.setChatHistoryConf(data.getChatHistoryConf())),
++    CONTEXT_TURNS("contextTurns", AgentSnapshotDataDTO::getContextTurns, AgentUpdateDTO::getContextTurns,
++            (agent, data) -> agent.setContextTurns(data.getContextTurns())),
+     SYSTEM_PROMPT("systemPrompt", AgentSnapshotDataDTO::getSystemPrompt, AgentUpdateDTO::getSystemPrompt,
+             (agent, data) -> agent.setSystemPrompt(data.getSystemPrompt())),
+     SUMMARY_MEMORY("summaryMemory", AgentSnapshotDataDTO::getSummaryMemory, AgentUpdateDTO::getSummaryMemory,
+diff --git a/main/manager-api/src/main/java/xiaozhi/modules/agent/dto/AgentSnapshotDataDTO.java b/main/manager-api/src/main/java/xiaozhi/modules/agent/dto/AgentSnapshotDataDTO.java
+--- a/main/manager-api/src/main/java/xiaozhi/modules/agent/dto/AgentSnapshotDataDTO.java
++++ b/main/manager-api/src/main/java/xiaozhi/modules/agent/dto/AgentSnapshotDataDTO.java
+@@ -27,6 +27,7 @@ public class AgentSnapshotDataDTO implements Serializable {
+     private String memModelId;
+     private String intentModelId;
+     private Integer chatHistoryConf;
++    private Integer contextTurns;
+     private String systemPrompt;
+     private String summaryMemory;
+     private String langCode;
+diff --git a/main/manager-api/src/main/java/xiaozhi/modules/agent/dto/AgentUpdateDTO.java b/main/manager-api/src/main/java/xiaozhi/modules/agent/dto/AgentUpdateDTO.java
+--- a/main/manager-api/src/main/java/xiaozhi/modules/agent/dto/AgentUpdateDTO.java
++++ b/main/manager-api/src/main/java/xiaozhi/modules/agent/dto/AgentUpdateDTO.java
+@@ -6,10 +6,15 @@ import java.util.HashMap;
+ import java.util.List;
+ import java.util.Map;
+ 
++import com.fasterxml.jackson.annotation.JsonIgnore;
++import com.fasterxml.jackson.annotation.JsonSetter;
+ import com.fasterxml.jackson.core.type.TypeReference;
++import com.fasterxml.jackson.databind.JsonNode;
+ import io.swagger.v3.oas.annotations.media.Schema;
+ import jakarta.validation.constraints.Size;
++import lombok.AccessLevel;
+ import lombok.Data;
++import lombok.Setter;
+ import xiaozhi.common.utils.JsonUtils;
+ 
+ /**
+@@ -81,6 +86,23 @@ public class AgentUpdateDTO implements Serializable {
+     @Schema(description = "聊天记录配置（0不记录 1仅记录文本 2记录文本和语音）", example = "3", nullable = true)
+     private Integer chatHistoryConf;
+ 
++    @Setter(AccessLevel.NONE)
++    private Integer contextTurns;
++
++    @JsonIgnore
++    private boolean contextTurnsSpecified;
++
++    @JsonSetter("contextTurns")
++    public void readContextTurns(JsonNode value) {
++        if (value != null && !value.isNull()
++                && (!value.isIntegralNumber() || !value.canConvertToInt()
++                        || value.intValue() < 1 || value.intValue() > 50)) {
++            throw new IllegalArgumentException("contextTurns must be an integer between 1 and 50");
++        }
++        contextTurns = value == null || value.isNull() ? null : value.intValue();
++        contextTurnsSpecified = true;
++    }
++
+     @Schema(description = "语言编码", example = "zh_CN", nullable = true)
+     private String langCode;
+ 
+diff --git a/main/manager-api/src/main/java/xiaozhi/modules/agent/entity/AgentEntity.java b/main/manager-api/src/main/java/xiaozhi/modules/agent/entity/AgentEntity.java
+--- a/main/manager-api/src/main/java/xiaozhi/modules/agent/entity/AgentEntity.java
++++ b/main/manager-api/src/main/java/xiaozhi/modules/agent/entity/AgentEntity.java
+@@ -3,7 +3,9 @@ package xiaozhi.modules.agent.entity;
+ import java.math.BigDecimal;
+ import java.util.Date;
+ 
++import com.baomidou.mybatisplus.annotation.FieldStrategy;
+ import com.baomidou.mybatisplus.annotation.IdType;
++import com.baomidou.mybatisplus.annotation.TableField;
+ import com.baomidou.mybatisplus.annotation.TableId;
+ import com.baomidou.mybatisplus.annotation.TableName;
+ 
+@@ -70,6 +72,9 @@ public class AgentEntity {
+     @Schema(description = "聊天记录配置（0不记录 1仅记录文本 2记录文本和语音）")
+     private Integer chatHistoryConf;
+ 
++    @TableField(updateStrategy = FieldStrategy.ALWAYS)
++    private Integer contextTurns;
++
+     @Schema(description = "角色设定参数")
+     private String systemPrompt;
+ 
+diff --git a/main/manager-api/src/main/java/xiaozhi/modules/agent/service/impl/AgentServiceImpl.java b/main/manager-api/src/main/java/xiaozhi/modules/agent/service/impl/AgentServiceImpl.java
+--- a/main/manager-api/src/main/java/xiaozhi/modules/agent/service/impl/AgentServiceImpl.java
++++ b/main/manager-api/src/main/java/xiaozhi/modules/agent/service/impl/AgentServiceImpl.java
+@@ -437,6 +437,9 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
+         if (dto.getChatHistoryConf() != null) {
+             existingEntity.setChatHistoryConf(dto.getChatHistoryConf());
+         }
++        if (dto.isContextTurnsSpecified()) {
++            existingEntity.setContextTurns(dto.getContextTurns());
++        }
+         if (dto.getLangCode() != null) {
+             existingEntity.setLangCode(dto.getLangCode());
+         }
+diff --git a/main/manager-api/src/main/java/xiaozhi/modules/agent/service/impl/AgentSnapshotServiceImpl.java b/main/manager-api/src/main/java/xiaozhi/modules/agent/service/impl/AgentSnapshotServiceImpl.java
+--- a/main/manager-api/src/main/java/xiaozhi/modules/agent/service/impl/AgentSnapshotServiceImpl.java
++++ b/main/manager-api/src/main/java/xiaozhi/modules/agent/service/impl/AgentSnapshotServiceImpl.java
+@@ -344,6 +344,7 @@ public class AgentSnapshotServiceImpl extends BaseServiceImpl<AgentSnapshotDao,
+         data.setMemModelId(agent.getMemModelId());
+         data.setIntentModelId(agent.getIntentModelId());
+         data.setChatHistoryConf(agent.getChatHistoryConf());
++        data.setContextTurns(agent.getContextTurns());
+         data.setSystemPrompt(agent.getSystemPrompt());
+         data.setSummaryMemory(agent.getSummaryMemory());
+         data.setLangCode(agent.getLangCode());
+@@ -410,7 +411,9 @@ public class AgentSnapshotServiceImpl extends BaseServiceImpl<AgentSnapshotDao,
+         List<String> fields = new ArrayList<>();
+         for (AgentSnapshotField field : AgentSnapshotField.values()) {
+             Object nextValue = field.updateValue(pendingUpdate);
+-            if (nextValue != null && isChanged(field, field.snapshotValue(current), nextValue)) {
++            boolean specified = nextValue != null
++                    || (field == AgentSnapshotField.CONTEXT_TURNS && pendingUpdate.isContextTurnsSpecified());
++            if (specified && isChanged(field, field.snapshotValue(current), nextValue)) {
+                 fields.add(field.getFieldName());
+             }
+         }
+diff --git a/main/manager-api/src/main/java/xiaozhi/modules/config/service/impl/ConfigServiceImpl.java b/main/manager-api/src/main/java/xiaozhi/modules/config/service/impl/ConfigServiceImpl.java
+--- a/main/manager-api/src/main/java/xiaozhi/modules/config/service/impl/ConfigServiceImpl.java
++++ b/main/manager-api/src/main/java/xiaozhi/modules/config/service/impl/ConfigServiceImpl.java
+@@ -183,6 +183,9 @@ public class ConfigServiceImpl implements ConfigService {
+             chatHistoryConf = Constant.ChatHistoryConfEnum.RECORD_TEXT_AUDIO.getCode();
+         }
+         result.put("chat_history_conf", chatHistoryConf);
++        if (agent.getContextTurns() != null) {
++            result.put("context_turns", agent.getContextTurns());
++        }
+         // 如果客户端已实例化模型，则不返回
+         String alreadySelectedVadModelId = selectedModule.get("VAD");
+         if (alreadySelectedVadModelId != null && alreadySelectedVadModelId.equals(agent.getVadModelId())) {
+diff --git a/main/manager-api/src/main/resources/db/changelog/db.changelog-master.yaml b/main/manager-api/src/main/resources/db/changelog/db.changelog-master.yaml
+--- a/main/manager-api/src/main/resources/db/changelog/db.changelog-master.yaml
++++ b/main/manager-api/src/main/resources/db/changelog/db.changelog-master.yaml
+@@ -830,3 +830,10 @@ databaseChangeLog:
+         - sqlFile:
+             encoding: utf8
+             path: classpath:db/changelog/202611191350.sql
++  - changeSet:
++      id: ksz-agent-context-turns
++      author: JacobNg1
++      changes:
++        - sqlFile:
++            encoding: utf8
++            path: classpath:db/changelog/ksz-agent-context-turns.sql
+diff --git a/main/manager-api/src/main/resources/mapper/agent/AgentDao.xml b/main/manager-api/src/main/resources/mapper/agent/AgentDao.xml
+--- a/main/manager-api/src/main/resources/mapper/agent/AgentDao.xml
++++ b/main/manager-api/src/main/resources/mapper/agent/AgentDao.xml
+@@ -26,6 +26,7 @@
+         <result column="intentModelId" property="intentModelId"/>
+ 
+         <result column="chatHistoryConf" property="chatHistoryConf"/>
++        <result column="contextTurns" property="contextTurns"/>
+         <result column="systemPrompt" property="systemPrompt"/>
+         <result column="summaryMemory" property="summaryMemory"/>
+         <result column="langCode" property="langCode"/>
+@@ -63,6 +64,7 @@
+                a.mem_model_id      AS memModelId,
+                a.intent_model_id   AS intentModelId,
+                a.chat_history_conf AS chatHistoryConf,
++               a.context_turns     AS contextTurns,
+                a.system_prompt     AS systemPrompt,
+                a.summary_memory    AS summaryMemory,
+                a.lang_code         AS langCode,
+@@ -107,6 +109,7 @@
+             mem_model_id = #{agent.memModelId,jdbcType=VARCHAR},
+             intent_model_id = #{agent.intentModelId,jdbcType=VARCHAR},
+             chat_history_conf = #{agent.chatHistoryConf,jdbcType=INTEGER},
++            context_turns = #{agent.contextTurns,jdbcType=INTEGER},
+             system_prompt = #{agent.systemPrompt,jdbcType=LONGVARCHAR},
+             summary_memory = #{agent.summaryMemory,jdbcType=LONGVARCHAR},
+             lang_code = #{agent.langCode,jdbcType=VARCHAR},
+diff --git a/main/manager-web/src/i18n/en.js b/main/manager-web/src/i18n/en.js
+--- a/main/manager-web/src/i18n/en.js
++++ b/main/manager-web/src/i18n/en.js
+@@ -848,6 +848,10 @@ export default {
+   'roleConfig.tts': 'Text-to-Speech',
+   'roleConfig.memoryHis': 'Memory',
+   'roleConfig.memory': 'Memory Model',
++  'roleConfig.contextTurns': 'Conversation context turns',
++  'roleConfig.contextTurnsDefault': 'Default when empty (20 for Agent-managed prompts)',
++  'roleConfig.contextTurnsInvalid': 'Enter a whole number from 1 to 50, or leave empty for the default',
++  'agentSnapshot.field.contextTurns': 'Conversation context turns',
+   'roleConfig.intent': 'Intent Recognition',
+   'roleConfig.language': 'Select Language',
+   'roleConfig.selectLanguage': 'Please select language',
+diff --git a/main/manager-web/src/i18n/zh_CN.js b/main/manager-web/src/i18n/zh_CN.js
+--- a/main/manager-web/src/i18n/zh_CN.js
++++ b/main/manager-web/src/i18n/zh_CN.js
+@@ -848,6 +848,10 @@ export default {
+   'roleConfig.intent': '意图识别(Intent)',
+   'roleConfig.memoryHis': '记忆',
+   'roleConfig.memory': '记忆模式(Mem)',
++  'roleConfig.contextTurns': '会话上下文轮数',
++  'roleConfig.contextTurnsDefault': '留空沿用默认（Agent 接管时为 20 轮）',
++  'roleConfig.contextTurnsInvalid': '请输入 1 到 50 的整数，或留空使用默认值',
++  'agentSnapshot.field.contextTurns': '会话上下文轮数',
+   'roleConfig.tts': '语音合成(TTS)',
+   'roleConfig.language': '对话语言(Lang)',
+   'roleConfig.selectLanguage': '请选择语言',
+diff --git a/main/manager-web/src/i18n/zh_TW.js b/main/manager-web/src/i18n/zh_TW.js
+--- a/main/manager-web/src/i18n/zh_TW.js
++++ b/main/manager-web/src/i18n/zh_TW.js
+@@ -962,6 +962,10 @@ export default {
+   'roleConfig.tts': '語音合成(TTS)',
+   'roleConfig.memoryHis': '記憶',
+   'roleConfig.memory': '記憶模式(Men)',
++  'roleConfig.contextTurns': '會話上下文輪數',
++  'roleConfig.contextTurnsDefault': '留空沿用預設（Agent 接管時為 20 輪）',
++  'roleConfig.contextTurnsInvalid': '請輸入 1 到 50 的整數，或留空使用預設值',
++  'agentSnapshot.field.contextTurns': '會話上下文輪數',
+   'roleConfig.intent': '意圖識別(Intent)',
+   'roleConfig.language': '選擇語言(Lang)',
+   'roleConfig.selectLanguage': '請選擇語言',
+diff --git a/main/manager-web/src/views/roleConfig.vue b/main/manager-web/src/views/roleConfig.vue
+--- a/main/manager-web/src/views/roleConfig.vue
++++ b/main/manager-web/src/views/roleConfig.vue
+@@ -359,6 +359,18 @@
+                           </el-radio-group>
+                         </div>
+                       </div>
++                      <el-form-item
++                        v-if="model.type === 'Memory'"
++                        :label="$t('roleConfig.contextTurns')"
++                      >
++                        <el-input
++                          v-model.trim="form.contextTurns"
++                          class="form-select"
++                          inputmode="numeric"
++                          clearable
++                          :placeholder="$t('roleConfig.contextTurnsDefault')"
++                        />
++                      </el-form-item>
+                     </el-form-item>
+                     <div class="model-row">
+                       <!-- 语言筛选器 -->
+@@ -520,6 +532,7 @@ export default {
+         ttsRate: null,
+         ttsPitch: null,
+         chatHistoryConf: 0,
++        contextTurns: "",
+         systemPrompt: "",
+         summaryMemory: "",
+         langCode: "",
+@@ -634,7 +647,13 @@ export default {
+       if (this.configInteractionBlocked) {
+         return;
+       }
++      const turns = this.form.contextTurns;
++      if (turns !== "" && !/^(?:[1-9]|[1-4][0-9]|50)$/.test(turns)) {
++        this.$message.error(this.$t("roleConfig.contextTurnsInvalid"));
++        return;
++      }
+       const configData = {
++        contextTurns: turns === "" ? null : Number(turns),
+         agentCode: this.form.agentCode,
+         agentName: this.form.agentName,
+         asrModelId: this.form.model.asrModelId,
+@@ -813,6 +832,7 @@ export default {
+             ttsVoiceId: "",
+             ttsLanguage: "",
+             chatHistoryConf: 0,
++            contextTurns: "",
+             systemPrompt: "",
+             summaryMemory: "",
+             langCode: "",
+@@ -989,6 +1009,7 @@ export default {
+             this.form = {
+               ...this.form,
+               ...agentData,
++              contextTurns: agentData.contextTurns == null ? "" : String(agentData.contextTurns),
+               model: {
+                 ttsModelId: agentData.ttsModelId,
+                 vadModelId: agentData.vadModelId,
