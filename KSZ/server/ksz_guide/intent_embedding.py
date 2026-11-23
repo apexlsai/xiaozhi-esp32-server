@@ -88,11 +88,11 @@ DEFAULT_EXAMPLES = {
 TOOL_NAMES = {
     "weather": "get_weather",
     "yuanbao_search": "yuanbao_search",
-    "web_search": "web_search",
+    "web_search": "yuanbao_search",
     "take_photo": "self_camera_take_photo",
     "play_music": "play_music",
-    "movie_search": "web_search",
-    "nearby_search": "web_search",
+    "movie_search": "yuanbao_search",
+    "nearby_search": "yuanbao_search",
 }
 
 
@@ -165,7 +165,7 @@ def explicit_tool_name(text):
     if re.search(r"(?:附近|周边|这里|这儿|这边).*(?:吃|喝|餐厅|饭店|咖啡|美食)", text):
         return "nearby_search"
     if re.search(r"推荐.*(?:歌曲|音乐|专辑)|(?:歌曲|音乐|专辑).*(?:推荐|好听|最近)", text):
-        return "web_search"
+        return "yuanbao_search"
     return None
 
 
@@ -335,10 +335,11 @@ class EmbeddingIntentClassifier:
             second_score = ranked[1][1] if len(ranked) > 1 else -1
             margin = score - second_score
             if score < self.threshold or margin < self.margin_threshold:
-                if name != "web_search" or score < 0.60:
-                    return None
-            if name == "yuanbao_search":
-                name = "web_search"
+                name = "yuanbao_search"
+                score = max(score, 0.60)
+                margin = max(margin, self.margin_threshold)
+            if name == "web_search":
+                name = "yuanbao_search"
 
         if name == "general_chat":
             return {
@@ -349,8 +350,8 @@ class EmbeddingIntentClassifier:
         tool_name = TOOL_NAMES.get(name)
         if not tool_name:
             return None
-        if name == "yuanbao_search" and tool_name not in available_tools:
-            tool_name = "web_search"
+        if tool_name == "web_search":
+            tool_name = "yuanbao_search"
         if tool_name not in available_tools:
             return None
 

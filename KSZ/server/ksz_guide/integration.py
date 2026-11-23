@@ -120,7 +120,7 @@ async def classify_embedding_intent(conn, text):
             "zh-CN": "zh_CN", "en": "en_US", "ja": "ja_JP", "ko": "ko_KR",
         }.get(response_language(conn), "zh_CN")
         if external and not explicit_tool_name(text):
-            search_tool = next((name for name in ("web_search", "yuanbao_search") if name in available), None)
+            search_tool = "yuanbao_search" if "yuanbao_search" in available else None
             result = {"function_call": {"name": search_tool, "arguments": {"query": text}}} if search_tool else None
         elif classifier is not None:
             result = await classifier.classify(text, available, language)
@@ -155,23 +155,13 @@ async def classify_embedding_intent(conn, text):
 
 async def execute_embedding_tool(conn, call):
     handler = conn.func_handler
-    if call["name"] != "yuanbao_search" or not handler.has_tool("web_search"):
+    if call["name"] != "yuanbao_search":
         return await handler.handle_llm_function_call(conn, call)
+    if not handler.has_tool("yuanbao_search"):
+        return ActionResponse(Action.ERROR, response="元宝搜索工具未配置")
     if not json.loads(call["arguments"]).get("query"):
         return ActionResponse(Action.RESPONSE, response="您想搜索什么？")
-
-    web_call = {**call, "name": "web_search"}
-    results = await asyncio.gather(
-        handler.handle_llm_function_call(conn, call),
-        handler.handle_llm_function_call(conn, web_call),
-        return_exceptions=True,
-    )
-    evidence = {
-        name: (result.result or result.response)
-        for name, result in zip(("yuanbao_search", "web_search"), results)
-        if isinstance(result, ActionResponse) and result.action in {Action.REQLLM, Action.RESPONSE}
-    }
-    return ActionResponse(Action.REQLLM, result=json.dumps(evidence, ensure_ascii=False))
+    return await handler.handle_llm_function_call(conn, call)
 
 
 def tool_reply_unavailable(conn):

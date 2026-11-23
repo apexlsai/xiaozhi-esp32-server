@@ -64,7 +64,7 @@ async def test_explicit_search_for_a_museum_stays_an_online_query(monkeypatch):
     classifier = EmbeddingIntentClassifier({"base_url": "https://embedding.test"})
     embed = AsyncMock(side_effect=AssertionError("explicit search does not require embedding"))
     monkeypatch.setattr(classifier, "_embed", embed)
-    result = await classifier.classify("搜索一下这个博物馆的最新消息", {"yuanbao_search", "web_search"})
+    result = await classifier.classify("搜索一下这个博物馆的最新消息", {"yuanbao_search"})
     assert result["function_call"] == {
         "name": "yuanbao_search", "arguments": {"query": "这个博物馆的最新消息"},
     }
@@ -86,18 +86,18 @@ def test_named_museums_respect_management_binding(question, external):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("venue", [None, {"name": "萍乡博物馆"}])
-async def test_cross_museum_question_selects_web_search_before_embedding(monkeypatch, venue):
+async def test_cross_museum_question_selects_yuanbao_before_embedding(monkeypatch, venue):
     monkeypatch.setattr(integration, "_embedding_classifier", lambda conn: None)
     monkeypatch.setattr(integration, "runtime_for", lambda conn: SimpleNamespace(
         context=lambda device_id: {"venue_context": venue},
     ))
     conn = SimpleNamespace(
         device_id="device-a", logger=Mock(),
-        func_handler=SimpleNamespace(get_functions=lambda: [{"function": {"name": "web_search"}}]),
+        func_handler=SimpleNamespace(get_functions=lambda: [{"function": {"name": "yuanbao_search"}}]),
     )
     question = "深圳博物馆里面有什么重要产品？"
     result = json.loads(await integration.classify_embedding_intent(conn, question))
-    assert result["function_call"] == {"name": "web_search", "arguments": {"query": question}}
+    assert result["function_call"] == {"name": "yuanbao_search", "arguments": {"query": question}}
 
 
 @pytest.mark.asyncio
@@ -124,3 +124,30 @@ def test_route_hint_is_consumed_once(monkeypatch):
     second = filter_context(connection, {})
     assert first["ksz_route"] == "direct_answer"
     assert "ksz_route" not in second
+
+
+@pytest.mark.asyncio
+async def test_low_confidence_non_original_question_falls_back_to_yuanbao(monkeypatch):
+    classifier = EmbeddingIntentClassifier({"base_url": "https://embedding.test"})
+    monkeypatch.setattr(classifier, "_references_ready", AsyncMock(return_value={
+        "museum_rag": [0.0, 1.0], "general_chat": [1.0, 0.0],
+    }))
+    monkeypatch.setattr(classifier, "_embed", AsyncMock(return_value=[[0.7, 0.7]]))
+    result = await classifier.classify("帮我查一个没有示例的问题", {"yuanbao_search"})
+    assert result["function_call"]["name"] == "yuanbao_search"
+
+
+@pytest.mark.asyncio
+async def test_embedding_tool_does_not_call_web_search(monkeypatch):
+    handler = SimpleNamespace(
+        has_tool=lambda name: name == "yuanbao_search",
+        handle_llm_function_call=AsyncMock(return_value=ActionResponse(Action.REQLLM, result="元宝结果")),
+    )
+    conn = SimpleNamespace(func_handler=handler)
+    result = await integration.execute_embedding_tool(conn, {
+        "name": "yuanbao_search", "arguments": '{"query":"测试"}',
+    })
+    assert result.result == "元宝结果"
+    assert [call.args[1]["name"] for call in handler.handle_llm_function_call.call_args_list] == [
+        "yuanbao_search"
+    ]
