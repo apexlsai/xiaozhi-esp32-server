@@ -153,7 +153,7 @@ async def test_configured_expiry_prevents_stale_wakeup(expires):
     assert h.runtime.context(DEVICE)["beacon_mac"] == beacon(2).mac
     assert h.runtime.state(DEVICE).pending is not None
     h.clock.now = 103
-    assert bool(h.runtime.context(DEVICE)) == (expires != "position")
+    assert ("beacon_mac" in h.runtime.context(DEVICE)) == (expires != "position")
     await h.runtime.tick()
     assert h.runtime.state(DEVICE).pending is None
     assert not await h.runtime.bind(h.conn(), {"activation_id": wake["activation_id"],

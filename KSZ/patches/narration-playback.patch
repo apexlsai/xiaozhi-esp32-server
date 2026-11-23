@@ -1,15 +1,30 @@
 diff --git a/core/connection.py b/core/connection.py
 --- a/core/connection.py
 +++ b/core/connection.py
-@@ -1297,6 +1297,8 @@
-                     )
+@@ -1297,12 +1297,15 @@
              text = guide.filter_guide_announcement_text(self, event.text, sentence_id) if guide else event.text
              if text:
 +                if guide and not guide.is_guide_announcement(self, sentence_id):
 +                    guide.record_response_delta(self, text, sentence_id)
                  cleaned_parts.append(text)
-                 self.tts.tts_text_queue.put(
-                     TTSMessageDTO(
+-                self.tts.tts_text_queue.put(
+-                    TTSMessageDTO(
+-                        sentence_id=sentence_id,
+-                        sentence_type=SentenceType.MIDDLE,
+-                        content_type=ContentType.TEXT,
+-                        content_detail=text,
+-                    )
+-                )
++                message = TTSMessageDTO(
++                    sentence_id=sentence_id,
++                    sentence_type=SentenceType.MIDDLE,
++                    content_type=ContentType.TEXT,
++                    content_detail=text,
++                )
++                if guide:
++                    message = guide.mark_tts_message(self, message, sentence_id)
++                self.tts.tts_text_queue.put(message)
+         return "".join(cleaned_parts)
 @@ -1320,6 +1322,8 @@
          if depth == 0:
              current_sentence_id = str(uuid.uuid4().hex)

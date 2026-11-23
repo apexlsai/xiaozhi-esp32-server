@@ -5,9 +5,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from aiohttp import web
-from loguru import logger
 
-from ksz_guide.fixed import FixedClient, FixedTour, play_fixed, profile, resume_fixed_chat, tour_key
+from ksz_guide.fixed import FixedClient, FixedTour, play_fixed, profile, resume_fixed_chat, stop_fixed, tour_key
 from ksz_guide.models import GuideError
 from ksz_guide.integration import track_chat
 from ksz_guide.playback import handle_playback_progress, playback_state
@@ -40,8 +39,11 @@ def fixed(monkeypatch):
     conn.max_output_size = 0
     conn.client_is_speaking = False
     item = h.client.items[0]
-    h.runtime.state(DEVICE).owner = conn
-    h.runtime.location = lambda mac: item
+    state = h.runtime.state(DEVICE)
+    state.owner = conn
+    state.policy = h.client.policies[DEVICE]
+    state.current = state.fixed_beacon = item
+    state.last_position_at = h.clock()
     conn.server = SimpleNamespace(guide_runtime=h.runtime)
     client = SimpleNamespace(guide=AsyncMock(return_value={
         'segments': [{'text': 'First.', 'audio_id': 'one'}, {'text': 'Second.', 'audio_id': 'two'}, {'text': 'Third.', 'audio_id': 'three'}],
@@ -69,14 +71,6 @@ def fixed(monkeypatch):
     report = Mock()
     monkeypatch.setattr(reportHandle, 'enqueue_tts_report', report)
     return SimpleNamespace(h=h, conn=conn, item=item, client=client, messages=messages, report=report, encode=encode)
-
-
-@pytest.fixture
-def log_messages():
-    messages = []
-    sink = logger.add(lambda message: messages.append(str(message)))
-    yield messages
-    logger.remove(sink)
 
 
 def progress(conn, index, state='played'):
@@ -132,18 +126,103 @@ async def test_legacy_device_uses_completed_send_and_profile_is_bound_role(fixed
 
 
 @pytest.mark.asyncio
-async def test_position_expiry_stops_fixed_tour_with_reason(fixed, log_messages):
-    calls = 0
+@pytest.mark.parametrize('loss', ['expired', 'lost'])
+async def test_fixed_tour_finishes_with_no_live_position(fixed, loss):
+    f = fixed
+    runtime = f.h.runtime
+    runtime.announcer = runtime._announce
+    state = runtime.state(DEVICE)
+    state.boot_id = 'boot1'
+    assert await runtime.bind(f.conn)
+    assert await runtime.legacy(f.conn, {'beacon_id': f.item.mac})
+    task = state.announcement_task
+    await wait_until(lambda: ('sentence_start', 'First.') in f.messages)
+    progress(f.conn, 1)
+    await wait_until(lambda: ('sentence_start', 'Second.') in f.messages)
+    if loss == 'lost':
+        assert (await f.h.send('lost'))[0]['accepted']
+    else:
+        f.h.clock.now += 16
+        await runtime.tick()
 
-    def location(_):
-        nonlocal calls
-        calls += 1
-        return fixed.item if calls <= 4 else None
+    assert runtime.location(DEVICE) is None
+    assert f.conn.beacon_location is None
+    assert 'last_beacon_id' not in runtime.context(DEVICE)
+    progress(f.conn, 1)
+    await wait_until(lambda: ('sentence_start', 'Third.') in f.messages)
+    progress(f.conn, 1, 'finished')
+    await task
+    assert [entry.content for entry in f.conn.dialogue.dialogue] == ['First.', 'Second.', 'Third.']
+    same_place = replace(f.item, mac=beacon(2).mac, id='second-member')
+    f.h.client.items.append(same_place)
+    assert await runtime.legacy(f.conn, {'beacon_id': same_place.mac})
+    assert runtime.location(DEVICE) is same_place
+    assert f.client.guide.await_count == 1
+    assert state.pending is None
+    await runtime.close()
 
-    fixed.h.runtime.location = location
-    assert await play_fixed(fixed.h.runtime, fixed.conn, fixed.item) is False
-    assert fixed.conn.ksz_fixed_tour.next_segment == 1
-    assert any('reason=position_expired' in message for message in log_messages)
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('resume', [False, True])
+async def test_new_position_interrupts_fixed_tour_after_loss(fixed, monkeypatch, resume):
+    f = fixed
+    runtime = f.h.runtime
+    runtime.announcer = runtime._announce
+    other = beacon(2, guide_mode='fixed', museum_code='0755001')
+    f.h.client.items.append(other)
+    f.client.guide.side_effect = [f.client.guide.return_value,
+                                  {'segments': [{'text': 'New location.', 'audio_id': 'new'}]}]
+
+    async def abort_connection(conn):
+        conn.client_abort = True
+        conn.client_is_speaking = False
+
+    abort = AsyncMock(side_effect=abort_connection)
+    monkeypatch.setattr('core.handle.abortHandle.handleAbortMessage', abort)
+    assert await runtime.bind(f.conn)
+    assert await runtime.legacy(f.conn, {'beacon_id': f.item.mac})
+    state = runtime.state(DEVICE)
+    old_task = state.announcement_task
+    await wait_until(lambda: ('sentence_start', 'First.') in f.messages)
+    progress(f.conn, 1)
+    await wait_until(lambda: ('sentence_start', 'Second.') in f.messages)
+    f.h.clock.now += 16
+    await runtime.tick()
+    assert runtime.location(DEVICE) is None
+    if resume:
+        await stop_fixed(f.conn)
+        abort.reset_mock()
+        f.messages.clear()
+        old_task = asyncio.create_task(play_fixed(runtime, f.conn, f.item, resume=True))
+        await wait_until(lambda: ('sentence_start', 'Second.') in f.messages)
+
+    assert await runtime.legacy(f.conn, {'beacon_id': other.mac})
+    abort.assert_awaited_once_with(f.conn)
+    assert old_task.cancelled()
+    await wait_until(lambda: ('sentence_start', 'New location.') in f.messages)
+    assert ('sentence_start', 'Third.') not in f.messages
+    progress(f.conn, 1, 'finished')
+    await state.announcement_task
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_policy_expiry_cancels_fixed_playback_after_position_expiry(fixed):
+    f = fixed
+    runtime = f.h.runtime
+    state = runtime.state(DEVICE)
+    task = asyncio.create_task(play_fixed(runtime, f.conn, f.item))
+    await wait_until(lambda: ('sentence_start', 'First.') in f.messages)
+    f.h.clock.now += 16
+    await runtime.tick()
+    assert not task.done()
+    f.h.clock.now = state.policy.deadline
+    await runtime.tick()
+    await asyncio.gather(task, return_exceptions=True)
+    assert task.cancelled()
+    assert state.fixed_beacon is None
+    assert resume_fixed_chat(f.conn, '继续讲解') is False
+    await runtime.close()
 
 
 @pytest.mark.asyncio
@@ -173,17 +252,19 @@ async def test_changed_location_or_profile_prevents_old_tour_resume(fixed):
     f.conn.ksz_fixed_tour.next_segment = 1
     f.conn.device_attributes['agent_name'] = '儿童-英语'
     assert await play_fixed(f.h.runtime, f.conn, f.item, resume=True) is False
-    f.conn.device_attributes['agent_name'] = '专家-英语'
-    other = replace(f.item, place_id='other')
-    f.h.runtime.location = lambda mac: other
-    assert resume_fixed_chat(f.conn, '继续讲解') is False
-    f.h.runtime.location = lambda mac: f.item
     f.conn.device_attributes = {'agent_name': '其他角色', 'role': 'unknown'}
+    assert resume_fixed_chat(f.conn, '继续讲解') is False
+    f.conn.device_attributes['agent_name'] = '专家-英语'
+    other = beacon(2, guide_mode='fixed', museum_code='0755001')
+    f.h.client.items.append(other)
+    assert await f.h.runtime.legacy(f.conn, {'beacon_id': other.mac})
+    assert resume_fixed_chat(f.conn, '继续讲解') is False
+    assert await f.h.runtime.legacy(f.conn, {'beacon_id': f.item.mac})
     assert resume_fixed_chat(f.conn, '继续讲解') is False
 
 
 @pytest.mark.asyncio
-async def test_modes_and_explicit_rag_fallback(fixed, monkeypatch, log_messages):
+async def test_modes_and_explicit_rag_fallback(fixed, monkeypatch, caplog):
     f = fixed
     rag = AsyncMock(return_value=True)
     monkeypatch.setattr(f.h.runtime, '_announce_rag', rag)
@@ -193,15 +274,15 @@ async def test_modes_and_explicit_rag_fallback(fixed, monkeypatch, log_messages)
     assert f.h.runtime.devices[DEVICE].rejection == 'fixed_rag_http_404'
     assert await f.h.runtime._announce(f.conn, replace(f.item, fixed_rag_fallback=True)) is True
     assert rag.await_count == 1
-    assert any('reason=fixed_rag_http_404' in message for message in log_messages)
-    assert any('rag_fallback=True' in message for message in log_messages)
+    assert 'reason=fixed_rag_http_404' in caplog.text
+    assert 'rag_fallback=True' in caplog.text
     assert await f.h.runtime._announce(f.conn, replace(f.item, guide_mode='off')) is False
     assert rag.await_count == 1
     assert await f.h.runtime._announce(f.conn, replace(f.item, guide_mode='rag')) is True
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('reset', ['expired', 'disconnect', 'replaced'])
+@pytest.mark.parametrize('reset', ['policy_expired', 'disconnect', 'replaced'])
 @pytest.mark.parametrize('completed', [False, True])
 async def test_session_reset_releases_only_unfinished_fixed_tour(fixed, reset, completed):
     f = fixed
@@ -216,10 +297,17 @@ async def test_session_reset_releases_only_unfinished_fixed_tour(fixed, reset, c
     state.location_announce_times[f.item.zone] = f.h.clock()
     f.conn.ksz_fixed_tour = FixedTour(tour_key(f.conn, f.item),
                                     {'segments': [{'text': 'First.'}, {'text': 'Second.'}]},
-                                    f.client, next_segment=2 if completed else 1)
-    if reset == 'expired':
+                                    f.client, state.fixed_location_revision, next_segment=2 if completed else 1)
+    if reset == 'policy_expired':
         f.h.clock.now += 16
         f.h.runtime._expire(state)
+        assert state.current is None
+        assert f.h.runtime.fixed_location(state) is f.item
+        assert state.last_announced_zone == f.item.zone
+        f.h.clock.now = state.policy.deadline
+        f.h.runtime._expire(state)
+        assert state.fixed_beacon is None
+        await f.h.runtime.tick(refresh=True)
     elif reset == 'disconnect':
         f.h.runtime.unbind(f.conn)
     else:
@@ -255,6 +343,9 @@ async def test_chat_interrupts_fixed_audio_answers_question_then_resumes(fixed, 
     assert task.cancelled()
     assert calls == [('Who made this?', ['First.'])]
     assert f.conn.ksz_fixed_tour.task is None
+    f.h.clock.now += 16
+    await f.h.runtime.tick()
+    assert f.h.runtime.location(DEVICE) is None
     f.messages.clear()
     resume = asyncio.create_task(asyncio.to_thread(chat, f.conn, '继续讲解'))
     await wait_until(lambda: ('sentence_start', 'Second.') in f.messages)

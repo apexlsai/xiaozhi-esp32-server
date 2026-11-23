@@ -163,6 +163,11 @@ def is_guide_announcement(conn, sentence_id=None):
     return _turn(conn, sentence_id) is not None
 
 
+def mark_tts_message(conn, message, sentence_id):
+    message.ksz_guide_announcement = is_guide_announcement(conn, sentence_id)
+    return message
+
+
 def start_guide_announcement(conn, sentence_id):
     turn = _turn(conn)
     return turn.start(sentence_id) if turn is not None else True

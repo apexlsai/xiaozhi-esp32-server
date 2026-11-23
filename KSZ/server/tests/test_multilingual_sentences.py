@@ -7,6 +7,7 @@ import pytest
 from core.providers.tts.dto.dto import ContentType, SentenceType, TTSMessageDTO
 from core.providers.tts.mimo import TTSProvider
 from core.utils.vision_stream import SentenceBuffer
+from ksz_guide.sentences import guide_sentence_boundary
 
 
 SENTENCES = {
@@ -128,11 +129,31 @@ def tts_connection(language):
     return conn
 
 
-def send(conn, sentence_type, content_type, text=None):
+def send(conn, sentence_type, content_type, text=None, *, guide=False):
     conn.stop_event.clear()
-    conn.tts.tts_text_queue.put(TTSMessageDTO(conn.sentence_id, sentence_type, content_type, content_detail=text))
+    message = TTSMessageDTO(conn.sentence_id, sentence_type, content_type, content_detail=text)
+    message.ksz_guide_announcement = guide
+    conn.tts.tts_text_queue.put(message)
     conn.tts.tts_text_priority_thread()
     conn.stop_event.clear()
+
+
+def test_guide_boundary_prefers_nearest_punctuation_after_fifty_chars():
+    text = "甲" * 50 + "乙" * 5 + "，" + "丙" * 10
+    assert guide_sentence_boundary(text, language="zh-CN") == 56
+
+
+def test_guide_boundary_hard_splits_unpunctuated_long_sentence():
+    text = "甲" * 80 + "。"
+    assert guide_sentence_boundary(text, language="zh-CN") == 50
+
+
+def test_guide_tts_splits_long_text_while_normal_tts_keeps_existing_rules():
+    conn = tts_connection("zh-CN")
+    text = "甲" * 80 + "。"
+    send(conn, SentenceType.MIDDLE, ContentType.TEXT, text, guide=True)
+    send(conn, SentenceType.LAST, ContentType.ACTION, guide=True)
+    assert conn.tts.spoken == ["甲" * 50, "甲" * 30]
 
 
 @pytest.mark.parametrize("language", SENTENCES)

@@ -39,6 +39,8 @@ class DeviceState:
     last_seen: float = 0
     last_position_at: float = 0
     current: Beacon | None = None
+    fixed_beacon: Beacon | None = None
+    fixed_location_revision: int = 0
     baseline_mac: str | None = None
     baseline_beacon: Beacon | None = None
     confirmed_zone: tuple | None = None
@@ -256,13 +258,21 @@ class GuideRuntime:
         if state.last_announced_zone == zone:
             state.last_announced_zone = None
 
-    def _invalidate(self, state, *, reset_baseline=False):
-        self._release_unfinished_fixed(state, state.owner)
+    def _invalidate(self, state, *, reset_baseline=False, retain_fixed=False):
+        tour = getattr(state.owner, "ksz_fixed_tour", None)
+        fixed_task = tour.task if tour is not None else None
+        if not retain_fixed:
+            self._release_unfinished_fixed(state, state.owner)
+            state.fixed_beacon = None
+            state.fixed_location_revision += 1
+            if fixed_task is not None and not fixed_task.done():
+                fixed_task.cancel()
         state.current = None
         state.pending = None
         state.location_revision += 1
-        if state.announcement_task and not state.announcement_task.done():
-            state.announcement_task.cancel()
+        task = state.announcement_task
+        if task is not None and task is not fixed_task and not task.done():
+            task.cancel()
         if reset_baseline:
             state.baseline_mac = None
             state.baseline_beacon = None
@@ -273,10 +283,12 @@ class GuideRuntime:
 
     def _expire(self, state):
         now = self.clock()
-        if state.current is not None and (not state.policy or not state.policy.valid(now)
-                                          or now - state.last_position_at >= self.settings.position_ttl_ms / 1000):
+        if (state.current is not None or state.fixed_beacon is not None) and (not state.policy or not state.policy.valid(now)):
             self._announcement_status(state, "position_expired")
             self._invalidate(state)
+        elif state.current is not None and now - state.last_position_at >= self.settings.position_ttl_ms / 1000:
+            self._announcement_status(state, "position_expired")
+            self._invalidate(state, retain_fixed=True)
         if state.pending and now >= state.pending.deadline:
             state.pending = None
             self._announcement_status(state, "pending_expired")
@@ -395,7 +407,7 @@ class GuideRuntime:
                     elif action == "observation":
                         raise GuideError("beacon_required")
                     elif action == "lost":
-                        self._invalidate(state, reset_baseline=True)
+                        self._invalidate(state, reset_baseline=True, retain_fixed=True)
                     elif action == "ready":
                         self._ready(state, message, transport, udp_ready, conn)
                 state.rejection = None
@@ -464,6 +476,15 @@ class GuideRuntime:
             state.confirmed_zone = beacon.zone
         state.current = beacon
         state.last_position_at = self.clock()
+        fixed_beacon = None
+        if (beacon.guide_mode == "fixed" and self.settings.auto_announce_enabled
+                and policy.data.get("auto_announce") is True):
+            fixed_beacon = beacon
+        previous_fixed_zone = state.fixed_beacon.zone if state.fixed_beacon is not None else None
+        fixed_zone = fixed_beacon.zone if fixed_beacon is not None else None
+        if fixed_zone != previous_fixed_zone:
+            state.fixed_location_revision += 1
+        state.fixed_beacon = fixed_beacon
         if state.owner is not None:
             state.owner.beacon_location = beacon
         if state.baseline_mac != beacon.mac:
@@ -495,24 +516,26 @@ class GuideRuntime:
 
     async def _interrupt_announcement(self, state):
         owner = state.owner
-        task = state.announcement_task
-        task_active = task is not None and not task.done()
+        tour = getattr(owner, "ksz_fixed_tour", None)
+        tasks = {task for task in (state.announcement_task, tour.task if tour is not None else None)
+                 if task is not None and not task.done()}
         sentence_active = (
             owner is not None
             and state.announcement_sentence_id is not None
             and getattr(owner, "sentence_id", None) == state.announcement_sentence_id
             and getattr(owner, "client_is_speaking", False)
         )
-        if owner is None or not (task_active or sentence_active):
+        if owner is None or not (tasks or sentence_active):
             return False
         from core.handle.abortHandle import handleAbortMessage
         await handleAbortMessage(owner)
         owner.sentence_id = uuid4().hex
         state.announcement_sentence_id = None
-        if task_active:
+        for task in tasks:
             task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-            if state.announcement_task is task:
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+            if state.announcement_task in tasks:
                 state.announcement_task = None
         return True
 
@@ -643,6 +666,15 @@ class GuideRuntime:
             return None
         return state.current
 
+    def fixed_location(self, state):
+        beacon = state.fixed_beacon
+        policy = state.policy
+        if (beacon is not None and policy and policy.valid(self.clock())
+                and self.settings.auto_announce_enabled and policy.data.get("auto_announce") is True
+                and policy.allows(beacon)):
+            return beacon
+        return None
+
     def context(self, device_mac):
         try:
             state = self.devices.get(mac_address(device_mac))
@@ -721,8 +753,10 @@ class GuideRuntime:
                 return
         if self.settings.interrupt_on_beacon_change:
             await self._interrupt_announcement(state)
+        tour = getattr(owner, "ksz_fixed_tour", None)
         if (getattr(owner, "client_is_speaking", False)
-                or (state.announcement_task is not None and not state.announcement_task.done())):
+                or (state.announcement_task is not None and not state.announcement_task.done())
+                or (tour is not None and tour.task is not None and not tour.task.done())):
             self._announcement_status(state, "playback_active")
             return
         state.pending = None

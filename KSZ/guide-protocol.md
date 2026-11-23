@@ -209,7 +209,7 @@ management 目录提供 `place_id`、`place_name`、`place_beacon_count`（同�
 
 ## 旧固件兼容
 
-已有 `device_event/beacon_change` 的两种MAC报文仍可在活动语音会话使用，服务端进行同样的资产准入校验。只在切换信标时发送一次的旧固件，位置会在 `position_ttl_ms` 后过期，固定讲解随之停止；普通 WebSocket/MQTT 心跳、音频收发和在线状态不会延长位置有效期。
+已有 `device_event/beacon_change` 的两种MAC报文仍可在活动语音会话使用，服务端进行同样的资产准入校验。只在切换信标时发送一次的旧固件，实时位置会在 `position_ttl_ms` 后过期。已经开始的固定讲解使用保存的播报位置继续播放。普通 WebSocket/MQTT 心跳、音频收发和在线状态不会延长位置有效期。
 
 旧固件的最小改造是在活动语音连接中，每 5 秒重复发送当前仍能稳定扫描到的已授权信标，沿用原报文，不必同时实现策略 ACK 或播放回执：
 

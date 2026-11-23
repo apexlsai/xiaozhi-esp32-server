@@ -10,6 +10,8 @@ def tts_complete_sentence(conn, text, sentence_id, *, feedback=False):
     from core.providers.tts.base import TTSProviderBase
 
     message = TTSMessageDTO(sentence_id, SentenceType.MIDDLE, ContentType.TEXT, content_detail=text)
+    from .announcement import mark_tts_message
+    mark_tts_message(conn, message, sentence_id)
     if getattr(type(tts), "tts_text_priority_thread", None) is TTSProviderBase.tts_text_priority_thread:
         message.ksz_complete_sentence = True
         tts.tts_text_queue.put(message)

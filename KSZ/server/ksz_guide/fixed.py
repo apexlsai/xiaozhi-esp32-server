@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import re
+from concurrent.futures import CancelledError
 from dataclasses import dataclass
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -96,6 +97,7 @@ class FixedTour:
     key: tuple
     guide: dict
     client: FixedClient
+    location_revision: int
     next_segment: int = 0
     task: asyncio.Task | None = None
     response_id: str = ""
@@ -137,44 +139,54 @@ async def play_fixed(runtime, conn, beacon, *, resume=False, query=None):
     limit = getattr(conn, "max_output_size", 0)
     if limit > 0 and check_device_output_limit(conn.device_id, limit):
         return False
-    key = tour_key(conn, beacon)
-    previous_sentence = conn.sentence_id
-    previous_socket = conn.websocket
-    tour = getattr(conn, "ksz_fixed_tour", None)
-    if not resume:
-        client = FixedClient.from_env()
-        data = await client.guide(beacon, *key[-2:])
-        current = runtime.location(conn.device_id)
-        if (conn.sentence_id != previous_sentence or conn.websocket is not previous_socket or current is None
-                or current.guide_mode != "fixed" or tour_key(conn, current) != key):
-            return False
-        tour = conn.ksz_fixed_tour = FixedTour(key, data, client)
-        log.info("Fixed guide selected: museum={} place={} role={} language={} segments={}",
-                 beacon.museum_code, beacon.place_id, *key[-2:], len(data["segments"]))
-    elif tour is None or tour.key != key or tour.next_segment >= len(tour.guide["segments"]):
-        return False
     state = runtime.devices.get(conn.device_id.upper())
     if state is None or state.owner is not conn:
         return False
+    key = tour_key(conn, beacon)
+    location_revision = state.fixed_location_revision
+    previous_sentence = conn.sentence_id
+    socket = conn.websocket
+    tour = getattr(conn, "ksz_fixed_tour", None)
+    if resume:
+        if (tour is None or tour.key != key or tour.location_revision != location_revision
+                or tour.next_segment >= len(tour.guide["segments"])):
+            return False
+    current = runtime.fixed_location(state) if resume else runtime.location(conn.device_id)
+    if current is None or current.guide_mode != "fixed" or current.zone != beacon.zone:
+        return False
+
     await stop_fixed(conn)
+    if not resume:
+        client = FixedClient.from_env()
+        data = await client.guide(beacon, *key[-2:])
+    current = runtime.fixed_location(state) if resume else runtime.location(conn.device_id)
+    if (state.owner is not conn or conn.sentence_id != previous_sentence or conn.websocket is not socket
+            or not connection_is_open(conn) or state.fixed_location_revision != location_revision
+            or current is None or current.guide_mode != "fixed" or tour_key(conn, current) != key):
+        return False
+    if not resume:
+        tour = conn.ksz_fixed_tour = FixedTour(key, data, client, location_revision)
+        log.info("Fixed guide selected: museum={} place={} role={} language={} segments={}",
+                 beacon.museum_code, beacon.place_id, *key[-2:], len(data["segments"]))
+    elif conn.ksz_fixed_tour is not tour:
+        return False
     tour.task = asyncio.current_task()
     sentence_id = uuid4().hex
     tour.response_id = sentence_id
     conn.sentence_id = sentence_id
-    socket = conn.websocket
 
     invalid_logged = None
 
     def valid():
         nonlocal invalid_logged
-        current = runtime.location(conn.device_id)
-        if current is None:
-            reason = "position_expired"
-        elif state is None or state.owner is not conn:
+        current = runtime.fixed_location(state)
+        if state.owner is not conn:
             reason = "connection_replaced"
-        elif current.guide_mode != "fixed":
-            reason = "guide_disabled"
-        elif current.zone != beacon.zone or tour_key(conn, current) != key:
+        elif state.fixed_location_revision != location_revision:
+            reason = "beacon_changed"
+        elif current is None:
+            reason = "guide_location_unavailable"
+        elif tour_key(conn, current) != key:
             reason = "beacon_changed"
         elif conn.sentence_id != sentence_id:
             reason = "client_abort"
@@ -193,8 +205,7 @@ async def play_fixed(runtime, conn, beacon, *, resume=False, query=None):
     conn.client_abort = False
     conn.client_is_speaking = True
     conn.last_activity_time = runtime.wall_clock() * 1000
-    if state:
-        state.announcement_sentence_id = sentence_id
+    state.announcement_sentence_id = sentence_id
     begin_response(conn, sentence_id, query or "固定讲解")
     if query:
         conn.dialogue.put(Message(role="user", content=query))
@@ -213,6 +224,8 @@ async def play_fixed(runtime, conn, beacon, *, resume=False, query=None):
                 return False
             stopped = False
             await send_tts_message(conn, "start")
+            if not valid():
+                return False
             record_response_text(conn, segment["text"], sentence_id)
             await sendAudioMessage(conn, SentenceType.FIRST, frames, segment["text"], sentence_id=sentence_id)
             await send_tts_message(conn, "stop")
@@ -263,8 +276,11 @@ def resume_fixed_chat(conn, query):
         return False
     from .integration import runtime_for
     runtime = runtime_for(conn)
-    beacon = runtime.location(conn.device_id) if runtime else None
-    if beacon is None or beacon.guide_mode != "fixed":
+    state = runtime.devices.get(conn.device_id.upper()) if runtime else None
+    if state is None or state.owner is not conn or tour.location_revision != state.fixed_location_revision:
+        return False
+    beacon = runtime.fixed_location(state)
+    if beacon is None:
         return False
     try:
         if tour.key != tour_key(conn, beacon):
@@ -289,6 +305,8 @@ def resume_fixed_chat(conn, query):
     future = asyncio.run_coroutine_threadsafe(resume(), conn.loop)
     try:
         future.result()
+    except CancelledError:
+        pass
     except Exception:
         log.exception("Fixed guide resume failed")
     return True
