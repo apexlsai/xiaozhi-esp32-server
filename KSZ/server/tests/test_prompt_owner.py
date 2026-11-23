@@ -1,4 +1,7 @@
+import asyncio
+import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -136,3 +139,65 @@ def test_unhandled_cross_museum_turn_carries_search_scope_to_agent(monkeypatch):
     value = {"venue_context": {"name": "萍乡博物馆"}}
     request_messages(conn, [{"role": "user", "content": "深圳博物馆里面有什么重要产品？"}], value)
     assert value["ksz_external_museum"] is True
+
+
+@pytest.mark.parametrize("owner", ["agent", "xiaozhi"])
+def test_search_follow_up_and_recall_use_current_dialogue(monkeypatch, owner):
+    from ksz_guide import integration
+
+    async def run_inline(function, **kwargs):
+        return function(**kwargs)
+
+    monkeypatch.setattr(integration.asyncio, "to_thread", run_inline)
+    follow_up = "你知道下一届在哪里举办吗？"
+    classifier = SimpleNamespace(configured=True, classify=AsyncMock(return_value={
+        "function_call": {"name": "yuanbao_search", "arguments": {"query": follow_up}},
+    }))
+    monkeypatch.setattr(integration, "_embedding_classifier", lambda conn: classifier)
+    conn = connection(owner)
+    conn.config["context_turns"] = 20
+    dialogue = conn.dialogue
+    dialogue.update_system_message("ROLE")
+    dialogue.put(Message(role="user", content="今年 APEC 在哪里举办？"))
+    dialogue.put(Message(role="assistant", content="2026 年 APEC 在深圳举办。"))
+    llm = Mock()
+    llm.response_no_stream.return_value = '{"query":"2027年 APEC 峰会举办城市"}'
+    llm.response.return_value = iter(["下一届 APEC 的主办地是……"])
+    conn.session_id = "session-a"
+    conn.sentence_id = "sentence-a"
+    conn.logger = Mock()
+    conn.llm = llm
+
+    def prepare(query, sentence_id, depth):
+        values = {"language": "zh-CN"}
+        return request_messages(conn, dialogue.get_llm_dialogue(), values, depth), values
+
+    conn._prepare_llm_request = Mock(side_effect=prepare)
+    result = json.loads(asyncio.run(integration.classify_embedding_intent(conn, follow_up)))
+    arguments = result["function_call"]["arguments"]
+    assert arguments == {"query": "2027年 APEC 峰会举办城市"}
+    assert "深圳" in llm.response_no_stream.call_args.kwargs["user_prompt"]
+    dialogue.put(Message(role="user", content=follow_up))
+    call = {"id": "call-a", "name": "yuanbao_search", "arguments": json.dumps(arguments)}
+    integration.answer_embedding_tool(conn, call, follow_up, "搜索结果")
+    conn._prepare_llm_request.assert_called_once_with(follow_up, conn.sentence_id, depth=5)
+    messages = llm.response.call_args.args[1]
+    if owner == "agent":
+        values = llm.response.call_args.kwargs["extra_body"]
+        messages = compile_messages(values["ksz_prompt_context"], messages)
+        assert "RAW_ROLE" in messages[0]["content"]
+    else:
+        assert messages[0] == {"role": "system", "content": "ROLE"}
+    assert [m["content"] for m in messages if m["role"] == "user"] == [
+        "今年 APEC 在哪里举办？", follow_up,
+    ]
+    assert messages[-2]["tool_calls"][0]["id"] == messages[-1]["tool_call_id"] == "call-a"
+    assert messages[-1]["content"] == "搜索结果"
+
+    recall = json.loads(asyncio.run(integration.classify_embedding_intent(conn, "我刚才跟你聊了什么？")))
+    assert recall["function_call"]["name"] == "continue_chat"
+    assert classifier.classify.await_count == 1
+
+    conn.config["context_turns"] = 1
+    assert asyncio.run(integration.resolve_search_query(conn, follow_up)) == ""
+    assert llm.response_no_stream.call_count == 1

@@ -12,7 +12,50 @@ diff --git a/core/connection.py b/core/connection.py
          if private_config.get("mcp_endpoint", None) is not None:
              self.config["mcp_endpoint"] = private_config["mcp_endpoint"]
          if private_config.get("context_providers", None) is not None:
-@@ -1379,6 +1380,7 @@ class ConnectionHandler:
+@@ -1170,6 +1171,42 @@ class ConnectionHandler:
+         # 更新系统prompt至上下文
+         self.dialogue.update_system_message(self.prompt)
+ 
++    def _prepare_llm_request(self, query, current_sentence_id, depth):
++        memory_str = None
++        if self.memory is not None and query:
++            future = asyncio.run_coroutine_threadsafe(
++                self.memory.query_memory(query), self.loop
++            )
++            memory_str = future.result()
++
++        self._ensure_device_attributes_fresh()
++        self._ensure_beacon_location_fresh()
++        beacon_location = (
++            self.beacon_location.to_prompt_context()
++            if self.beacon_location is not None
++            else ""
++        )
++        if beacon_location != self._prompt_beacon_location:
++            self._init_prompt_enhancement()
++
++        # 仅在该说话人首次出现时把身份注入 system，之后靠对话历史首轮保留，
++        # 避免每轮在 system 重复出现名字诱导模型反复称呼
++        speaker_for_system = None
++        cs = (self.current_speaker or "").strip()
++        if cs and cs != "未知说话人" and cs not in self.system_introduced_speakers:
++            self.system_introduced_speakers.add(cs)
++            speaker_for_system = cs
++
++        llm_extra_body = self._build_llm_extra_body()
++        llm_dialogue = self.dialogue.get_llm_dialogue_with_memory(
++            memory_str, self.config.get("voiceprint", {}), speaker_for_system
++        )
++        if guide:
++            llm_dialogue = guide.guide_announcement_messages(self, llm_dialogue, current_sentence_id)
++            llm_dialogue = guide.playback_context_messages(self, llm_dialogue, current_sentence_id)
++            llm_dialogue = guide.request_messages(self, llm_dialogue, llm_extra_body, depth)
++        return llm_dialogue, llm_extra_body
++
+     def _build_llm_extra_body(self) -> dict:
+         """构造传给 LLM 网关的额外设备上下文参数"""
+         from core.handle.deviceEventHandle import resolve_language_code_from_agent_name
+@@ -1379,6 +1416,7 @@ class ConnectionHandler:
          )
          # 设置最大递归深度，避免无限循环，可根据实际需求调整
          MAX_DEPTH = 5
@@ -20,7 +63,7 @@ diff --git a/core/connection.py b/core/connection.py
          force_final_answer = False  # 标记是否强制最终回答
  
          if depth >= MAX_DEPTH:
-@@ -1388,12 +1390,10 @@ class ConnectionHandler:
+@@ -1388,12 +1426,10 @@ class ConnectionHandler:
              force_final_answer = True
              # 添加系统指令，要求 LLM 基于现有信息回答
              if not (guide and guide.agent_owned(self)):
@@ -37,12 +80,78 @@ diff --git a/core/connection.py b/core/connection.py
  
          # Define intent functions
          functions = None
-@@ -1447,6 +1447,8 @@ class ConnectionHandler:
-                 llm_dialogue = guide.guide_announcement_messages(self, llm_dialogue, current_sentence_id)
-                 llm_dialogue = guide.playback_context_messages(self, llm_dialogue, current_sentence_id)
-                 llm_dialogue = guide.request_messages(self, llm_dialogue, llm_extra_body, depth)
-+                if final_answer_instruction and guide.configured_context_turns(self):
-+                    llm_dialogue.append({"role": "user", "content": final_answer_instruction})
+@@ -1412,41 +1448,9 @@ class ConnectionHandler:
+         response_message = []
+ 
+         try:
+-            # 使用带记忆的对话
+-            memory_str = None
+-            # 仅当query非空（代表用户询问）时查询记忆
+-            if self.memory is not None and query:
+-                future = asyncio.run_coroutine_threadsafe(
+-                    self.memory.query_memory(query), self.loop
+-                )
+-                memory_str = future.result()
+-
+-            self._ensure_device_attributes_fresh()
+-            self._ensure_beacon_location_fresh()
+-            beacon_location = (
+-                self.beacon_location.to_prompt_context()
+-                if self.beacon_location is not None
+-                else ""
+-            )
+-            if beacon_location != self._prompt_beacon_location:
+-                self._init_prompt_enhancement()
+-
+-            # 仅在该说话人首次出现时把身份注入 system，之后靠对话历史首轮保留，
+-            # 避免每轮在 system 重复出现名字诱导模型反复称呼
+-            speaker_for_system = None
+-            cs = (self.current_speaker or "").strip()
+-            if cs and cs != "未知说话人" and cs not in self.system_introduced_speakers:
+-                self.system_introduced_speakers.add(cs)
+-                speaker_for_system = cs
+-
+-            llm_extra_body = self._build_llm_extra_body()
+-            llm_dialogue = self.dialogue.get_llm_dialogue_with_memory(
+-                memory_str, self.config.get("voiceprint", {}), speaker_for_system
+-            )
+-            if guide:
+-                llm_dialogue = guide.guide_announcement_messages(self, llm_dialogue, current_sentence_id)
+-                llm_dialogue = guide.playback_context_messages(self, llm_dialogue, current_sentence_id)
+-                llm_dialogue = guide.request_messages(self, llm_dialogue, llm_extra_body, depth)
++            llm_dialogue, llm_extra_body = self._prepare_llm_request(query, current_sentence_id, depth)
++            if guide and final_answer_instruction and guide.configured_context_turns(self):
++                llm_dialogue.append({"role": "user", "content": final_answer_instruction})
  
              if self.intent_type == "function_call" and functions is not None:
                  # 使用支持functions的streaming接口
+diff --git a/core/handle/intentHandler.py b/core/handle/intentHandler.py
+--- a/core/handle/intentHandler.py
++++ b/core/handle/intentHandler.py
+@@ -173,6 +173,7 @@ async def process_intent_result(
+             # 上报工具调用
+             enqueue_tool_report(conn, function_name, tool_input)
+ 
++            request_sentence_id = conn.sentence_id
+             # 使用executor执行函数调用和结果处理
+             def process_function_call():
+                 conn.dialogue.put(Message(role="user", content=original_text))
+@@ -210,6 +211,8 @@ async def process_intent_result(
+                     elif result.action == Action.REQLLM:  # 调用函数后再请求llm生成回复
+                         text = result.result
+                         if conn.intent_type == "embedding":
++                            if conn.client_abort or conn.sentence_id != request_sentence_id:
++                                return
+                             try:
+                                 llm_result = guide.answer_embedding_tool(
+                                     conn, function_call_data, original_text, text,
+@@ -217,7 +220,8 @@ async def process_intent_result(
+                             except Exception as error:
+                                 conn.logger.bind(tag=TAG).error(f"工具结果生成失败: {type(error).__name__}")
+                                 llm_result = None
+-                            speak_txt(conn, llm_result or guide.tool_reply_unavailable(conn))
++                            if not conn.client_abort and conn.sentence_id == request_sentence_id:
++                                speak_txt(conn, llm_result or guide.tool_reply_unavailable(conn))
+                         else:
+                             conn.dialogue.put(Message(role="tool", content=text))
+                             try:
