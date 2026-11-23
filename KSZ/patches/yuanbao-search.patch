@@ -133,8 +133,8 @@ new file mode 100644
 +            continue
 +        title = str(page.get("title") or page.get("passage") or "无标题").strip()
 +        snippet = str(page.get("content") or page.get("passage") or "").strip()
-+        if len(snippet) > 600:
-+            snippet = snippet[:600] + "…"
++        if len(snippet) > 1200:
++            snippet = snippet[:1200] + "…"
 +        url = str(page.get("url") or "").strip()
 +        site = str(page.get("site") or "").strip()
 +        date = str(page.get("date") or "").strip()
@@ -162,15 +162,11 @@ new file mode 100644
 +    payload = json.dumps({"Query": query}, ensure_ascii=False, separators=(",", ":"))
 +    timestamp = int(time.time())
 +    headers = _build_headers(secret_id, secret_key, payload, timestamp, token)
-+    started = time.monotonic()
 +    logger.bind(tag=TAG).debug(
 +        f"元宝搜索请求 | query={query} | max_results={max_results}"
 +    )
 +    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=5.0)) as client:
 +        response = await client.post(ENDPOINT, content=payload.encode("utf-8"), headers=headers)
-+    logger.bind(tag=TAG).info(
-+        f"元宝搜索响应 | status={response.status_code} | elapsed_ms={round((time.monotonic() - started) * 1000, 2)}"
-+    )
 +    try:
 +        data = response.json()
 +    except (TypeError, ValueError):
@@ -210,9 +206,9 @@ new file mode 100644
 +            None,
 +        )
 +    try:
-+        max_results = min(max(int(config.get("max_results", 3)), 1), 3)
++        max_results = min(max(int(config.get("max_results", 5)), 1), 10)
 +    except (TypeError, ValueError):
-+        max_results = 3
++        max_results = 5
 +    token = str(config.get("token") or "").strip()
 +    try:
 +        result = await _search_yuanbao(
