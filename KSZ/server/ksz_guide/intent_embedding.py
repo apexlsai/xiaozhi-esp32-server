@@ -316,6 +316,17 @@ class EmbeddingIntentClassifier:
             self._references = references
             return references
 
+    async def match_topic(self, question, candidates):
+        vector, *topics = await self._embed([question, *candidates])
+        ranked = sorted(
+            ((_cosine(vector, topic), name) for name, topic in zip(candidates, topics)),
+            reverse=True,
+        )
+        best_score, best_name = ranked[0]
+        if best_score >= self.threshold and best_score - ranked[1][0] >= self.margin_threshold:
+            return best_name
+        return None
+
     async def classify(self, text, available_tools, language="zh_CN"):
         if not self.configured or not isinstance(text, str) or not text.strip():
             return None

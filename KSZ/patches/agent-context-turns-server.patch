@@ -128,7 +128,23 @@ diff --git a/core/connection.py b/core/connection.py
 diff --git a/core/handle/intentHandler.py b/core/handle/intentHandler.py
 --- a/core/handle/intentHandler.py
 +++ b/core/handle/intentHandler.py
-@@ -173,6 +173,7 @@ async def process_intent_result(
+@@ -99,6 +99,15 @@ async def process_intent_result(
+         # 尝试将结果解析为JSON
+         intent_data = json.loads(intent_result)
+ 
++        clarification = intent_data.get("search_clarification")
++        if guide and isinstance(clarification, str) and clarification:
++            await send_stt_message(conn, original_text)
++            conn.client_abort = False
++            conn.dialogue.put(Message(role="user", content=original_text))
++            guide.trim_connection(conn)
++            speak_txt(conn, clarification)
++            return True
++
+         # 检查是否有function_call
+         if "function_call" in intent_data:
+             # 直接从意图识别获取了function_call
+@@ -173,6 +182,7 @@ async def process_intent_result(
              # 上报工具调用
              enqueue_tool_report(conn, function_name, tool_input)
  
@@ -136,7 +152,7 @@ diff --git a/core/handle/intentHandler.py b/core/handle/intentHandler.py
              # 使用executor执行函数调用和结果处理
              def process_function_call():
                  conn.dialogue.put(Message(role="user", content=original_text))
-@@ -210,6 +211,8 @@ async def process_intent_result(
+@@ -210,6 +220,8 @@ async def process_intent_result(
                      elif result.action == Action.REQLLM:  # 调用函数后再请求llm生成回复
                          text = result.result
                          if conn.intent_type == "embedding":
@@ -145,7 +161,7 @@ diff --git a/core/handle/intentHandler.py b/core/handle/intentHandler.py
                              try:
                                  llm_result = guide.answer_embedding_tool(
                                      conn, function_call_data, original_text, text,
-@@ -217,7 +220,8 @@ async def process_intent_result(
+@@ -217,7 +229,8 @@ async def process_intent_result(
                              except Exception as error:
                                  conn.logger.bind(tag=TAG).error(f"工具结果生成失败: {type(error).__name__}")
                                  llm_result = None

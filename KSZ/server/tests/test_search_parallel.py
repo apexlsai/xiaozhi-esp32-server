@@ -172,3 +172,27 @@ async def test_embedding_filters_web_search_from_available_tools(monkeypatch):
     )
     await integration.classify_embedding_intent(conn, "查一下最新消息")
     assert classifier.classify.call_args.args[1] == {"yuanbao_search"}
+
+
+@pytest.mark.asyncio
+async def test_edition_clarification_speaks_without_reporting_a_search(chat_conn, monkeypatch):
+    from core.handle import intentHandler
+
+    send_stt = AsyncMock()
+    report_tool = Mock()
+    speak = Mock()
+    monkeypatch.setattr(intentHandler, "send_stt_message", send_stt)
+    monkeypatch.setattr(intentHandler, "enqueue_tool_report", report_tool)
+    monkeypatch.setattr(intentHandler, "speak_txt", speak)
+    question = "下一届在哪里举办？"
+    clarification = "您指的是哪项活动？"
+
+    handled = await intentHandler.process_intent_result(
+        chat_conn, json.dumps({"search_clarification": clarification}), question,
+    )
+
+    assert handled is True
+    send_stt.assert_awaited_once_with(chat_conn, question)
+    speak.assert_called_once_with(chat_conn, clarification)
+    report_tool.assert_not_called()
+    assert chat_conn.dialogue.dialogue[-1].content == question
